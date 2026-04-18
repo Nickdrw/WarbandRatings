@@ -1,0 +1,13 @@
+## Interface: 120001, 120005
+## Title: Warband Ratings
+## Notes: Tracks and displays PvP and M+ ratings for all your characters.
+## Author: WarbandRatings
+## Version: 1.0.0
+## IconTexture: 2022761
+## SavedVariables: WarbandRatingsDB
+
+Utils.lua
+Database.lua
+DataCollection.lua
+UI.lua
+Core.lua
