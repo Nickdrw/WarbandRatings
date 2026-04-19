@@ -11,7 +11,8 @@ local Utils = ns.Utils
 --   3 = Arena 5v5 (defunct, returns 0)
 --   4 = 10v10 Rated Battlegrounds
 --   7 = Solo Shuffle
---   8 = Rated Battleground Blitz (Solo BG)
+--   8 = Rated Battleground Blitz (Solo BG) [pre-Midnight]
+--   9 = Rated Battleground Blitz (Solo BG) [Midnight+]
 -- "mythicPlus" is special-cased, not a PvP bracket.
 --
 -- perSpec: Solo Shuffle and BG Blitz ratings are per-specialization in WoW.
@@ -19,7 +20,7 @@ local Utils = ns.Utils
 
 Database.SPEC_COLUMNS = {
     { key = "soloShuffle",  label = "Solo Shuffle",  bracketIndex = 7 },
-    { key = "soloBG",       label = "Solo BG",       bracketIndex = 8 },
+    { key = "soloBG",       label = "Solo BG",       bracketIndex = 9 },
 }
 
 Database.GLOBAL_COLUMNS = {
