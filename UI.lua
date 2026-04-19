@@ -342,7 +342,12 @@ function UI.RefreshTable()
         row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, 0)
         row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
         row:SetHeight(SUBROW_HEIGHT)
-        AddCellText(row, 10, 400, "No characters recorded yet. Log in on your characters to populate data.", "GameFontDisable")
+        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+        fs:SetPoint("LEFT", row, "LEFT", 10, 0)
+        fs:SetWidth(400)
+        fs:SetText("No characters recorded yet. Log in on your characters to populate data.")
+        fs:Show()
+        row.cells[#row.cells + 1] = fs
         scrollChild:SetHeight(SUBROW_HEIGHT)
         return
     end
