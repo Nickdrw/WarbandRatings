@@ -8,7 +8,7 @@ read_globals = {
     "UIParent",
     "UISpecialFrames",
     "PVEFrame",
-    "PVPUIFrame",
+    "ConquestFrame",
     "ChallengesFrame",
     "Minimap",
     "GameTooltip",

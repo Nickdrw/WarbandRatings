@@ -514,10 +514,10 @@ local pvpButtonCreated = false
 
 local function CreatePvPButton()
     if pvpButtonCreated then return end
-    if not PVPUIFrame then return end
+    if not ConquestFrame then return end
     pvpButtonCreated = true
 
-    local btn = CreateFrame("Button", "WarbandRatingsPvPButton", PVPUIFrame, "UIPanelButtonTemplate")
+    local btn = CreateFrame("Button", "WarbandRatingsPvPButton", ConquestFrame, "UIPanelButtonTemplate")
     btn:SetSize(130, 22)
     btn:SetFrameStrata("HIGH")
     btn:SetPoint("BOTTOMRIGHT", PVPUIFrame, "BOTTOMRIGHT", -8, 4)
