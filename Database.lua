@@ -34,11 +34,12 @@ Database.RATING_COLUMNS = {}
 for _, c in ipairs(Database.SPEC_COLUMNS) do Database.RATING_COLUMNS[#Database.RATING_COLUMNS + 1] = c end
 for _, c in ipairs(Database.GLOBAL_COLUMNS) do Database.RATING_COLUMNS[#Database.RATING_COLUMNS + 1] = c end
 
+-- Lookup set for O(1) spec column checks
+local specColumnKeys = {}
+for _, c in ipairs(Database.SPEC_COLUMNS) do specColumnKeys[c.key] = true end
+
 function Database.IsSpecColumn(col)
-    for _, sc in ipairs(Database.SPEC_COLUMNS) do
-        if sc.key == col.key then return true end
-    end
-    return false
+    return specColumnKeys[col.key] or false
 end
 
 function Database.Init()
@@ -96,10 +97,6 @@ function Database.SetSetting(key, value)
     WarbandRatingsDB.settings[key] = value
 end
 
-function Database.GetCharacters()
-    return WarbandRatingsDB.characters
-end
-
 function Database.SaveCharacter(data)
     local key = Utils.CharKey(data.name, data.realm)
     local existing = WarbandRatingsDB.characters[key]
@@ -123,11 +120,21 @@ end
 -- Sorted by name-realm. specs sorted by specID.
 function Database.GetFilteredCharacterGroups()
     local settings = Database.GetSettings()
+    local maxLevel = settings.hideNonMaxLevel
+        and (GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80)
     local groups = {}
+
     for _, charData in pairs(WarbandRatingsDB.characters) do
+        local skip = false
+
+        -- Filter: hide non-max-level characters
+        if maxLevel and (charData.level or 0) < maxLevel then
+            skip = true
+        end
+
         -- Collect specs
         local specs = {}
-        if charData.specRatings then
+        if not skip and charData.specRatings then
             for specID, _ in pairs(charData.specRatings) do
                 specs[#specs + 1] = specID
             end
@@ -138,16 +145,14 @@ function Database.GetFilteredCharacterGroups()
         end
 
         -- Filter: hide if all ratings empty (global + all specs)
-        if settings.hideNoRating then
+        if not skip and settings.hideNoRating then
             local hasAny = false
-            -- Check global ratings
             for _, col in ipairs(Database.GLOBAL_COLUMNS) do
                 if not Utils.IsEmptyRating(charData.ratings and charData.ratings[col.key]) then
                     hasAny = true
                     break
                 end
             end
-            -- Check spec ratings
             if not hasAny then
                 for _, specID in ipairs(specs) do
                     local sr = charData.specRatings and charData.specRatings[specID]
@@ -162,25 +167,14 @@ function Database.GetFilteredCharacterGroups()
                     if hasAny then break end
                 end
             end
-            if not hasAny then
-                charData = nil
-            end
+            if not hasAny then skip = true end
         end
 
-        if charData then
-            if settings.hideNonMaxLevel then
-                local maxLevel = GetMaxLevelForPlayerExpansion
-                    and GetMaxLevelForPlayerExpansion() or 80
-                if (charData.level or 0) < maxLevel then
-                    charData = nil
-                end
-            end
-        end
-
-        if charData then
+        if not skip then
             groups[#groups + 1] = { charData = charData, specs = specs }
         end
     end
+
     table.sort(groups, function(a, b)
         local classA = a.charData.classFilename or ""
         local classB = b.charData.classFilename or ""

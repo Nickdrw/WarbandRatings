@@ -11,11 +11,6 @@ function Utils.GetClassColor(classFilename)
     return 1, 1, 1
 end
 
-function Utils.ClassColoredName(name, classFilename)
-    local r, g, b = Utils.GetClassColor(classFilename)
-    return string.format("|cff%02x%02x%02x%s|r", r * 255, g * 255, b * 255, name)
-end
-
 function Utils.CharKey(name, realm)
     return name .. "-" .. realm
 end
@@ -50,8 +45,3 @@ function Utils.GetClassIcon(classFilename)
     return nil, nil
 end
 
--- Timestamp for display
-function Utils.FormatTimestamp(ts)
-    if not ts then return "Never" end
-    return date("%Y-%m-%d %H:%M", ts)
-end

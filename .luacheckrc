@@ -41,7 +41,6 @@ read_globals = {
     -- Misc
     "C_Timer",
     "tinsert",
-    "date",
     "time",
     "AddonCompartmentFrame",
     "Settings",

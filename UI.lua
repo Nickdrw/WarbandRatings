@@ -294,20 +294,6 @@ local function StripRow(row)
     row.cells = {}
 end
 
-local function AddCellText(row, xOffset, width, text, fontObj, r, g, b, justifyH)
-    local fs = row:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
-    fs:SetPoint("LEFT", row, "LEFT", xOffset, 0)
-    fs:SetWidth(width)
-    fs:SetJustifyH(justifyH or "LEFT")
-    fs:SetWordWrap(false)
-    fs:SetNonSpaceWrap(false)
-    fs:SetText(text)
-    if r then fs:SetTextColor(r, g, b) end
-    fs:Show()
-    row.cells[#row.cells + 1] = fs
-    return width
-end
-
 local function ColWidth(col)
     if Database.IsSpecColumn(col) then return COL_SPEC_RATING_WIDTH end
     return COL_RATING_WIDTH
@@ -424,7 +410,7 @@ function UI.RefreshTable()
         nameFs:SetJustifyH("LEFT")
         nameFs:SetWordWrap(false)
         nameFs:SetNonSpaceWrap(false)
-        local displayName = charData.name .. "-" .. charData.realm
+        local displayName = charData.level .. "  " .. charData.name .. "-" .. charData.realm
         local cr, cg, cb = Utils.GetClassColor(charData.classFilename)
         nameFs:SetTextColor(cr, cg, cb)
         nameFs:SetText(displayName)
@@ -516,14 +502,6 @@ function UI.Show()
     UI.RefreshTable()
 end
 
-function UI.Hide()
-    if mainFrame then mainFrame:Hide() end
-end
-
-function UI.IsShown()
-    return mainFrame and mainFrame:IsShown()
-end
-
 ------------------------------------------------------------
 -- PVP Tab Button
 ------------------------------------------------------------
@@ -531,7 +509,6 @@ local pvpButtonCreated = false
 
 local function CreatePvPButton()
     if pvpButtonCreated then return end
-    -- Parent to PVPUIFrame so the button only appears on the PvP tab
     if not PVPUIFrame then return end
     pvpButtonCreated = true
 
@@ -543,31 +520,6 @@ local function CreatePvPButton()
     btn:SetScript("OnClick", function()
         UI.Toggle()
     end)
-end
-
-function UI.AttachPvPButton()
-    -- Try immediately in case Blizzard_PVPUI is already loaded
-    if PVPUIFrame then
-        CreatePvPButton()
-        return
-    end
-
-    -- ADDON_LOADED fallback for load-on-demand scenario
-    local loader = CreateFrame("Frame")
-    loader:RegisterEvent("ADDON_LOADED")
-    loader:SetScript("OnEvent", function(self, event, loadedAddon)
-        if loadedAddon == "Blizzard_PVPUI" then
-            CreatePvPButton()
-            self:UnregisterEvent("ADDON_LOADED")
-        end
-    end)
-
-    -- Extra fallback: hook PVEFrame show, since opening Group Finder loads Blizzard_PVPUI
-    if PVEFrame then
-        PVEFrame:HookScript("OnShow", function()
-            C_Timer.After(0.1, CreatePvPButton)
-        end)
-    end
 end
 
 ------------------------------------------------------------
@@ -583,7 +535,6 @@ local function CreateMPlusButton()
     local btn = CreateFrame("Button", "WarbandRatingsMPlusButton", ChallengesFrame, "UIPanelButtonTemplate")
     btn:SetSize(130, 22)
     btn:SetFrameStrata("HIGH")
-    -- Place on the right, just above the dungeon icon grid
     btn:SetPoint("RIGHT", ChallengesFrame, "RIGHT", -8, -120)
     btn:SetText("Warband Ratings")
     btn:SetScript("OnClick", function()
@@ -591,24 +542,35 @@ local function CreateMPlusButton()
     end)
 end
 
-function UI.AttachMPlusButton()
-    if ChallengesFrame then
-        CreateMPlusButton()
-        return
-    end
+------------------------------------------------------------
+-- Attach Group Finder buttons (PvP + M+)
+------------------------------------------------------------
+function UI.AttachGroupFinderButtons()
+    -- Try immediately if frames are already loaded
+    CreatePvPButton()
+    CreateMPlusButton()
 
+    -- ADDON_LOADED fallback for load-on-demand addons
     local loader = CreateFrame("Frame")
     loader:RegisterEvent("ADDON_LOADED")
     loader:SetScript("OnEvent", function(self, _, loadedAddon)
-        if loadedAddon == "Blizzard_ChallengesUI" then
+        if loadedAddon == "Blizzard_PVPUI" then
+            CreatePvPButton()
+        elseif loadedAddon == "Blizzard_ChallengesUI" then
             CreateMPlusButton()
+        end
+        if pvpButtonCreated and mplusButtonCreated then
             self:UnregisterEvent("ADDON_LOADED")
         end
     end)
 
+    -- Extra fallback: hook PVEFrame show (opening Group Finder loads both)
     if PVEFrame then
         PVEFrame:HookScript("OnShow", function()
-            C_Timer.After(0.1, CreateMPlusButton)
+            C_Timer.After(0.1, function()
+                CreatePvPButton()
+                CreateMPlusButton()
+            end)
         end)
     end
 end

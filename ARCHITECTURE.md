@@ -20,7 +20,7 @@ Files load in `.toc` order. Each file receives the addon namespace via `local _,
 | `Utils.lua` | `ns.Utils` | Pure helpers: class colors, char keys, rating formatting, spec/class icon lookups, timestamps |
 | `Database.lua` | `ns.Database` | Column definitions, SavedVariables init/migration, settings, character storage, filtered queries |
 | `DataCollection.lua` | `ns.DataCollection` | Gathers current character's ratings from WoW API and saves to DB |
-| `UI.lua` | `ns.UI` | All frames: main window, scroll area, settings panel, table rendering, PvP button, minimap button |
+| `UI.lua` | `ns.UI` | All frames: main window, scroll area, settings panel, table rendering, minimap button, Group Finder buttons (PvP + M+), addon compartment, built-in addon settings panel |
 | `Core.lua` | *(entry point)* | Event handling, initialization orchestration, slash commands |
 
 ## Key APIs Used
@@ -68,6 +68,7 @@ WarbandRatingsDB = {
         hideEmptyColumns = false,   -- hide columns where no char has a rating
         hideNonMaxLevel = true,     -- show only max-level characters
         hideMinimapIcon = false,    -- hide the minimap button
+        hideCompartmentIcon = false,-- hide the addon compartment entry
         minimapPos = 220,           -- minimap button angle in degrees
     },
 }
@@ -109,6 +110,21 @@ Columns are split into two categories defined in `Database.lua`:
 ### PvP Tab Button
 - A `UIPanelButtonTemplate` button parented to `PVPUIFrame` (only visible on PvP tab of Group Finder)
 - Created lazily: tries immediately, falls back to `ADDON_LOADED` event for `Blizzard_PVPUI`, or hooks `PVEFrame:OnShow`
+
+### M+ Tab Button
+- A `UIPanelButtonTemplate` button parented to `ChallengesFrame` (only visible on Mythic+ tab)
+- Same lazy-loading pattern via `ADDON_LOADED` for `Blizzard_ChallengesUI`
+- Both buttons share a single `PVEFrame:OnShow` hook and `ADDON_LOADED` listener
+
+### Addon Compartment
+- Managed in code (not via TOC directives) to allow a settings checkbox toggle
+- `AddonCompartmentFrame:RegisterAddon()` / manual removal from `registeredAddons` table
+- Controlled by `hideCompartmentIcon` setting
+
+### Built-in Addon Settings Panel
+- Registered via `Settings.RegisterCanvasLayoutCategory` (modern) or `InterfaceOptions_AddCategory` (legacy)
+- Contains "Open Warband Ratings" button and support links (PayPal, Patreon, CurseForge, GitHub)
+- URL popup with copy-friendly EditBox
 
 ## Sorting
 Characters are sorted by class (alphabetical by `classFilename`), then by name within the same class.
