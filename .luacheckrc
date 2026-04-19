@@ -9,6 +9,7 @@ read_globals = {
     "UISpecialFrames",
     "PVEFrame",
     "PVPUIFrame",
+    "ChallengesFrame",
     "Minimap",
     "GameTooltip",
     "GetCursorPosition",

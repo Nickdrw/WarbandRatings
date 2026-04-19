@@ -571,6 +571,49 @@ function UI.AttachPvPButton()
 end
 
 ------------------------------------------------------------
+-- M+ Tab Button (Mythic+ Dungeons)
+------------------------------------------------------------
+local mplusButtonCreated = false
+
+local function CreateMPlusButton()
+    if mplusButtonCreated then return end
+    if not ChallengesFrame then return end
+    mplusButtonCreated = true
+
+    local btn = CreateFrame("Button", "WarbandRatingsMPlusButton", ChallengesFrame, "UIPanelButtonTemplate")
+    btn:SetSize(130, 22)
+    btn:SetFrameStrata("HIGH")
+    -- Place on the right, just above the dungeon icon grid
+    btn:SetPoint("RIGHT", ChallengesFrame, "RIGHT", -8, -120)
+    btn:SetText("Warband Ratings")
+    btn:SetScript("OnClick", function()
+        UI.Toggle()
+    end)
+end
+
+function UI.AttachMPlusButton()
+    if ChallengesFrame then
+        CreateMPlusButton()
+        return
+    end
+
+    local loader = CreateFrame("Frame")
+    loader:RegisterEvent("ADDON_LOADED")
+    loader:SetScript("OnEvent", function(self, _, loadedAddon)
+        if loadedAddon == "Blizzard_ChallengesUI" then
+            CreateMPlusButton()
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+    end)
+
+    if PVEFrame then
+        PVEFrame:HookScript("OnShow", function()
+            C_Timer.After(0.1, CreateMPlusButton)
+        end)
+    end
+end
+
+------------------------------------------------------------
 -- Show with settings panel open
 ------------------------------------------------------------
 function UI.ShowWithSettings()

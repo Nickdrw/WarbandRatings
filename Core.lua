@@ -24,6 +24,7 @@ eventFrame:SetScript("OnEvent", function(_, event)
         end)
 
         UI.AttachPvPButton()
+        UI.AttachMPlusButton()
         UI.CreateMinimapButton()
         UI.RegisterAddonSettings()
         UI.UpdateCompartmentVisibility()
