@@ -5,6 +5,8 @@ local UI = ns.UI
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("CRITERIA_UPDATE")
 eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 
@@ -27,6 +29,18 @@ eventFrame:SetScript("OnEvent", function(_, event)
         UI.CreateMinimapButton()
         UI.RegisterAddonSettings()
         UI.UpdateCompartmentVisibility()
+
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- Request achievement/statistics data from server so GetStatistic() returns real values.
+        -- The server responds with CRITERIA_UPDATE, which will trigger a re-collect.
+        if RequestAchievementData then
+            RequestAchievementData()
+        end
+
+    elseif event == "CRITERIA_UPDATE" then
+        -- Statistics are now available from the server; update HK and other stat columns.
+        DataCollection.CollectCurrentCharacter()
+        UI.RefreshTable()
 
     elseif event == "PVP_RATED_STATS_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
         -- Re-collect when PvP stats arrive or spec changes

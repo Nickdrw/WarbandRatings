@@ -2,9 +2,10 @@ local _, ns = ...
 ns.UI = {}
 local UI = ns.UI
 local Database = ns.Database
+local DataCollection = ns.DataCollection
 local Utils = ns.Utils
 
-local WINDOW_WIDTH = 780
+local WINDOW_WIDTH = 780 -- initial size, resized dynamically in RefreshTable
 local WINDOW_HEIGHT = 450
 local SUBROW_HEIGHT = 30
 local HEADER_HEIGHT = 28
@@ -240,6 +241,71 @@ function UI.CreateSettingsPanel()
     UI.CreateCheckbox(settingsPanel, "Hide compartment icon", "hideCompartmentIcon", yOffset, function()
         UI.UpdateCompartmentVisibility()
     end)
+    yOffset = yOffset - 38
+    local filtersBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
+    filtersBtn:SetSize(120, 22)
+    filtersBtn:SetPoint("TOPLEFT", 12, yOffset)
+    filtersBtn:SetText("Filters")
+    filtersBtn:SetScript("OnClick", function()
+        UI.ToggleFiltersWindow()
+    end)
+end
+
+------------------------------------------------------------
+-- Filters Window
+------------------------------------------------------------
+local filtersWindow
+
+function UI.ToggleFiltersWindow()
+    if filtersWindow and filtersWindow:IsShown() then
+        filtersWindow:Hide()
+        return
+    end
+    if not filtersWindow then
+        filtersWindow = CreateFrame("Frame", "WarbandRatingsFiltersWindow", UIParent, "BasicFrameTemplateWithInset")
+        tinsert(UISpecialFrames, "WarbandRatingsFiltersWindow")
+        filtersWindow:SetSize(220, 44 + #Database.RATING_COLUMNS * 26)
+        filtersWindow:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", mainFrame:GetRight() + 4, mainFrame:GetTop())
+        filtersWindow:SetMovable(true)
+        filtersWindow:EnableMouse(true)
+        filtersWindow:RegisterForDrag("LeftButton")
+        filtersWindow:SetScript("OnDragStart", filtersWindow.StartMoving)
+        filtersWindow:SetScript("OnDragStop", filtersWindow.StopMovingOrSizing)
+        filtersWindow:SetFrameStrata("DIALOG")
+        filtersWindow:SetClampedToScreen(true)
+        filtersWindow.TitleText:SetText("Filters")
+
+        local yOff = -30
+        local hiddenColumns = Database.GetSettings().hiddenColumns
+
+        for _, col in ipairs(Database.RATING_COLUMNS) do
+            local cb = CreateFrame("CheckButton", nil, filtersWindow, "InterfaceOptionsCheckButtonTemplate")
+            cb:SetPoint("TOPLEFT", 10, yOff)
+            cb.Text:SetText(col.label)
+            cb.Text:SetFontObject("GameFontNormalSmall")
+            cb:SetChecked(not hiddenColumns[col.key])
+            cb.columnKey = col.key
+            cb:SetScript("OnClick", function(self)
+                local hidden = Database.GetSettings().hiddenColumns
+                if self:GetChecked() then
+                    hidden[self.columnKey] = nil
+                else
+                    hidden[self.columnKey] = true
+                end
+                UI.RefreshTable()
+            end)
+            yOff = yOff - 26
+        end
+    else
+        -- Refresh checkbox states when reopening
+        local hiddenColumns = Database.GetSettings().hiddenColumns
+        for _, child in ipairs({ filtersWindow:GetChildren() }) do
+            if child.columnKey then
+                child:SetChecked(not hiddenColumns[child.columnKey])
+            end
+        end
+    end
+    filtersWindow:Show()
 end
 
 function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
@@ -325,13 +391,57 @@ function UI.RefreshTable()
     end
     for _, col in ipairs(columns) do
         local w = ColWidth(col)
-        local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
-        fs:SetWidth(w)
-        fs:SetJustifyH("CENTER")
-        fs:SetText(col.label)
-        fs:Show()
-        headerRow.cells[#headerRow.cells + 1] = fs
+        if col.currencyID then
+            -- Render currency icon instead of text
+            local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(col.currencyID)
+            local iconID = info and info.iconFileID
+            if iconID then
+                local ico = headerRow:CreateTexture(nil, "OVERLAY")
+                ico:SetSize(20, 20)
+                ico:SetPoint("LEFT", headerRow, "LEFT", hx + (w - 20) / 2, 0)
+                ico:SetTexture(iconID)
+                ico:Show()
+                headerRow.cells[#headerRow.cells + 1] = ico
+            else
+                local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
+                fs:SetWidth(w)
+                fs:SetJustifyH("CENTER")
+                fs:SetText(col.label)
+                fs:Show()
+                headerRow.cells[#headerRow.cells + 1] = fs
+            end
+        elseif col.crests then
+            -- Render crest icons in header (highest to lowest, skip lowest tier)
+            local iconSize = 16
+            local gap = 2
+            local displayCrests = {}
+            for i = #col.crests, 2, -1 do  -- skip index 1 (adventurer)
+                displayCrests[#displayCrests + 1] = col.crests[i]
+            end
+            local totalW = #displayCrests * iconSize + (#displayCrests - 1) * gap
+            local startX = hx + (w - totalW) / 2
+            for i, crest in ipairs(displayCrests) do
+                local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(crest.currencyID)
+                local iconID = info and info.iconFileID
+                if iconID then
+                    local ico = headerRow:CreateTexture(nil, "OVERLAY")
+                    ico:SetSize(iconSize, iconSize)
+                    ico:SetPoint("LEFT", headerRow, "LEFT", startX + (i - 1) * (iconSize + gap), 0)
+                    ico:SetTexture(iconID)
+                    ico:Show()
+                    headerRow.cells[#headerRow.cells + 1] = ico
+                end
+            end
+        else
+            local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
+            fs:SetWidth(w)
+            fs:SetJustifyH("CENTER")
+            fs:SetText(col.label)
+            fs:Show()
+            headerRow.cells[#headerRow.cells + 1] = fs
+        end
         hx = hx + w
     end
 
@@ -470,14 +580,88 @@ function UI.RefreshTable()
                 end
             else
                 -- Global column: single value, vertically centered
-                local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                fs:SetPoint("LEFT", row, "LEFT", colX, 0)
-                fs:SetWidth(w)
-                fs:SetJustifyH("CENTER")
                 local val = charData.ratings and charData.ratings[col.key]
-                fs:SetText(Utils.FormatRating(val))
-                fs:Show()
-                row.cells[#row.cells + 1] = fs
+                if col.crests then
+                    -- Find highest tier with a value and show its icon + quantity
+                    local highestCrest = nil
+                    for i = #col.crests, 1, -1 do
+                        local c = col.crests[i]
+                        if (charData.ratings and charData.ratings[c.key] or 0) > 0 then
+                            highestCrest = c
+                            break
+                        end
+                    end
+                    if highestCrest then
+                        local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(highestCrest.currencyID)
+                        local iconID = info and info.iconFileID
+                        local textW = 36
+                        local totalW = (iconID and (ICON_SIZE + 2) or 0) + textW
+                        local startX = colX + (w - totalW) / 2
+                        if iconID then
+                            local ico = row:CreateTexture(nil, "ARTWORK")
+                            ico:SetSize(ICON_SIZE, ICON_SIZE)
+                            ico:SetPoint("LEFT", row, "LEFT", startX, 0)
+                            ico:SetTexture(iconID)
+                            ico:Show()
+                            row.cells[#row.cells + 1] = ico
+                            startX = startX + ICON_SIZE + 2
+                        end
+                        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                        fs:SetPoint("LEFT", row, "LEFT", startX, 0)
+                        fs:SetWidth(textW)
+                        fs:SetJustifyH("CENTER")
+                        fs:SetText(tostring(val))
+                        fs:Show()
+                        row.cells[#row.cells + 1] = fs
+                    else
+                        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                        fs:SetPoint("LEFT", row, "LEFT", colX, 0)
+                        fs:SetWidth(w)
+                        fs:SetJustifyH("CENTER")
+                        fs:SetText("-")
+                        fs:Show()
+                        row.cells[#row.cells + 1] = fs
+                    end
+                else
+                    local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                    fs:SetPoint("LEFT", row, "LEFT", colX, 0)
+                    fs:SetWidth(w)
+                    fs:SetJustifyH("CENTER")
+                    local formatFn = col.formatFn or Utils.FormatRating
+                    fs:SetText(formatFn(val))
+                    fs:Show()
+                    row.cells[#row.cells + 1] = fs
+                end
+
+                -- Tooltip overlay for crest columns
+                if col.crests then
+                    local overlay = CreateFrame("Frame", nil, row)
+                    overlay:SetPoint("LEFT", row, "LEFT", colX, 0)
+                    overlay:SetSize(w, SUBROW_HEIGHT)
+                    local ratings = charData.ratings
+                    local crestDef = col.crests
+                    overlay:SetScript("OnEnter", function(self)
+                        local hasAny = false
+                        for _, c in ipairs(crestDef) do
+                            if (ratings and ratings[c.key] or 0) > 0 then hasAny = true; break end
+                        end
+                        if not hasAny then return end
+                        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                        for i = #crestDef, 1, -1 do
+                            local c = crestDef[i]
+                            local qty = ratings and ratings[c.key] or 0
+                            local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(c.currencyID)
+                            local iconID = info and info.iconFileID
+                            local line = iconID and ("|T" .. iconID .. ":14:14:0:0|t " .. c.label) or c.label
+                            GameTooltip:AddDoubleLine(line, tostring(qty), 0.8, 0.8, 0.8, 1, 1, 1)
+                        end
+                        GameTooltip:Show()
+                    end)
+                    overlay:SetScript("OnLeave", function()
+                        GameTooltip:Hide()
+                    end)
+                    row.cells[#row.cells + 1] = overlay
+                end
             end
             colX = colX + w
         end
@@ -486,6 +670,14 @@ function UI.RefreshTable()
     end
 
     scrollChild:SetHeight(math.max(yOff, 1))
+
+    -- Resize window width to fit exactly the visible columns
+    local FRAME_PADDING = 28 -- border + inset padding
+    local contentW = ICON_SIZE + 4 + COL_NAME_WIDTH
+    for _, col in ipairs(columns) do
+        contentW = contentW + ColWidth(col)
+    end
+    mainFrame:SetWidth(math.max(contentW + FRAME_PADDING, 400))
 end
 
 ------------------------------------------------------------
@@ -496,6 +688,7 @@ function UI.Toggle()
     if frame:IsShown() then
         frame:Hide()
     else
+        DataCollection.CollectCurrentCharacter()
         frame:Show()
         UI.RefreshTable()
     end
@@ -503,6 +696,7 @@ end
 
 function UI.Show()
     local frame = UI.CreateMainFrame()
+    DataCollection.CollectCurrentCharacter()
     frame:Show()
     UI.RefreshTable()
 end

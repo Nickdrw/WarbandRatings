@@ -27,7 +27,26 @@ Database.GLOBAL_COLUMNS = {
     { key = "arena2v2",     label = "2v2",           bracketIndex = 1 },
     { key = "arena3v3",     label = "3v3",           bracketIndex = 2 },
     { key = "rbg10v10",     label = "10v10",         bracketIndex = 4 },
+    { key = "honor",        label = "Honor",         currencyID = 1792, headerIcon = true },
+    { key = "conquest",     label = "Conquest",      currencyID = 1602, headerIcon = true },
+    { key = "hk",           label = "HK",            statID = 588,     formatFn = Utils.FormatNumber,
+      details = {
+          { label = "World",         key = "hk_world",  statID = 381 },
+          { label = "Arena",         key = "hk_arena",  statID = 383 },
+          { label = "Battlegrounds", key = "hk_bg",     statID = 382 },
+      }
+    },
     { key = "mythicPlus",   label = "Mythic+",       bracketIndex = nil },
+    -- Crests: current season tiers from lowest to highest.
+    { key = "crests",       label = "Crests",
+      crests = {
+          { label = "Adventurer Dawncrest", key = "crest_adventurer", currencyID = 3383 },
+          { label = "Veteran Dawncrest",    key = "crest_veteran",    currencyID = 3341 },
+          { label = "Champion Dawncrest",   key = "crest_champion",   currencyID = 3343 },
+          { label = "Hero Dawncrest",       key = "crest_hero",       currencyID = 3345 },
+          { label = "Myth Dawncrest",       key = "crest_myth",       currencyID = 3347 },
+      }
+    },
 }
 
 -- All columns in display order
@@ -54,14 +73,17 @@ function Database.Init()
         WarbandRatingsDB.settings = {
             hideNoRating = false,
             hideEmptyColumns = false,
-            hideNonMaxLevel = true,
+            hideNonMaxLevel = false,
         }
     end
     if WarbandRatingsDB.settings.hideNonMaxLevel == nil then
-        WarbandRatingsDB.settings.hideNonMaxLevel = true
+        WarbandRatingsDB.settings.hideNonMaxLevel = false
     end
     if WarbandRatingsDB.settings.minimapPos == nil then
         WarbandRatingsDB.settings.minimapPos = 220
+    end
+    if WarbandRatingsDB.settings.hiddenColumns == nil then
+        WarbandRatingsDB.settings.hiddenColumns = {}
     end
     Database.Migrate()
 end
@@ -106,6 +128,15 @@ function Database.SaveCharacter(data)
         existing.classFilename = data.classFilename
         existing.classID = data.classID
         existing.level = data.level
+        -- For stat-based columns (e.g. HK), don't overwrite a known value with 0
+        -- if the server hasn't returned stats yet this session.
+        if existing.ratings then
+            for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+                if col.statID and (data.ratings[col.key] or 0) == 0 and (existing.ratings[col.key] or 0) > 0 then
+                    data.ratings[col.key] = existing.ratings[col.key]
+                end
+            end
+        end
         existing.ratings = data.ratings
         existing.lastUpdated = data.lastUpdated
         if data.currentSpecID and data.currentSpecID ~= 0 then
@@ -121,16 +152,38 @@ end
 -- Sorted by name-realm. specs sorted by specID.
 function Database.GetFilteredCharacterGroups()
     local settings = Database.GetSettings()
-    local maxLevel = settings.hideNonMaxLevel
-        and (GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80)
+    local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
     local groups = {}
 
     for _, charData in pairs(WarbandRatingsDB.characters) do
         local skip = false
 
         -- Filter: hide non-max-level characters
-        if maxLevel and (charData.level or 0) < maxLevel then
+        if settings.hideNonMaxLevel and (charData.level or 0) < maxLevel then
             skip = true
+        end
+
+        -- Zero out PvP bracket ratings for sub-max-level characters at display time,
+        -- so stale stored data from before this logic existed is never shown.
+        if not skip and (charData.level or 0) < maxLevel then
+            local patchedRatings = {}
+            for k, v in pairs(charData.ratings or {}) do patchedRatings[k] = v end
+            for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+                if col.bracketIndex then patchedRatings[col.key] = 0 end
+            end
+            local patchedSpecRatings = {}
+            for specID, sr in pairs(charData.specRatings or {}) do
+                local psr = {}
+                for k, v in pairs(sr) do psr[k] = v end
+                for _, col in ipairs(Database.SPEC_COLUMNS) do
+                    if col.bracketIndex then psr[col.key] = 0 end
+                end
+                patchedSpecRatings[specID] = psr
+            end
+            -- Use a shallow copy so we don't mutate SavedVariables
+            charData = Utils.ShallowCopy(charData)
+            charData.ratings = patchedRatings
+            charData.specRatings = patchedSpecRatings
         end
 
         -- Collect specs
@@ -177,6 +230,11 @@ function Database.GetFilteredCharacterGroups()
     end
 
     table.sort(groups, function(a, b)
+        local levelA = a.charData.level or 0
+        local levelB = b.charData.level or 0
+        if levelA ~= levelB then
+            return levelA > levelB  -- higher level first
+        end
         local classA = a.charData.classFilename or ""
         local classB = b.charData.classFilename or ""
         if classA ~= classB then
@@ -190,12 +248,20 @@ end
 -- For column visibility, check across all groups and their specs.
 function Database.GetVisibleColumns(groups)
     local settings = Database.GetSettings()
+    local hiddenColumns = settings.hiddenColumns or {}
     if not settings.hideEmptyColumns then
-        return Database.RATING_COLUMNS
+        local visible = {}
+        for _, col in ipairs(Database.RATING_COLUMNS) do
+            if not hiddenColumns[col.key] then
+                visible[#visible + 1] = col
+            end
+        end
+        return visible
     end
     local visible = {}
     for _, col in ipairs(Database.RATING_COLUMNS) do
-        local found = false
+        if not hiddenColumns[col.key] then
+            local found = false
         for _, grp in ipairs(groups) do
             if Database.IsSpecColumn(col) then
                 for _, specID in ipairs(grp.specs) do
@@ -213,8 +279,9 @@ function Database.GetVisibleColumns(groups)
             if found then break end
         end
         if found then
-            visible[#visible + 1] = col
-        end
+                visible[#visible + 1] = col
+            end
+        end -- if not hiddenColumns
     end
     return visible
 end

@@ -9,6 +9,7 @@ read_globals = {
     "UISpecialFrames",
     "PVEFrame",
     "ConquestFrame",
+    "PVPUIFrame",
     "ChallengesFrame",
     "Minimap",
     "GameTooltip",
@@ -35,8 +36,15 @@ read_globals = {
     "GetPersonalRatedInfo",
     "RequestRatedInfo",
 
+    -- Statistics
+    "GetStatistic",
+    "RequestAchievementData",
+
     -- M+
     "C_ChallengeMode",
+
+    -- Currency
+    "C_CurrencyInfo",
 
     -- Misc
     "C_Timer",

@@ -28,6 +28,24 @@ function Utils.FormatRating(value)
     return tostring(value)
 end
 
+-- Returns a display string for large integer stats (e.g. Honorable Kills)
+function Utils.FormatNumber(value)
+    if not value or value == 0 then return "-" end
+    if value >= 1000000 then
+        return string.format("%.1fM", value / 1000000)
+    elseif value >= 10000 then
+        return string.format("%dk", math.floor(value / 1000))
+    end
+    return tostring(value)
+end
+
+-- Shallow copy of a table (top-level keys only)
+function Utils.ShallowCopy(t)
+    local copy = {}
+    for k, v in pairs(t) do copy[k] = v end
+    return copy
+end
+
 -- Spec icon texture path from specID
 function Utils.GetSpecIcon(specID)
     if not specID or specID == 0 then return nil end
