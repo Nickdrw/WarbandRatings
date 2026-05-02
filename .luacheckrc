@@ -22,6 +22,7 @@ read_globals = {
     -- Unit info
     "UnitName",
     "UnitClass",
+    "UnitGUID",
     "UnitLevel",
     "GetRealmName",
     "GetNormalizedRealmName",
@@ -33,7 +34,14 @@ read_globals = {
     "GetSpecializationInfoByID",
 
     -- PvP
+    "C_PvP",
+    "MAX_BATTLEFIELD_QUEUES",
+    "GetBattlefieldStatus",
+    "GetBattlefieldTeamInfo",
+    "GetBattlefieldWinner",
+    "GetNumBattlefieldScores",
     "GetPersonalRatedInfo",
+    "IsArenaSkirmish",
     "RequestRatedInfo",
 
     -- Statistics
@@ -48,6 +56,7 @@ read_globals = {
 
     -- Misc
     "C_Timer",
+    "DEFAULT_CHAT_FRAME",
     "tinsert",
     "time",
     "AddonCompartmentFrame",

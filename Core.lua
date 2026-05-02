@@ -8,7 +8,21 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CRITERIA_UPDATE")
 eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
+eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+eventFrame:RegisterEvent("PVP_MATCH_COMPLETE")
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+
+local function TryCollectLastMatchMMRWithRetries()
+    local delays = { 0, 0.5, 1.5, 3, 6, 10 }
+    for _, delay in ipairs(delays) do
+        C_Timer.After(delay, function()
+            if DataCollection.CollectLastMatchMMR() then
+                UI.RefreshTable()
+            end
+        end)
+    end
+end
 
 eventFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
@@ -37,24 +51,38 @@ eventFrame:SetScript("OnEvent", function(_, event)
             RequestAchievementData()
         end
 
+        DataCollection.UpdateActivePVPContext()
+        C_Timer.After(1, function()
+            TryCollectLastMatchMMRWithRetries()
+        end)
+
     elseif event == "CRITERIA_UPDATE" then
         -- Statistics are now available from the server; update HK and other stat columns.
         DataCollection.CollectCurrentCharacter()
         UI.RefreshTable()
 
     elseif event == "PVP_RATED_STATS_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
+        DataCollection.UpdateActivePVPContext()
         -- Re-collect when PvP stats arrive or spec changes
         C_Timer.After(0.5, function()
             DataCollection.CollectCurrentCharacter()
             UI.RefreshTable()
         end)
+
+        if event == "PVP_RATED_STATS_UPDATE" then
+            TryCollectLastMatchMMRWithRetries()
+        end
+
+    elseif event == "UPDATE_BATTLEFIELD_SCORE" or event == "PVP_MATCH_COMPLETE" or event == "ZONE_CHANGED_NEW_AREA" then
+        DataCollection.UpdateActivePVPContext()
+        TryCollectLastMatchMMRWithRetries()
     end
 end)
 
 -- Slash command for convenience
 SLASH_WARBANDRATINGS1 = "/warbandratings"
 SLASH_WARBANDRATINGS2 = "/wr"
-SlashCmdList["WARBANDRATINGS"] = function(msg)
+SlashCmdList["WARBANDRATINGS"] = function()
     UI.Toggle()
 end
 

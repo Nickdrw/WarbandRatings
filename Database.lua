@@ -27,8 +27,8 @@ Database.GLOBAL_COLUMNS = {
     { key = "arena2v2",     label = "2v2",           bracketIndex = 1 },
     { key = "arena3v3",     label = "3v3",           bracketIndex = 2 },
     { key = "rbg10v10",     label = "10v10",         bracketIndex = 4 },
-    { key = "honor",        label = "Honor",         currencyID = 1792, headerIcon = true },
-    { key = "conquest",     label = "Conquest",      currencyID = 1602, headerIcon = true },
+    { key = "honor",        label = "Honor",         currencyID = 1792 },
+    { key = "conquest",     label = "Conquest",      currencyID = 1602 },
     { key = "hk",           label = "HK",            statID = 588,     formatFn = Utils.FormatNumber,
       details = {
           { label = "World",         key = "hk_world",  statID = 381 },
@@ -58,8 +58,23 @@ for _, c in ipairs(Database.GLOBAL_COLUMNS) do Database.RATING_COLUMNS[#Database
 local specColumnKeys = {}
 for _, c in ipairs(Database.SPEC_COLUMNS) do specColumnKeys[c.key] = true end
 
+local pvpColumnByBracketIndex = {}
+for _, c in ipairs(Database.RATING_COLUMNS) do
+    if c.bracketIndex then
+        pvpColumnByBracketIndex[c.bracketIndex] = c
+    end
+end
+
 function Database.IsSpecColumn(col)
     return specColumnKeys[col.key] or false
+end
+
+function Database.IsPVPColumn(col)
+    return col and col.bracketIndex ~= nil
+end
+
+function Database.GetPVPColumnByBracketIndex(bracketIndex)
+    return pvpColumnByBracketIndex[bracketIndex]
 end
 
 function Database.Init()
@@ -74,10 +89,14 @@ function Database.Init()
             hideNoRating = false,
             hideEmptyColumns = false,
             hideNonMaxLevel = false,
+            hideMMR = false,
         }
     end
     if WarbandRatingsDB.settings.hideNonMaxLevel == nil then
         WarbandRatingsDB.settings.hideNonMaxLevel = false
+    end
+    if WarbandRatingsDB.settings.hideMMR == nil then
+        WarbandRatingsDB.settings.hideMMR = false
     end
     if WarbandRatingsDB.settings.minimapPos == nil then
         WarbandRatingsDB.settings.minimapPos = 220
@@ -91,23 +110,28 @@ end
 -- Migrate old flat-ratings format to new per-spec format
 function Database.Migrate()
     for _, charData in pairs(WarbandRatingsDB.characters) do
+        if charData.level == nil then
+            charData.level = 0
+        end
+
         if charData.ratings and not charData.specRatings then
             charData.specRatings = {}
-            local specID = charData.specID or 0
-            if specID ~= 0 then
-                charData.specRatings[specID] = {}
-                for _, sc in ipairs(Database.SPEC_COLUMNS) do
-                    charData.specRatings[specID][sc.key] = charData.ratings[sc.key] or 0
-                end
-            end
-            -- Move global ratings, remove spec keys from flat ratings
+            local specID = tonumber(charData.specID) or tonumber(charData.currentSpecID) or 0
+            charData.specRatings[specID] = {}
             for _, sc in ipairs(Database.SPEC_COLUMNS) do
+                charData.specRatings[specID][sc.key] = charData.ratings[sc.key] or 0
                 charData.ratings[sc.key] = nil
             end
         end
         -- Ensure specRatings exists
         if not charData.specRatings then
             charData.specRatings = {}
+        end
+        if not charData.lastMMR then
+            charData.lastMMR = {}
+        end
+        if not charData.specLastMMR then
+            charData.specLastMMR = {}
         end
     end
 end
@@ -118,6 +142,12 @@ end
 
 function Database.SetSetting(key, value)
     WarbandRatingsDB.settings[key] = value
+end
+
+local function PreserveKnownStatValue(existingRatings, newRatings, key)
+    if (newRatings[key] or 0) == 0 and (existingRatings[key] or 0) > 0 then
+        newRatings[key] = existingRatings[key]
+    end
 end
 
 function Database.SaveCharacter(data)
@@ -132,13 +162,28 @@ function Database.SaveCharacter(data)
         -- if the server hasn't returned stats yet this session.
         if existing.ratings then
             for _, col in ipairs(Database.GLOBAL_COLUMNS) do
-                if col.statID and (data.ratings[col.key] or 0) == 0 and (existing.ratings[col.key] or 0) > 0 then
-                    data.ratings[col.key] = existing.ratings[col.key]
+                if col.statID then
+                    PreserveKnownStatValue(existing.ratings, data.ratings, col.key)
+                    if col.details then
+                        for _, detail in ipairs(col.details) do
+                            PreserveKnownStatValue(existing.ratings, data.ratings, detail.key)
+                        end
+                    end
                 end
             end
         end
         existing.ratings = data.ratings
+        existing.lastMMR = existing.lastMMR or {}
+        if data.lastMMR then
+            for k, v in pairs(data.lastMMR) do
+                if not Utils.IsEmptyRating(v) then
+                    existing.lastMMR[k] = v
+                end
+            end
+        end
         existing.lastUpdated = data.lastUpdated
+        existing.specRatings = existing.specRatings or {}
+        existing.specLastMMR = existing.specLastMMR or {}
         if data.currentSpecID and data.currentSpecID ~= 0 then
             existing.specRatings[data.currentSpecID] = data.currentSpecRatings
         end
@@ -147,11 +192,38 @@ function Database.SaveCharacter(data)
     end
 end
 
+function Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
+    mmr = tonumber(mmr)
+    if not mmr or mmr <= 0 then return false end
+
+    local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
+    if not col then return false end
+
+    local key = Utils.CharKey(name, realm)
+    local existing = WarbandRatingsDB.characters[key]
+    if not existing then return false end
+
+    if Database.IsSpecColumn(col) then
+        specID = tonumber(specID)
+        if not specID or specID == 0 then return false end
+        existing.specLastMMR = existing.specLastMMR or {}
+        existing.specLastMMR[specID] = existing.specLastMMR[specID] or {}
+        existing.specLastMMR[specID][col.key] = mmr
+    else
+        existing.lastMMR = existing.lastMMR or {}
+        existing.lastMMR[col.key] = mmr
+    end
+
+    existing.lastUpdated = time()
+    return true
+end
+
 -- Returns grouped character data for display.
 -- Each entry = { charData = ..., specs = { specID1, specID2, ... } }
 -- Sorted by name-realm. specs sorted by specID.
 function Database.GetFilteredCharacterGroups()
     local settings = Database.GetSettings()
+    local showMMR = not settings.hideMMR
     local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
     local groups = {}
 
@@ -171,6 +243,11 @@ function Database.GetFilteredCharacterGroups()
             for _, col in ipairs(Database.GLOBAL_COLUMNS) do
                 if col.bracketIndex then patchedRatings[col.key] = 0 end
             end
+            local patchedLastMMR = {}
+            for k, v in pairs(charData.lastMMR or {}) do patchedLastMMR[k] = v end
+            for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+                if col.bracketIndex then patchedLastMMR[col.key] = 0 end
+            end
             local patchedSpecRatings = {}
             for specID, sr in pairs(charData.specRatings or {}) do
                 local psr = {}
@@ -180,10 +257,21 @@ function Database.GetFilteredCharacterGroups()
                 end
                 patchedSpecRatings[specID] = psr
             end
+            local patchedSpecLastMMR = {}
+            for specID, sr in pairs(charData.specLastMMR or {}) do
+                local psr = {}
+                for k, v in pairs(sr) do psr[k] = v end
+                for _, col in ipairs(Database.SPEC_COLUMNS) do
+                    if col.bracketIndex then psr[col.key] = 0 end
+                end
+                patchedSpecLastMMR[specID] = psr
+            end
             -- Use a shallow copy so we don't mutate SavedVariables
             charData = Utils.ShallowCopy(charData)
             charData.ratings = patchedRatings
+            charData.lastMMR = patchedLastMMR
             charData.specRatings = patchedSpecRatings
+            charData.specLastMMR = patchedSpecLastMMR
         end
 
         -- Collect specs
@@ -206,13 +294,22 @@ function Database.GetFilteredCharacterGroups()
                     hasAny = true
                     break
                 end
+                if showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(charData.lastMMR and charData.lastMMR[col.key]) then
+                    hasAny = true
+                    break
+                end
             end
             if not hasAny then
                 for _, specID in ipairs(specs) do
                     local sr = charData.specRatings and charData.specRatings[specID]
+                    local sm = charData.specLastMMR and charData.specLastMMR[specID]
                     if sr then
                         for _, col in ipairs(Database.SPEC_COLUMNS) do
                             if not Utils.IsEmptyRating(sr[col.key]) then
+                                hasAny = true
+                                break
+                            end
+                            if showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(sm and sm[col.key]) then
                                 hasAny = true
                                 break
                             end
@@ -249,6 +346,7 @@ end
 function Database.GetVisibleColumns(groups)
     local settings = Database.GetSettings()
     local hiddenColumns = settings.hiddenColumns or {}
+    local showMMR = not settings.hideMMR
     if not settings.hideEmptyColumns then
         local visible = {}
         for _, col in ipairs(Database.RATING_COLUMNS) do
@@ -266,13 +364,16 @@ function Database.GetVisibleColumns(groups)
             if Database.IsSpecColumn(col) then
                 for _, specID in ipairs(grp.specs) do
                     local sr = grp.charData.specRatings and grp.charData.specRatings[specID]
-                    if not Utils.IsEmptyRating(sr and sr[col.key]) then
+                    local sm = grp.charData.specLastMMR and grp.charData.specLastMMR[specID]
+                    if not Utils.IsEmptyRating(sr and sr[col.key])
+                        or (showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(sm and sm[col.key])) then
                         found = true
                         break
                     end
                 end
             else
-                if not Utils.IsEmptyRating(grp.charData.ratings and grp.charData.ratings[col.key]) then
+                if not Utils.IsEmptyRating(grp.charData.ratings and grp.charData.ratings[col.key])
+                    or (showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(grp.charData.lastMMR and grp.charData.lastMMR[col.key])) then
                     found = true
                 end
             end

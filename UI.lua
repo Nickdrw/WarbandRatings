@@ -15,8 +15,12 @@ local COL_NAME_WIDTH = 220
 local COL_RATING_WIDTH = 80
 local SETTINGS_WIDTH = 220
 local COL_SPEC_RATING_WIDTH = 100
+local RATING_TEXT_HEIGHT = 14
+local MMR_LEGEND_HEIGHT = 24
+local MMR_LEGEND_BOTTOM_OFFSET = 10
+local MMR_LEGEND_GAP = 4
 
-local mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow
+local mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, mmrLegendFrame
 local rowFrames = {}
 local minimapButton
 
@@ -194,6 +198,32 @@ function UI.CreateScrollArea()
     scrollFrame:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, -2)
     scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -8, 10)
 
+    mmrLegendFrame = CreateFrame("Frame", nil, mainFrame)
+    mmrLegendFrame:SetHeight(MMR_LEGEND_HEIGHT)
+    mmrLegendFrame:Hide()
+
+    mmrLegendFrame.bg = mmrLegendFrame:CreateTexture(nil, "BACKGROUND")
+    mmrLegendFrame.bg:SetAllPoints()
+    mmrLegendFrame.bg:SetColorTexture(0, 0, 0, 0.65)
+
+    mmrLegendFrame.border = {}
+    for i = 1, 4 do
+        mmrLegendFrame.border[i] = mmrLegendFrame:CreateTexture(nil, "BORDER")
+        mmrLegendFrame.border[i]:SetColorTexture(0.72, 0.58, 0.18, 0.8)
+    end
+    mmrLegendFrame.border[1]:SetPoint("TOPLEFT")
+    mmrLegendFrame.border[1]:SetPoint("TOPRIGHT")
+    mmrLegendFrame.border[1]:SetHeight(1)
+    mmrLegendFrame.border[2]:SetPoint("BOTTOMLEFT")
+    mmrLegendFrame.border[2]:SetPoint("BOTTOMRIGHT")
+    mmrLegendFrame.border[2]:SetHeight(1)
+    mmrLegendFrame.border[3]:SetPoint("TOPLEFT")
+    mmrLegendFrame.border[3]:SetPoint("BOTTOMLEFT")
+    mmrLegendFrame.border[3]:SetWidth(1)
+    mmrLegendFrame.border[4]:SetPoint("TOPRIGHT")
+    mmrLegendFrame.border[4]:SetPoint("BOTTOMRIGHT")
+    mmrLegendFrame.border[4]:SetWidth(1)
+
     scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetWidth(scrollFrame:GetWidth())
     scrollChild:SetHeight(1) -- dynamically resized
@@ -233,6 +263,8 @@ function UI.CreateSettingsPanel()
     UI.CreateCheckbox(settingsPanel, "Hide characters with no rating", "hideNoRating", yOffset)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPanel, "Hide brackets with no rating", "hideEmptyColumns", yOffset)
+    yOffset = yOffset - 30
+    UI.CreateCheckbox(settingsPanel, "Hide MMR for PvP ratings", "hideMMR", yOffset)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPanel, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
         UI.UpdateMinimapVisibility()
@@ -339,6 +371,19 @@ local function ClearRows()
     end
 end
 
+local function ScrollTable(delta)
+    local current = scrollFrame:GetVerticalScroll()
+    local maxScroll = math.max(scrollChild:GetHeight() - scrollFrame:GetHeight(), 0)
+    local newScroll = math.max(0, math.min(current - delta * SUBROW_HEIGHT, maxScroll))
+    scrollFrame:SetVerticalScroll(newScroll)
+end
+
+local function SetRowHovered(row, hovered)
+    if row.hoverBg then
+        row.hoverBg:SetShown(hovered)
+    end
+end
+
 local function GetOrCreateRow(index)
     if rowFrames[index] then
         rowFrames[index]:Show()
@@ -346,23 +391,243 @@ local function GetOrCreateRow(index)
     end
     local row = CreateFrame("Frame", nil, scrollChild)
     row:SetHeight(SUBROW_HEIGHT)
+    row:EnableMouse(true)
+    row:SetScript("OnEnter", function(self)
+        SetRowHovered(self, true)
+    end)
+    row:SetScript("OnLeave", function(self)
+        SetRowHovered(self, false)
+    end)
+    row:SetScript("OnMouseWheel", function(_, delta)
+        ScrollTable(delta)
+    end)
+
+    row.hoverBg = row:CreateTexture(nil, "BACKGROUND", nil, 1)
+    row.hoverBg:SetAllPoints()
+    row.hoverBg:SetColorTexture(1, 0.82, 0.25, 0.10)
+    row.hoverBg:Hide()
+
     rowFrames[index] = row
     return row
 end
 
-local function StripRow(row)
-    -- Remove old child regions to avoid stale textures/fontstrings
-    if row.cells then
-        for _, cell in ipairs(row.cells) do
-            cell:Hide()
+local function ResetCell(cell)
+    cell:Hide()
+    cell:ClearAllPoints()
+    if cell.SetText then
+        cell:SetText("")
+    end
+    if cell.SetTexture then
+        cell:SetTexture(nil)
+    end
+    if cell.SetTexCoord then
+        cell:SetTexCoord(0, 1, 0, 1)
+    end
+    if cell.SetScript then
+        cell:SetScript("OnEnter", nil)
+        cell:SetScript("OnLeave", nil)
+        cell:EnableMouse(false)
+    end
+end
+
+local function ResetCells(owner)
+    if owner.cells then
+        for _, cell in ipairs(owner.cells) do
+            ResetCell(cell)
         end
     end
-    row.cells = {}
+    owner.cells = {}
+    owner.cellPoolIndexes = {}
+end
+
+local function AcquirePooledCell(owner, key, createFn)
+    owner.cellPools = owner.cellPools or {}
+    owner.cellPoolIndexes = owner.cellPoolIndexes or {}
+
+    local pool = owner.cellPools[key]
+    if not pool then
+        pool = {}
+        owner.cellPools[key] = pool
+    end
+
+    local index = (owner.cellPoolIndexes[key] or 0) + 1
+    owner.cellPoolIndexes[key] = index
+
+    local cell = pool[index]
+    if not cell then
+        cell = createFn()
+        pool[index] = cell
+    end
+
+    cell:ClearAllPoints()
+    cell:Show()
+    owner.cells[#owner.cells + 1] = cell
+    return cell
+end
+
+local function AcquireFontString(owner, fontObject)
+    return AcquirePooledCell(owner, "font:" .. fontObject, function()
+        return owner:CreateFontString(nil, "OVERLAY", fontObject)
+    end)
+end
+
+local function AcquireTexture(owner, layer)
+    return AcquirePooledCell(owner, "texture:" .. layer, function()
+        return owner:CreateTexture(nil, layer)
+    end)
+end
+
+local function AcquireOverlay(owner)
+    local overlay = AcquirePooledCell(owner, "overlay", function()
+        return CreateFrame("Frame", nil, owner)
+    end)
+    overlay:EnableMouse(true)
+    overlay:SetScript("OnMouseWheel", function(_, delta)
+        ScrollTable(delta)
+    end)
+    return overlay
+end
+
+local function StripRow(row)
+    ResetCells(row)
+    SetRowHovered(row, false)
 end
 
 local function ColWidth(col)
     if Database.IsSpecColumn(col) then return COL_SPEC_RATING_WIDTH end
     return COL_RATING_WIDTH
+end
+
+local function HasLastMMR(mmr)
+    return not Utils.IsEmptyRating(mmr)
+end
+
+local function SetSmallFont(fs, size)
+    local font, _, flags = fs:GetFont()
+    if font then
+        fs:SetFont(font, size, flags)
+    end
+end
+
+local function GetRatingTextY(subY)
+    return subY - (SUBROW_HEIGHT - RATING_TEXT_HEIGHT) / 2
+end
+
+local function AddRatingWithMMRText(row, x, y, w, rating, mmr)
+    local ratingFs = AcquireFontString(row, "GameFontHighlight")
+    ratingFs:SetText(Utils.FormatRating(rating))
+
+    local mmrFs = AcquireFontString(row, "GameFontHighlightSmall")
+    SetSmallFont(mmrFs, 9)
+    mmrFs:SetTextColor(0.55, 0.55, 0.55)
+    mmrFs:SetText(" (" .. Utils.FormatLastMMR(mmr) .. ")")
+
+    local gap = 2
+    local ratingW = math.ceil(ratingFs:GetStringWidth())
+    local mmrW = math.ceil(mmrFs:GetStringWidth())
+    local totalW = ratingW + gap + mmrW
+    local startX = x + (w - totalW) / 2
+
+    ratingFs:SetPoint("TOPLEFT", row, "TOPLEFT", startX, y)
+    ratingFs:SetWidth(ratingW)
+    ratingFs:SetJustifyH("LEFT")
+    ratingFs:Show()
+
+    mmrFs:SetPoint("LEFT", ratingFs, "RIGHT", gap, 1)
+    mmrFs:SetWidth(mmrW)
+    mmrFs:SetJustifyH("LEFT")
+    mmrFs:Show()
+end
+
+local function SetScrollAreaBottom(hasLegend)
+    scrollFrame:ClearAllPoints()
+    scrollFrame:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, -2)
+    if hasLegend then
+        scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -8, MMR_LEGEND_BOTTOM_OFFSET + MMR_LEGEND_HEIGHT + MMR_LEGEND_GAP)
+    else
+        scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -8, 10)
+    end
+end
+
+local function ClearMMRLegend()
+    if not mmrLegendFrame then return end
+    ResetCells(mmrLegendFrame)
+end
+
+local function AddLegendPiece(text, fontObject, color, fontSize)
+    local fs = AcquireFontString(mmrLegendFrame, fontObject)
+    if fontSize then
+        SetSmallFont(fs, fontSize)
+    end
+    if color then
+        fs:SetTextColor(color[1], color[2], color[3])
+    end
+    fs:SetText(text)
+    fs:SetWordWrap(false)
+    fs:SetNonSpaceWrap(false)
+    fs:Show()
+    return fs
+end
+
+local function UpdateMMRLegend(columns, showMMR)
+    if not mmrLegendFrame then return end
+
+    ClearMMRLegend()
+
+    local pvpStartX
+    local pvpWidth = 0
+    local pvpColumnCount = 0
+    local colX = ICON_SIZE + 4 + COL_NAME_WIDTH
+    for _, col in ipairs(columns) do
+        local w = ColWidth(col)
+        if Database.IsPVPColumn(col) then
+            pvpStartX = pvpStartX or colX
+            pvpWidth = pvpWidth + w
+            pvpColumnCount = pvpColumnCount + 1
+        end
+        colX = colX + w
+    end
+
+    if not showMMR or not pvpStartX or pvpWidth <= 0 then
+        mmrLegendFrame:Hide()
+        SetScrollAreaBottom(false)
+        return
+    end
+
+    local frameParent = mainFrame.InsetBg or mainFrame
+    mmrLegendFrame:ClearAllPoints()
+
+    -- Anchor to the right edge of PvP columns so it extends left when shrinking
+    local rightEdgeX = 8 + pvpStartX + pvpWidth
+    mmrLegendFrame:SetPoint("TOPRIGHT", frameParent, "BOTTOMLEFT", rightEdgeX, -5)
+
+    local mutedGold = { 0.86, 0.75, 0.34 }
+    local grey = { 0.55, 0.55, 0.55 }
+    local prefix = AddLegendPiece("PvP ratings are displayed in the format \"", "GameFontNormalSmall", mutedGold)
+    local currentRating = AddLegendPiece("current rating", "GameFontHighlight")
+    local mmr = AddLegendPiece(" (MMR)", "GameFontHighlightSmall", grey, 9)
+    local suffix = AddLegendPiece("\".", "GameFontNormalSmall", mutedGold)
+
+    local gap = 1
+    local totalW = math.ceil(prefix:GetStringWidth())
+        + math.ceil(currentRating:GetStringWidth())
+        + math.ceil(mmr:GetStringWidth())
+        + math.ceil(suffix:GetStringWidth())
+        + gap * 3
+
+    -- Use a fixed width when 3 or fewer columns, otherwise use pvpWidth
+    local frameWidth = pvpColumnCount <= 3 and math.max(pvpWidth, totalW + 20) or pvpWidth
+    mmrLegendFrame:SetWidth(frameWidth)
+    mmrLegendFrame:Show()
+    SetScrollAreaBottom(true)
+
+    local startX = (frameWidth - totalW) / 2
+    local y = -5
+
+    prefix:SetPoint("TOPLEFT", mmrLegendFrame, "TOPLEFT", startX, y)
+    currentRating:SetPoint("LEFT", prefix, "RIGHT", gap, 0)
+    mmr:SetPoint("LEFT", currentRating, "RIGHT", gap, -1)
+    suffix:SetPoint("LEFT", mmr, "RIGHT", gap, 0)
 end
 
 function UI.RefreshTable()
@@ -371,22 +636,21 @@ function UI.RefreshTable()
 
     local groups = Database.GetFilteredCharacterGroups()
     local columns = Database.GetVisibleColumns(groups)
+    local showMMR = not Database.GetSettings().hideMMR
+
+    UpdateMMRLegend(columns, showMMR)
 
     -- Build header
-    if headerRow.cells then
-        for _, c in ipairs(headerRow.cells) do c:Hide() end
-    end
-    headerRow.cells = {}
+    ResetCells(headerRow)
 
     local hx = ICON_SIZE + 4
     do
-        local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        local fs = AcquireFontString(headerRow, "GameFontNormal")
         fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
         fs:SetWidth(COL_NAME_WIDTH)
         fs:SetJustifyH("LEFT")
         fs:SetText("Character")
         fs:Show()
-        headerRow.cells[#headerRow.cells + 1] = fs
         hx = hx + COL_NAME_WIDTH
     end
     for _, col in ipairs(columns) do
@@ -396,20 +660,18 @@ function UI.RefreshTable()
             local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(col.currencyID)
             local iconID = info and info.iconFileID
             if iconID then
-                local ico = headerRow:CreateTexture(nil, "OVERLAY")
+                local ico = AcquireTexture(headerRow, "OVERLAY")
                 ico:SetSize(20, 20)
                 ico:SetPoint("LEFT", headerRow, "LEFT", hx + (w - 20) / 2, 0)
                 ico:SetTexture(iconID)
                 ico:Show()
-                headerRow.cells[#headerRow.cells + 1] = ico
             else
-                local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                local fs = AcquireFontString(headerRow, "GameFontNormal")
                 fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
                 fs:SetWidth(w)
                 fs:SetJustifyH("CENTER")
                 fs:SetText(col.label)
                 fs:Show()
-                headerRow.cells[#headerRow.cells + 1] = fs
             end
         elseif col.crests then
             -- Render crest icons in header (highest to lowest, skip lowest tier)
@@ -425,22 +687,20 @@ function UI.RefreshTable()
                 local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(crest.currencyID)
                 local iconID = info and info.iconFileID
                 if iconID then
-                    local ico = headerRow:CreateTexture(nil, "OVERLAY")
+                    local ico = AcquireTexture(headerRow, "OVERLAY")
                     ico:SetSize(iconSize, iconSize)
                     ico:SetPoint("LEFT", headerRow, "LEFT", startX + (i - 1) * (iconSize + gap), 0)
                     ico:SetTexture(iconID)
                     ico:Show()
-                    headerRow.cells[#headerRow.cells + 1] = ico
                 end
             end
         else
-            local fs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            local fs = AcquireFontString(headerRow, "GameFontNormal")
             fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
             fs:SetWidth(w)
             fs:SetJustifyH("CENTER")
             fs:SetText(col.label)
             fs:Show()
-            headerRow.cells[#headerRow.cells + 1] = fs
         end
         hx = hx + w
     end
@@ -452,12 +712,11 @@ function UI.RefreshTable()
         row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, 0)
         row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
         row:SetHeight(SUBROW_HEIGHT)
-        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+        local fs = AcquireFontString(row, "GameFontDisable")
         fs:SetPoint("LEFT", row, "LEFT", 10, 0)
         fs:SetWidth(400)
         fs:SetText("No characters recorded yet. Log in on your characters to populate data.")
         fs:Show()
-        row.cells[#row.cells + 1] = fs
         scrollChild:SetHeight(SUBROW_HEIGHT)
         return
     end
@@ -467,14 +726,17 @@ function UI.RefreshTable()
     for charIdx, grp in ipairs(groups) do
         local charData = grp.charData
 
-        -- Only expand to subrows if at least one spec column has a rating
-        -- Build list of specs that have a rating in any spec column
+        -- Only expand to subrows if at least one spec column has rating details
+        -- Build list of specs that have a rating or last MMR in any spec column
         local ratedSpecs = {}
         for _, specID in ipairs(grp.specs) do
             local specRatings = charData.specRatings and charData.specRatings[specID]
+            local specMMR = charData.specLastMMR and charData.specLastMMR[specID]
             if specRatings then
                 for _, col in ipairs(columns) do
-                    if Database.IsSpecColumn(col) and not Utils.IsEmptyRating(specRatings[col.key]) then
+                    if Database.IsSpecColumn(col)
+                        and (not Utils.IsEmptyRating(specRatings[col.key])
+                            or (showMMR and Database.IsPVPColumn(col) and HasLastMMR(specMMR and specMMR[col.key]))) then
                         ratedSpecs[#ratedSpecs + 1] = specID
                         break
                     end
@@ -507,30 +769,28 @@ function UI.RefreshTable()
         -- Class icon (vertically centered)
         local classTexture, classCoords = Utils.GetClassIcon(charData.classFilename)
         if classTexture then
-            local ico = row:CreateTexture(nil, "ARTWORK")
+            local ico = AcquireTexture(row, "ARTWORK")
             ico:SetSize(ICON_SIZE, ICON_SIZE)
             ico:SetPoint("LEFT", row, "LEFT", 0, 0)
             ico:SetTexture(classTexture)
             if classCoords then ico:SetTexCoord(unpack(classCoords)) end
             ico:Show()
-            row.cells[#row.cells + 1] = ico
         end
 
         local nameX = ICON_SIZE + 4
 
         -- Character name-realm (vertically centered like class icon)
-        local nameFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        local nameFs = AcquireFontString(row, "GameFontNormal")
         nameFs:SetPoint("LEFT", row, "LEFT", nameX, 0)
         nameFs:SetWidth(COL_NAME_WIDTH)
         nameFs:SetJustifyH("LEFT")
         nameFs:SetWordWrap(false)
         nameFs:SetNonSpaceWrap(false)
-        local displayName = charData.level .. "  " .. charData.name .. "-" .. charData.realm
+        local displayName = (charData.level or "?") .. "  " .. (charData.name or "?") .. "-" .. (charData.realm or "?")
         local cr, cg, cb = Utils.GetClassColor(charData.classFilename)
         nameFs:SetTextColor(cr, cg, cb)
         nameFs:SetText(displayName)
         nameFs:Show()
-        row.cells[#row.cells + 1] = nameFs
 
         -- Rating columns
         local colX = ICON_SIZE + 4 + COL_NAME_WIDTH
@@ -542,41 +802,44 @@ function UI.RefreshTable()
                     for specIdx, specID in ipairs(ratedSpecs) do
                         local specRatings = charData.specRatings and charData.specRatings[specID]
                         local val = specRatings and specRatings[col.key]
+                        local specMMR = charData.specLastMMR and charData.specLastMMR[specID]
+                        local mmr = specMMR and specMMR[col.key]
+                        local hasMMR = showMMR and Database.IsPVPColumn(col) and HasLastMMR(mmr)
                         local subY = -(specIdx - 1) * SUBROW_HEIGHT
 
-                        -- Spec icon (only if this column has a rating)
-                        if not Utils.IsEmptyRating(val) then
+                        -- Spec icon (only if this column has rating details)
+                        if not Utils.IsEmptyRating(val) or hasMMR then
                             local specIcon = Utils.GetSpecIcon(specID)
                             if specIcon then
-                                local ico = row:CreateTexture(nil, "ARTWORK")
+                                local ico = AcquireTexture(row, "ARTWORK")
                                 ico:SetSize(SPEC_ICON_SIZE, SPEC_ICON_SIZE)
                                 local icoY = subY - (SUBROW_HEIGHT - SPEC_ICON_SIZE) / 2
                                 ico:SetPoint("TOPLEFT", row, "TOPLEFT", colX + 2, icoY)
                                 ico:SetTexture(specIcon)
                                 ico:Show()
-                                row.cells[#row.cells + 1] = ico
                             end
                         end
 
                         -- Rating text
-                        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                        local fsY = subY - (SUBROW_HEIGHT - 14) / 2
-                        fs:SetPoint("TOPLEFT", row, "TOPLEFT", colX + SPEC_ICON_SIZE + 4, fsY)
-                        fs:SetWidth(w - SPEC_ICON_SIZE - 6)
-                        fs:SetJustifyH("CENTER")
-                        fs:SetText(Utils.FormatRating(val))
-                        fs:Show()
-                        row.cells[#row.cells + 1] = fs
+                        if hasMMR then
+                            AddRatingWithMMRText(row, colX + SPEC_ICON_SIZE + 4, GetRatingTextY(subY), w - SPEC_ICON_SIZE - 6, val, mmr)
+                        else
+                            local fs = AcquireFontString(row, "GameFontHighlight")
+                            fs:SetPoint("TOPLEFT", row, "TOPLEFT", colX + SPEC_ICON_SIZE + 4, GetRatingTextY(subY))
+                            fs:SetWidth(w - SPEC_ICON_SIZE - 6)
+                            fs:SetJustifyH("CENTER")
+                            fs:SetText(Utils.FormatRating(val))
+                            fs:Show()
+                        end
                     end
                 else
                     -- No spec has a rating: show single centered hyphen (offset to align with spec rating text)
-                    local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                    local fs = AcquireFontString(row, "GameFontHighlight")
                     fs:SetPoint("LEFT", row, "LEFT", colX + SPEC_ICON_SIZE + 4, 0)
                     fs:SetWidth(w - SPEC_ICON_SIZE - 6)
                     fs:SetJustifyH("CENTER")
                     fs:SetText("-")
                     fs:Show()
-                    row.cells[#row.cells + 1] = fs
                 end
             else
                 -- Global column: single value, vertically centered
@@ -598,49 +861,52 @@ function UI.RefreshTable()
                         local totalW = (iconID and (ICON_SIZE + 2) or 0) + textW
                         local startX = colX + (w - totalW) / 2
                         if iconID then
-                            local ico = row:CreateTexture(nil, "ARTWORK")
+                            local ico = AcquireTexture(row, "ARTWORK")
                             ico:SetSize(ICON_SIZE, ICON_SIZE)
                             ico:SetPoint("LEFT", row, "LEFT", startX, 0)
                             ico:SetTexture(iconID)
                             ico:Show()
-                            row.cells[#row.cells + 1] = ico
                             startX = startX + ICON_SIZE + 2
                         end
-                        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                        local fs = AcquireFontString(row, "GameFontHighlight")
                         fs:SetPoint("LEFT", row, "LEFT", startX, 0)
                         fs:SetWidth(textW)
                         fs:SetJustifyH("CENTER")
                         fs:SetText(tostring(val))
                         fs:Show()
-                        row.cells[#row.cells + 1] = fs
                     else
-                        local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                        local fs = AcquireFontString(row, "GameFontHighlight")
                         fs:SetPoint("LEFT", row, "LEFT", colX, 0)
                         fs:SetWidth(w)
                         fs:SetJustifyH("CENTER")
                         fs:SetText("-")
                         fs:Show()
-                        row.cells[#row.cells + 1] = fs
                     end
                 else
-                    local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                    fs:SetPoint("LEFT", row, "LEFT", colX, 0)
-                    fs:SetWidth(w)
-                    fs:SetJustifyH("CENTER")
+                    local mmr = charData.lastMMR and charData.lastMMR[col.key]
+                    local hasMMR = showMMR and Database.IsPVPColumn(col) and HasLastMMR(mmr)
                     local formatFn = col.formatFn or Utils.FormatRating
-                    fs:SetText(formatFn(val))
-                    fs:Show()
-                    row.cells[#row.cells + 1] = fs
+                    if hasMMR then
+                        AddRatingWithMMRText(row, colX, GetRatingTextY(0), w, val, mmr)
+                    else
+                        local fs = AcquireFontString(row, "GameFontHighlight")
+                        fs:SetPoint("LEFT", row, "LEFT", colX, 0)
+                        fs:SetWidth(w)
+                        fs:SetJustifyH("CENTER")
+                        fs:SetText(formatFn(val))
+                        fs:Show()
+                    end
                 end
 
                 -- Tooltip overlay for crest columns
                 if col.crests then
-                    local overlay = CreateFrame("Frame", nil, row)
+                    local overlay = AcquireOverlay(row)
                     overlay:SetPoint("LEFT", row, "LEFT", colX, 0)
                     overlay:SetSize(w, SUBROW_HEIGHT)
                     local ratings = charData.ratings
                     local crestDef = col.crests
                     overlay:SetScript("OnEnter", function(self)
+                        SetRowHovered(row, true)
                         local hasAny = false
                         for _, c in ipairs(crestDef) do
                             if (ratings and ratings[c.key] or 0) > 0 then hasAny = true; break end
@@ -658,9 +924,41 @@ function UI.RefreshTable()
                         GameTooltip:Show()
                     end)
                     overlay:SetScript("OnLeave", function()
+                        SetRowHovered(row, false)
                         GameTooltip:Hide()
                     end)
-                    row.cells[#row.cells + 1] = overlay
+                end
+
+                if col.details then
+                    local overlay = AcquireOverlay(row)
+                    overlay:SetPoint("LEFT", row, "LEFT", colX, 0)
+                    overlay:SetSize(w, SUBROW_HEIGHT)
+                    local ratings = charData.ratings
+                    local totalKey = col.key
+                    local totalLabel = col.label
+                    local details = col.details
+                    overlay:SetScript("OnEnter", function(self)
+                        SetRowHovered(row, true)
+                        local hasAny = not Utils.IsEmptyRating(ratings and ratings[totalKey])
+                        for _, detail in ipairs(details) do
+                            if not Utils.IsEmptyRating(ratings and ratings[detail.key]) then
+                                hasAny = true
+                                break
+                            end
+                        end
+                        if not hasAny then return end
+
+                        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                        GameTooltip:AddDoubleLine(totalLabel, tostring(ratings and ratings[totalKey] or 0), 0.8, 0.8, 0.8, 1, 1, 1)
+                        for _, detail in ipairs(details) do
+                            GameTooltip:AddDoubleLine(detail.label, tostring(ratings and ratings[detail.key] or 0), 0.8, 0.8, 0.8, 1, 1, 1)
+                        end
+                        GameTooltip:Show()
+                    end)
+                    overlay:SetScript("OnLeave", function()
+                        SetRowHovered(row, false)
+                        GameTooltip:Hide()
+                    end)
                 end
             end
             colX = colX + w

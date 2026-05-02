@@ -28,6 +28,13 @@ function Utils.FormatRating(value)
     return tostring(value)
 end
 
+function Utils.FormatLastMMR(value)
+    if Utils.IsEmptyRating(value) then
+        return ""
+    end
+    return tostring(value)
+end
+
 -- Returns a display string for large integer stats (e.g. Honorable Kills)
 function Utils.FormatNumber(value)
     if not value or value == 0 then return "-" end
@@ -62,4 +69,3 @@ function Utils.GetClassIcon(classFilename)
     end
     return nil, nil
 end
-
