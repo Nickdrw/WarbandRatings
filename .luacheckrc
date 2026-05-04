@@ -37,8 +37,10 @@ read_globals = {
     "C_PvP",
     "MAX_BATTLEFIELD_QUEUES",
     "GetBattlefieldStatus",
+    "GetBattlefieldArenaFaction",
     "GetBattlefieldTeamInfo",
     "GetBattlefieldWinner",
+    "GetCurrentArenaSeason",
     "GetNumBattlefieldScores",
     "GetPersonalRatedInfo",
     "IsArenaSkirmish",
@@ -56,7 +58,9 @@ read_globals = {
 
     -- Misc
     "C_Timer",
+    "C_SeasonInfo",
     "DEFAULT_CHAT_FRAME",
+    "date",
     "tinsert",
     "time",
     "AddonCompartmentFrame",

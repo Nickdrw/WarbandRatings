@@ -2,6 +2,7 @@ local _, ns = ...
 ns.DataCollection = {}
 local DataCollection = ns.DataCollection
 local Database = ns.Database
+local History = ns.History
 local Utils = ns.Utils
 local lastKnownRatedBracketIndex
 local lastKnownRatedBracketTime
@@ -46,6 +47,12 @@ function DataCollection.CollectCurrentCharacter()
         elseif col.currencyID then
             local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(col.currencyID)
             globalRatings[col.key] = info and info.quantity or 0
+            if col.key == "conquest" and info then
+                globalRatings.conquest_totalEarned = tonumber(info.totalEarned) or 0
+                globalRatings.conquest_maxQuantity = tonumber(info.maxQuantity) or 0
+                globalRatings.conquest_quantityEarnedThisWeek = tonumber(info.quantityEarnedThisWeek) or 0
+                globalRatings.conquest_maxWeeklyQuantity = tonumber(info.maxWeeklyQuantity) or 0
+            end
         elseif col.crests then
             -- Collect each crest tier quantity; main value = highest tier with quantity > 0
             local highest = 0
@@ -188,6 +195,11 @@ local function GetRememberedRatedBracketIndex()
     return lastKnownRatedBracketIndex
 end
 
+local function GetCurrentPersonalRating(bracketIndex)
+    local rating = GetPersonalRatedInfo(bracketIndex)
+    return tonumber(rating) or 0
+end
+
 local function InferBracketIndexFromRatingChange(name, realm, specID)
     if not WarbandRatingsDB or not WarbandRatingsDB.characters then return nil end
     if not GetPersonalRatedInfo then return nil end
@@ -198,7 +210,7 @@ local function InferBracketIndexFromRatingChange(name, realm, specID)
     local changedBracketIndex
     for _, col in ipairs(Database.GLOBAL_COLUMNS) do
         if col.bracketIndex then
-            local currentRating = tonumber(GetPersonalRatedInfo(col.bracketIndex)) or 0
+            local currentRating = GetCurrentPersonalRating(col.bracketIndex)
             local storedRating = tonumber(existing.ratings and existing.ratings[col.key]) or 0
             if currentRating > 0 and currentRating ~= storedRating then
                 if changedBracketIndex and changedBracketIndex ~= col.bracketIndex then
@@ -212,7 +224,7 @@ local function InferBracketIndexFromRatingChange(name, realm, specID)
     local specRatings = existing.specRatings and existing.specRatings[specID]
     for _, col in ipairs(Database.SPEC_COLUMNS) do
         if col.bracketIndex then
-            local currentRating = tonumber(GetPersonalRatedInfo(col.bracketIndex)) or 0
+            local currentRating = GetCurrentPersonalRating(col.bracketIndex)
             local storedRating = tonumber(specRatings and specRatings[col.key]) or 0
             if currentRating > 0 and currentRating ~= storedRating then
                 if changedBracketIndex and changedBracketIndex ~= col.bracketIndex then
@@ -268,6 +280,41 @@ local function GetActiveMatchPersonalRatedInfo()
     return nil
 end
 
+local function GetSafeNumber(value)
+    local ok, result = pcall(function()
+        local number = tonumber(value)
+        if not number then return nil end
+        return number + 0
+    end)
+    if ok then
+        return result
+    end
+    return nil
+end
+
+local function GetPositiveNumber(value)
+    local number = GetSafeNumber(value)
+    if not number then return nil end
+
+    local ok, positive = pcall(function()
+        return number > 0
+    end)
+    if ok and positive then
+        return number
+    end
+    return nil
+end
+
+local function AddSafeNumbers(left, right)
+    local ok, result = pcall(function()
+        return left + right
+    end)
+    if ok then
+        return result
+    end
+    return nil
+end
+
 local function GetBattlefieldTeamMMR(teamIndex)
     if not GetBattlefieldTeamInfo then
         return nil
@@ -278,12 +325,7 @@ local function GetBattlefieldTeamMMR(teamIndex)
         return nil
     end
 
-    mmr = tonumber(mmr)
-    if mmr and mmr > 0 then
-        return mmr
-    end
-
-    return nil
+    return GetPositiveNumber(mmr)
 end
 
 local function GetFallbackBattlefieldMMR(info)
@@ -308,27 +350,65 @@ end
 local function GetMMRFromInfo(info)
     if type(info) ~= "table" then return nil end
 
-    local mmr = tonumber(info.postmatchMMR or info.postMatchMMR or info.matchMakingRating)
-    if not mmr or mmr <= 0 then
-        local prematchMMR = tonumber(info.prematchMMR or info.preMatchMMR)
-        local mmrChange = tonumber(info.mmrChange or info.matchMakingRatingChange)
-        if prematchMMR and mmrChange then
-            mmr = prematchMMR + mmrChange
+    local postMatchMMR = GetPositiveNumber(info.postmatchMMR or info.postMatchMMR)
+    if postMatchMMR then
+        return postMatchMMR, true
+    end
+
+    local prematchMMR = GetPositiveNumber(info.prematchMMR or info.preMatchMMR or info.matchMakingRating)
+    local mmrChange = GetSafeNumber(info.mmrChange or info.matchMakingRatingChange)
+    if prematchMMR and mmrChange then
+        local adjustedMMR = GetPositiveNumber(AddSafeNumbers(prematchMMR, mmrChange))
+        if adjustedMMR then
+            return adjustedMMR, true
         end
     end
-    if not mmr or mmr <= 0 then
-        mmr = tonumber(info.prematchMMR or info.preMatchMMR)
+
+    if prematchMMR then
+        return prematchMMR, false
     end
-    if not mmr or mmr <= 0 then
-        mmr = GetFallbackBattlefieldMMR(info)
+
+    local fallbackMMR = GetFallbackBattlefieldMMR(info)
+    if fallbackMMR then
+        return fallbackMMR, false
     end
-    if mmr and mmr > 0 then
-        return mmr
-    end
+
     return nil
 end
 
-function DataCollection.CollectLastMatchMMR()
+local function GetMatchResult(scoreInfo)
+    if not GetBattlefieldWinner then return nil end
+
+    local winner = GetBattlefieldWinner()
+    if winner == nil then return nil end
+
+    if type(scoreInfo) == "table" and scoreInfo.faction ~= nil then
+        local faction = tonumber(scoreInfo.faction)
+        if faction ~= nil then
+            return faction == tonumber(winner) and 1 or 0
+        end
+    end
+
+    if GetBattlefieldArenaFaction then
+        local faction = GetBattlefieldArenaFaction()
+        if faction ~= nil then
+            return tonumber(faction) == tonumber(winner) and 1 or 0
+        end
+    end
+
+    return nil
+end
+
+local function GetCollectedRating(data, col, specID)
+    if Database.IsSpecColumn(col) then
+        local specRatings = data.specRatings and data.specRatings[specID]
+        return specRatings and specRatings[col.key] or 0
+    end
+
+    return data.ratings and data.ratings[col.key] or 0
+end
+
+function DataCollection.CollectLastMatchMMR(recordHistory)
     if not WarbandRatingsDB or not WarbandRatingsDB.characters then
         return false
     end
@@ -345,17 +425,28 @@ function DataCollection.CollectLastMatchMMR()
     end
 
     local scoreInfo = GetPlayerScoreInfo()
-    local mmr = GetMMRFromInfo(scoreInfo)
+    local mmr, mmrIsPostMatch = GetMMRFromInfo(scoreInfo)
     if not mmr then
-        mmr = GetMMRFromInfo(GetActiveMatchPersonalRatedInfo())
+        mmr, mmrIsPostMatch = GetMMRFromInfo(GetActiveMatchPersonalRatedInfo())
     end
     if not mmr then
         mmr = GetFallbackBattlefieldMMR(scoreInfo)
+        mmrIsPostMatch = false
     end
     if not mmr then
         return false
     end
 
-    DataCollection.CollectCurrentCharacter()
-    return Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
+    local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
+    if not col then
+        return false
+    end
+
+    local data = DataCollection.CollectCurrentCharacter()
+    local saved = Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
+    local result = GetMatchResult(scoreInfo)
+    if saved and recordHistory and result ~= nil and History then
+        History.RecordMatch(name, realm, specID, bracketIndex, GetCollectedRating(data, col, specID), mmr, result, time(), mmrIsPostMatch)
+    end
+    return saved
 end

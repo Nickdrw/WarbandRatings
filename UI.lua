@@ -3,10 +3,15 @@ ns.UI = {}
 local UI = ns.UI
 local Database = ns.Database
 local DataCollection = ns.DataCollection
+local History = ns.History
 local Utils = ns.Utils
 
 local WINDOW_WIDTH = 780 -- initial size, resized dynamically in RefreshTable
 local WINDOW_HEIGHT = 450
+local SURFACE_INSET_X = 0
+local TABLE_CONTENT_PADDING_X = 8
+local CONTENT_TOP_OFFSET = 26
+local CONTENT_BOTTOM_INSET = 2
 local SUBROW_HEIGHT = 30
 local HEADER_HEIGHT = 28
 local ICON_SIZE = 22
@@ -16,13 +21,176 @@ local COL_RATING_WIDTH = 80
 local SETTINGS_WIDTH = 220
 local COL_SPEC_RATING_WIDTH = 100
 local RATING_TEXT_HEIGHT = 14
-local MMR_LEGEND_HEIGHT = 24
-local MMR_LEGEND_BOTTOM_OFFSET = 10
-local MMR_LEGEND_GAP = 4
+local GRAPH_PANEL_HEIGHT = 210
+local GRAPH_MARGIN_LEFT = 44
+local GRAPH_MARGIN_RIGHT = 18
+local GRAPH_MARGIN_TOP = 34
+local GRAPH_MARGIN_BOTTOM = 48
+local GRAPH_GAMES_LABEL_WIDTH = 126
+local GRAPH_GAMES_LABEL_GAP = 12
+local GRAPH_DETACHED_WIDTH = 980
+local GRAPH_DETACHED_HEIGHT = 420
+local GRAPH_POINT_SIZE = 5
+local GRAPH_HOVER_POINT_SIZE = 7
+local GRAPH_DEFAULT_VISIBLE_POINT_COUNT = 50
+local GRAPH_MIN_VISIBLE_POINT_COUNT = 20
+local GRAPH_MAX_VISIBLE_POINT_COUNT = 200
+local GRAPH_VISIBLE_POINT_STEP = 5
+local GRAPH_SCROLL_STEP = 5
+local HISTORY_GRAPH_ICON_SIZE = 14
+local HISTORY_GRAPH_ICON_PADDING = 4
+local HISTORY_SELECTED_ALPHA = 0.16
+local MMR_GRAPH_R = 0.82
+local MMR_GRAPH_G = 0.82
+local MMR_GRAPH_B = 0.82
+local THEME_BUTTON_WIDTH = 184
+local THEME_BUTTON_HEIGHT = 26
+local DEFAULT_THEME_KEY = "obsidian"
 
-local mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, mmrLegendFrame
+local THEME_PRESETS = {
+    {
+        key = "obsidian",
+        label = "Obsidian",
+        bg = { 0.035, 0.040, 0.050, 0.98 },
+        surface = { 0.055, 0.064, 0.078, 0.96 },
+        surfaceRaised = { 0.080, 0.092, 0.110, 0.98 },
+        header = { 0.105, 0.120, 0.145, 0.95 },
+        border = { 0.250, 0.285, 0.330, 0.88 },
+        rowOdd = { 0.000, 0.000, 0.000, 0.18 },
+        rowEven = { 1.000, 1.000, 1.000, 0.045 },
+        rowHover = { 0.950, 0.720, 0.280, 0.13 },
+        text = { 0.900, 0.930, 0.960, 1 },
+        title = { 0.970, 0.820, 0.450, 1 },
+        headerText = { 0.780, 0.840, 0.900, 1 },
+        muted = { 0.560, 0.600, 0.650, 1 },
+        grid = { 0.360, 0.400, 0.460, 0.25 },
+        axis = { 0.620, 0.670, 0.740, 0.42 },
+        accent = { 0.960, 0.720, 0.320, 1 },
+        mmr = { 0.760, 0.800, 0.860, 1 },
+    },
+    {
+        key = "stormglass",
+        label = "Stormglass",
+        bg = { 0.035, 0.048, 0.055, 0.98 },
+        surface = { 0.055, 0.075, 0.086, 0.96 },
+        surfaceRaised = { 0.075, 0.105, 0.120, 0.98 },
+        header = { 0.095, 0.140, 0.155, 0.95 },
+        border = { 0.220, 0.340, 0.380, 0.88 },
+        rowOdd = { 0.000, 0.000, 0.000, 0.16 },
+        rowEven = { 0.720, 0.920, 1.000, 0.035 },
+        rowHover = { 0.300, 0.760, 0.900, 0.14 },
+        text = { 0.890, 0.940, 0.955, 1 },
+        title = { 0.500, 0.860, 0.960, 1 },
+        headerText = { 0.760, 0.880, 0.920, 1 },
+        muted = { 0.520, 0.640, 0.680, 1 },
+        grid = { 0.300, 0.460, 0.500, 0.24 },
+        axis = { 0.550, 0.720, 0.770, 0.42 },
+        accent = { 0.380, 0.820, 0.930, 1 },
+        mmr = { 0.800, 0.860, 0.900, 1 },
+    },
+    {
+        key = "verdant",
+        label = "Verdant",
+        bg = { 0.035, 0.052, 0.045, 0.98 },
+        surface = { 0.055, 0.080, 0.066, 0.96 },
+        surfaceRaised = { 0.075, 0.105, 0.084, 0.98 },
+        header = { 0.100, 0.145, 0.110, 0.95 },
+        border = { 0.230, 0.360, 0.280, 0.88 },
+        rowOdd = { 0.000, 0.000, 0.000, 0.17 },
+        rowEven = { 0.710, 1.000, 0.780, 0.035 },
+        rowHover = { 0.500, 0.850, 0.500, 0.13 },
+        text = { 0.900, 0.955, 0.915, 1 },
+        title = { 0.640, 0.920, 0.620, 1 },
+        headerText = { 0.780, 0.900, 0.790, 1 },
+        muted = { 0.560, 0.660, 0.580, 1 },
+        grid = { 0.330, 0.500, 0.380, 0.24 },
+        axis = { 0.570, 0.760, 0.610, 0.42 },
+        accent = { 0.620, 0.900, 0.540, 1 },
+        mmr = { 0.820, 0.860, 0.800, 1 },
+    },
+    {
+        key = "ember",
+        label = "Ember",
+        bg = { 0.055, 0.040, 0.038, 0.98 },
+        surface = { 0.080, 0.058, 0.052, 0.96 },
+        surfaceRaised = { 0.112, 0.078, 0.066, 0.98 },
+        header = { 0.150, 0.092, 0.072, 0.95 },
+        border = { 0.390, 0.250, 0.190, 0.88 },
+        rowOdd = { 0.000, 0.000, 0.000, 0.17 },
+        rowEven = { 1.000, 0.740, 0.520, 0.035 },
+        rowHover = { 0.940, 0.490, 0.300, 0.13 },
+        text = { 0.960, 0.910, 0.870, 1 },
+        title = { 0.980, 0.650, 0.420, 1 },
+        headerText = { 0.920, 0.780, 0.670, 1 },
+        muted = { 0.680, 0.570, 0.510, 1 },
+        grid = { 0.520, 0.350, 0.280, 0.24 },
+        axis = { 0.780, 0.560, 0.450, 0.42 },
+        accent = { 0.960, 0.520, 0.330, 1 },
+        mmr = { 0.880, 0.800, 0.740, 1 },
+    },
+}
+
+local THEME_BY_KEY = {}
+for _, theme in ipairs(THEME_PRESETS) do
+    THEME_BY_KEY[theme.key] = theme
+end
+
+local HISTORY_FIELD_TIME = 1
+local HISTORY_FIELD_RATING = 2
+local HISTORY_FIELD_MMR = 3
+local HISTORY_FIELD_RATING_DELTA = 4
+local HISTORY_FIELD_MMR_IS_POSTMATCH = 7
+
+local mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel, filtersWindow
+local selectedGraph
 local rowFrames = {}
 local minimapButton
+local themeButtons = {}
+local RefreshHistoryCellAffordances
+
+local function GetActiveTheme()
+    local key = WarbandRatingsDB and WarbandRatingsDB.settings and WarbandRatingsDB.settings.themeKey or DEFAULT_THEME_KEY
+    return THEME_BY_KEY[key] or THEME_BY_KEY[DEFAULT_THEME_KEY] or THEME_PRESETS[1]
+end
+
+local function SetTextureColor(texture, color, alpha)
+    if texture and texture.SetColorTexture and color then
+        texture:SetColorTexture(color[1], color[2], color[3], alpha or color[4] or 1)
+    end
+end
+
+local function SetFontColor(fontString, color, alpha)
+    if fontString and fontString.SetTextColor and color then
+        fontString:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
+    end
+end
+
+local TEMPLATE_ARTWORK_KEYS = {
+    "Bg",
+    "TitleBg",
+    "PortraitFrame",
+    "TopTileStreaks",
+    "Inset",
+    "InsetBg",
+    "NineSlice",
+    "Border",
+    "BlackBg",
+}
+
+local function HideTemplateArtwork(frame)
+    if not frame then return end
+    for _, key in ipairs(TEMPLATE_ARTWORK_KEYS) do
+        local region = frame[key]
+        if region and region.Hide then
+            region:Hide()
+        end
+    end
+    for _, region in ipairs({ frame:GetRegions() }) do
+        if region and region.GetObjectType and region:GetObjectType() == "Texture" then
+            region:Hide()
+        end
+    end
+end
 
 ------------------------------------------------------------
 -- Minimap Button
@@ -146,6 +314,165 @@ function UI.UpdateCompartmentVisibility()
 end
 
 ------------------------------------------------------------
+-- Theme
+------------------------------------------------------------
+local function EnsureFillTexture(frame, key, layer, subLevel, inset)
+    if not frame[key] then
+        local texture = frame:CreateTexture(nil, layer or "BACKGROUND", nil, subLevel or 1)
+        texture:SetPoint("TOPLEFT", frame, "TOPLEFT", inset or 0, -(inset or 0))
+        texture:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(inset or 0), inset or 0)
+        frame[key] = texture
+    end
+    return frame[key]
+end
+
+local function EnsureBorderTextures(frame)
+    if frame.themeBorders then return frame.themeBorders end
+
+    local borders = {
+        top = frame:CreateTexture(nil, "BORDER", nil, 2),
+        bottom = frame:CreateTexture(nil, "BORDER", nil, 2),
+        left = frame:CreateTexture(nil, "BORDER", nil, 2),
+        right = frame:CreateTexture(nil, "BORDER", nil, 2),
+    }
+
+    borders.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    borders.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    borders.top:SetHeight(1)
+
+    borders.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    borders.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    borders.bottom:SetHeight(1)
+
+    borders.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    borders.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    borders.left:SetWidth(1)
+
+    borders.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    borders.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    borders.right:SetWidth(1)
+
+    frame.themeBorders = borders
+    return borders
+end
+
+local function SetBorderColor(frame, color)
+    local borders = EnsureBorderTextures(frame)
+    for _, border in pairs(borders) do
+        SetTextureColor(border, color)
+    end
+end
+
+local function ApplyPanelTheme(frame, fillColor, borderColor)
+    if not frame then return end
+    SetTextureColor(EnsureFillTexture(frame, "themeBg", "BACKGROUND", 1, 0), fillColor)
+    SetBorderColor(frame, borderColor)
+end
+
+local function UpdateThemeSelector()
+    local activeTheme = GetActiveTheme()
+    local activeKey = activeTheme.key
+
+    for _, button in ipairs(themeButtons) do
+        local selected = button.themeKey == activeKey
+        SetTextureColor(button.bg, selected and activeTheme.header or activeTheme.surfaceRaised)
+        SetTextureColor(button.hover, activeTheme.rowHover)
+        SetTextureColor(button.selectedBar, activeTheme.accent)
+        SetFontColor(button.label, selected and activeTheme.title or activeTheme.text)
+        button.selectedBar:SetShown(selected)
+        button.hover:SetShown(button.hovered and not selected)
+    end
+end
+
+function UI.ApplyTheme()
+    local theme = GetActiveTheme()
+
+    if mainFrame then
+        SetTextureColor(EnsureFillTexture(mainFrame, "themeBg", "BACKGROUND", 1, 0), theme.bg)
+        if not mainFrame.themeTitleBg then
+            mainFrame.themeTitleBg = mainFrame:CreateTexture(nil, "BACKGROUND", nil, 2)
+            mainFrame.themeTitleBg:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 1, -1)
+            mainFrame.themeTitleBg:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -1, -1)
+            mainFrame.themeTitleBg:SetHeight(22)
+        end
+        SetTextureColor(mainFrame.themeTitleBg, theme.surfaceRaised)
+        if not mainFrame.themeAccentLine then
+            mainFrame.themeAccentLine = mainFrame:CreateTexture(nil, "BORDER", nil, 3)
+            mainFrame.themeAccentLine:SetHeight(1)
+        end
+        mainFrame.themeAccentLine:ClearAllPoints()
+        mainFrame.themeAccentLine:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", SURFACE_INSET_X, -25)
+        mainFrame.themeAccentLine:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -SURFACE_INSET_X, -25)
+        SetTextureColor(mainFrame.themeAccentLine, theme.accent, 0.65)
+        SetBorderColor(mainFrame, theme.border)
+        SetFontColor(mainFrame.TitleText, theme.title)
+    end
+
+    if scrollFrame then
+        SetTextureColor(EnsureFillTexture(scrollFrame, "themeBg", "BACKGROUND", 0, 0), theme.surface)
+    end
+
+    if headerRow then
+        SetTextureColor(EnsureFillTexture(headerRow, "themeBg", "BACKGROUND", 1, 0), theme.header)
+        if not headerRow.themeLine then
+            headerRow.themeLine = headerRow:CreateTexture(nil, "BORDER", nil, 2)
+            headerRow.themeLine:SetPoint("BOTTOMLEFT", headerRow, "BOTTOMLEFT", 0, 0)
+            headerRow.themeLine:SetPoint("BOTTOMRIGHT", headerRow, "BOTTOMRIGHT", 0, 0)
+            headerRow.themeLine:SetHeight(1)
+        end
+        SetTextureColor(headerRow.themeLine, theme.border)
+    end
+
+    if settingsPanel then
+        ApplyPanelTheme(settingsPanel, theme.surface, theme.border)
+        SetFontColor(settingsPanel.title, theme.title)
+        SetFontColor(settingsPanel.themeLabel, theme.headerText)
+        if settingsPanel.checkboxes then
+            for _, cb in ipairs(settingsPanel.checkboxes) do
+                SetFontColor(cb.Text, theme.text)
+            end
+        end
+    end
+
+    if filtersWindow then
+        ApplyPanelTheme(filtersWindow, theme.surface, theme.border)
+        SetFontColor(filtersWindow.TitleText, theme.title)
+        for _, child in ipairs({ filtersWindow:GetChildren() }) do
+            if child.Text then
+                SetFontColor(child.Text, theme.text)
+            end
+        end
+    end
+
+    if graphPanel then
+        ApplyPanelTheme(graphPanel, theme.surface, theme.border)
+        if selectedGraph and graphPanel.characterTitle then
+            local cr, cg, cb = Utils.GetClassColor(selectedGraph.classFilename)
+            graphPanel.characterTitle:SetTextColor(cr, cg, cb)
+        elseif graphPanel.characterTitle then
+            SetFontColor(graphPanel.characterTitle, theme.title)
+        end
+        SetFontColor(graphPanel.title, theme.title)
+        SetFontColor(graphPanel.emptyText, theme.muted)
+        SetFontColor(graphPanel.maxLabel, theme.muted)
+        SetFontColor(graphPanel.midLabel, theme.muted)
+        SetFontColor(graphPanel.minLabel, theme.muted)
+        SetFontColor(graphPanel.gamesLabel, theme.muted)
+        SetFontColor(graphPanel.zoomLabel, theme.muted)
+        SetFontColor(graphPanel.zoomValueLabel, theme.muted)
+    end
+
+    for _, row in ipairs(rowFrames) do
+        if row.hoverBg then
+            SetTextureColor(row.hoverBg, theme.rowHover)
+        end
+    end
+
+    UpdateThemeSelector()
+    RefreshHistoryCellAffordances()
+end
+
+------------------------------------------------------------
 -- Main Window
 ------------------------------------------------------------
 function UI.CreateMainFrame()
@@ -162,6 +489,7 @@ function UI.CreateMainFrame()
     mainFrame:SetFrameStrata("HIGH")
     mainFrame:SetClampedToScreen(true)
     mainFrame:Hide()
+    HideTemplateArtwork(mainFrame)
 
     mainFrame.TitleText:SetText("Warband Ratings")
 
@@ -180,6 +508,8 @@ function UI.CreateMainFrame()
 
     UI.CreateScrollArea()
     UI.CreateSettingsPanel()
+    UI.CreateHistoryGraphPanel()
+    UI.ApplyTheme()
 
     return mainFrame
 end
@@ -190,39 +520,13 @@ end
 function UI.CreateScrollArea()
     -- Header row (above scroll)
     headerRow = CreateFrame("Frame", nil, mainFrame)
-    headerRow:SetPoint("TOPLEFT", mainFrame.InsetBg or mainFrame, "TOPLEFT", 8, -8)
-    headerRow:SetPoint("TOPRIGHT", mainFrame.InsetBg or mainFrame, "TOPRIGHT", -8, -8)
+    headerRow:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", SURFACE_INSET_X, -CONTENT_TOP_OFFSET)
+    headerRow:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -SURFACE_INSET_X, -CONTENT_TOP_OFFSET)
     headerRow:SetHeight(HEADER_HEIGHT)
 
     scrollFrame = CreateFrame("ScrollFrame", "WarbandRatingsScrollFrame", mainFrame)
     scrollFrame:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, -2)
-    scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -8, 10)
-
-    mmrLegendFrame = CreateFrame("Frame", nil, mainFrame)
-    mmrLegendFrame:SetHeight(MMR_LEGEND_HEIGHT)
-    mmrLegendFrame:Hide()
-
-    mmrLegendFrame.bg = mmrLegendFrame:CreateTexture(nil, "BACKGROUND")
-    mmrLegendFrame.bg:SetAllPoints()
-    mmrLegendFrame.bg:SetColorTexture(0, 0, 0, 0.65)
-
-    mmrLegendFrame.border = {}
-    for i = 1, 4 do
-        mmrLegendFrame.border[i] = mmrLegendFrame:CreateTexture(nil, "BORDER")
-        mmrLegendFrame.border[i]:SetColorTexture(0.72, 0.58, 0.18, 0.8)
-    end
-    mmrLegendFrame.border[1]:SetPoint("TOPLEFT")
-    mmrLegendFrame.border[1]:SetPoint("TOPRIGHT")
-    mmrLegendFrame.border[1]:SetHeight(1)
-    mmrLegendFrame.border[2]:SetPoint("BOTTOMLEFT")
-    mmrLegendFrame.border[2]:SetPoint("BOTTOMRIGHT")
-    mmrLegendFrame.border[2]:SetHeight(1)
-    mmrLegendFrame.border[3]:SetPoint("TOPLEFT")
-    mmrLegendFrame.border[3]:SetPoint("BOTTOMLEFT")
-    mmrLegendFrame.border[3]:SetWidth(1)
-    mmrLegendFrame.border[4]:SetPoint("TOPRIGHT")
-    mmrLegendFrame.border[4]:SetPoint("BOTTOMRIGHT")
-    mmrLegendFrame.border[4]:SetWidth(1)
+    scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -SURFACE_INSET_X, CONTENT_BOTTOM_INSET)
 
     scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetWidth(scrollFrame:GetWidth())
@@ -246,16 +550,84 @@ end
 ------------------------------------------------------------
 -- Settings Panel
 ------------------------------------------------------------
+function UI.CreateThemeSelector(parent, yOffset)
+    themeButtons = {}
+
+    local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("TOPLEFT", 14, yOffset)
+    label:SetText("Theme")
+    parent.themeLabel = label
+
+    local buttonY = yOffset - 22
+    for _, preset in ipairs(THEME_PRESETS) do
+        local button = CreateFrame("Button", nil, parent)
+        button:SetPoint("TOPLEFT", 12, buttonY)
+        button:SetSize(THEME_BUTTON_WIDTH, THEME_BUTTON_HEIGHT)
+        button.themeKey = preset.key
+        button.hovered = false
+
+        button.bg = button:CreateTexture(nil, "BACKGROUND")
+        button.bg:SetAllPoints()
+
+        button.hover = button:CreateTexture(nil, "BORDER")
+        button.hover:SetAllPoints()
+        button.hover:Hide()
+
+        button.selectedBar = button:CreateTexture(nil, "OVERLAY")
+        button.selectedBar:SetPoint("TOPLEFT", button, "TOPLEFT", 0, -3)
+        button.selectedBar:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 3)
+        button.selectedBar:SetWidth(3)
+
+        local swatches = { preset.header, preset.surfaceRaised, preset.accent }
+        for i, color in ipairs(swatches) do
+            local swatch = button:CreateTexture(nil, "ARTWORK")
+            swatch:SetSize(10, 10)
+            swatch:SetPoint("LEFT", button, "LEFT", 12 + (i - 1) * 12, 0)
+            SetTextureColor(swatch, color)
+        end
+
+        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.label:SetPoint("LEFT", button, "LEFT", 54, 0)
+        button.label:SetPoint("RIGHT", button, "RIGHT", -8, 0)
+        button.label:SetJustifyH("LEFT")
+        button.label:SetText(preset.label)
+
+        button:SetScript("OnEnter", function(self)
+            self.hovered = true
+            UpdateThemeSelector()
+        end)
+        button:SetScript("OnLeave", function(self)
+            self.hovered = false
+            UpdateThemeSelector()
+        end)
+        button:SetScript("OnClick", function(self)
+            if GetActiveTheme().key == self.themeKey then return end
+            Database.SetSetting("themeKey", self.themeKey)
+            UI.ApplyTheme()
+            UI.RefreshTable()
+            UI.RefreshHistoryGraph()
+        end)
+
+        themeButtons[#themeButtons + 1] = button
+        buttonY = buttonY - (THEME_BUTTON_HEIGHT + 6)
+    end
+
+    UpdateThemeSelector()
+    return buttonY - 4
+end
+
 function UI.CreateSettingsPanel()
     settingsPanel = CreateFrame("Frame", nil, mainFrame, "InsetFrameTemplate3" )
     settingsPanel:SetWidth(SETTINGS_WIDTH)
     settingsPanel:SetPoint("TOPLEFT", mainFrame, "TOPRIGHT", -1, 0)
     settingsPanel:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMRIGHT", -1, 0)
     settingsPanel:Hide()
+    HideTemplateArtwork(settingsPanel)
 
     local title = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 12, -12)
     title:SetText("Settings")
+    settingsPanel.title = title
 
     local yOffset = -38
     UI.CreateCheckbox(settingsPanel, "Max level only", "hideNonMaxLevel", yOffset)
@@ -273,7 +645,9 @@ function UI.CreateSettingsPanel()
     UI.CreateCheckbox(settingsPanel, "Hide compartment icon", "hideCompartmentIcon", yOffset, function()
         UI.UpdateCompartmentVisibility()
     end)
-    yOffset = yOffset - 38
+    yOffset = yOffset - 42
+    yOffset = UI.CreateThemeSelector(settingsPanel, yOffset)
+    yOffset = yOffset - 10
     local filtersBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
     filtersBtn:SetSize(120, 22)
     filtersBtn:SetPoint("TOPLEFT", 12, yOffset)
@@ -286,8 +660,6 @@ end
 ------------------------------------------------------------
 -- Filters Window
 ------------------------------------------------------------
-local filtersWindow
-
 function UI.ToggleFiltersWindow()
     if filtersWindow and filtersWindow:IsShown() then
         filtersWindow:Hide()
@@ -305,6 +677,7 @@ function UI.ToggleFiltersWindow()
         filtersWindow:SetScript("OnDragStop", filtersWindow.StopMovingOrSizing)
         filtersWindow:SetFrameStrata("DIALOG")
         filtersWindow:SetClampedToScreen(true)
+        HideTemplateArtwork(filtersWindow)
         filtersWindow.TitleText:SetText("Filters")
 
         local yOff = -30
@@ -337,6 +710,7 @@ function UI.ToggleFiltersWindow()
             end
         end
     end
+    UI.ApplyTheme()
     filtersWindow:Show()
 end
 
@@ -345,6 +719,9 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
     cb:SetPoint("TOPLEFT", 12, yOffset)
     cb.Text:SetText(label)
     cb.Text:SetFontObject("GameFontNormalSmall")
+    SetFontColor(cb.Text, GetActiveTheme().text)
+    parent.checkboxes = parent.checkboxes or {}
+    parent.checkboxes[#parent.checkboxes + 1] = cb
 
     cb:SetChecked(Database.GetSettings()[settingKey])
     cb:SetScript("OnClick", function(self)
@@ -384,6 +761,21 @@ local function SetRowHovered(row, hovered)
     end
 end
 
+local function ResetHistoryCellOverlay(overlay)
+    if overlay.historySelection then
+        overlay.historySelection:Hide()
+    end
+    if overlay.historyGraphIcon then
+        overlay.historyGraphIcon:Hide()
+    end
+    overlay.historyCell = nil
+    overlay.historyHovered = nil
+    overlay.historyCharKey = nil
+    overlay.historySpecID = nil
+    overlay.historyColKey = nil
+    overlay.historyClassFilename = nil
+end
+
 local function GetOrCreateRow(index)
     if rowFrames[index] then
         rowFrames[index]:Show()
@@ -404,7 +796,7 @@ local function GetOrCreateRow(index)
 
     row.hoverBg = row:CreateTexture(nil, "BACKGROUND", nil, 1)
     row.hoverBg:SetAllPoints()
-    row.hoverBg:SetColorTexture(1, 0.82, 0.25, 0.10)
+    SetTextureColor(row.hoverBg, GetActiveTheme().rowHover)
     row.hoverBg:Hide()
 
     rowFrames[index] = row
@@ -412,6 +804,7 @@ local function GetOrCreateRow(index)
 end
 
 local function ResetCell(cell)
+    ResetHistoryCellOverlay(cell)
     cell:Hide()
     cell:ClearAllPoints()
     if cell.SetText then
@@ -426,6 +819,7 @@ local function ResetCell(cell)
     if cell.SetScript then
         cell:SetScript("OnEnter", nil)
         cell:SetScript("OnLeave", nil)
+        cell:SetScript("OnMouseUp", nil)
         cell:EnableMouse(false)
     end
 end
@@ -514,12 +908,14 @@ local function GetRatingTextY(subY)
 end
 
 local function AddRatingWithMMRText(row, x, y, w, rating, mmr)
+    local theme = GetActiveTheme()
     local ratingFs = AcquireFontString(row, "GameFontHighlight")
     ratingFs:SetText(Utils.FormatRating(rating))
+    SetFontColor(ratingFs, Utils.IsEmptyRating(rating) and theme.muted or theme.text)
 
     local mmrFs = AcquireFontString(row, "GameFontHighlightSmall")
     SetSmallFont(mmrFs, 9)
-    mmrFs:SetTextColor(0.55, 0.55, 0.55)
+    SetFontColor(mmrFs, theme.muted)
     mmrFs:SetText(" (" .. Utils.FormatLastMMR(mmr) .. ")")
 
     local gap = 2
@@ -539,95 +935,1091 @@ local function AddRatingWithMMRText(row, x, y, w, rating, mmr)
     mmrFs:Show()
 end
 
-local function SetScrollAreaBottom(hasLegend)
-    scrollFrame:ClearAllPoints()
-    scrollFrame:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, -2)
-    if hasLegend then
-        scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -8, MMR_LEGEND_BOTTOM_OFFSET + MMR_LEGEND_HEIGHT + MMR_LEGEND_GAP)
+local function SetHistoryGraphIconColor(icon, r, g, b)
+    if not icon then return end
+    for _, line in ipairs(icon.lines) do
+        line:SetColorTexture(r, g, b, 0.95)
+    end
+    for _, dot in ipairs(icon.dots) do
+        dot:SetColorTexture(r, g, b, 0.95)
+    end
+end
+
+local function CreateHistoryGraphIcon(parent)
+    local icon = CreateFrame("Frame", nil, parent)
+    icon:SetSize(HISTORY_GRAPH_ICON_SIZE, HISTORY_GRAPH_ICON_SIZE)
+    icon.lines = {}
+    icon.dots = {}
+
+    local points = {
+        { 2, 4 },
+        { 5, 8 },
+        { 8, 6 },
+        { 12, 11 },
+    }
+
+    for i = 1, #points - 1 do
+        local line = icon:CreateLine(nil, "OVERLAY")
+        line:SetThickness(1.5)
+        line:SetStartPoint("BOTTOMLEFT", icon, points[i][1], points[i][2])
+        line:SetEndPoint("BOTTOMLEFT", icon, points[i + 1][1], points[i + 1][2])
+        icon.lines[#icon.lines + 1] = line
+    end
+
+    for _, point in ipairs(points) do
+        local dot = icon:CreateTexture(nil, "OVERLAY")
+        dot:SetSize(2, 2)
+        dot:SetPoint("CENTER", icon, "BOTTOMLEFT", point[1], point[2])
+        icon.dots[#icon.dots + 1] = dot
+    end
+
+    SetHistoryGraphIconColor(icon, 1, 1, 1)
+    icon:Hide()
+    return icon
+end
+
+local function EnsureHistoryCellAffordance(overlay)
+    if not overlay.historySelection then
+        overlay.historySelection = overlay:CreateTexture(nil, "BACKGROUND")
+        overlay.historySelection:SetAllPoints()
+        overlay.historySelection:Hide()
+    end
+    if not overlay.historyGraphIcon then
+        overlay.historyGraphIcon = CreateHistoryGraphIcon(overlay)
+    end
+end
+
+local function IsHistoryCellSelected(overlay)
+    return selectedGraph
+        and overlay.historyCharKey == selectedGraph.charKey
+        and overlay.historySpecID == selectedGraph.specID
+        and overlay.historyColKey == selectedGraph.colKey
+end
+
+local function UpdateHistoryCellAffordance(overlay, hovered)
+    if not overlay.historyCell then return end
+
+    local cr, cg, cb = Utils.GetClassColor(overlay.historyClassFilename)
+    local selected = IsHistoryCellSelected(overlay)
+    if selected then
+        overlay.historySelection:SetColorTexture(cr, cg, cb, HISTORY_SELECTED_ALPHA)
+        overlay.historySelection:Show()
     else
-        scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -8, 10)
+        overlay.historySelection:Hide()
+    end
+
+    if hovered or selected then
+        overlay.historyGraphIcon:ClearAllPoints()
+        overlay.historyGraphIcon:SetPoint("RIGHT", overlay, "RIGHT", -HISTORY_GRAPH_ICON_PADDING, 0)
+        SetHistoryGraphIconColor(overlay.historyGraphIcon, cr, cg, cb)
+        overlay.historyGraphIcon:Show()
+    else
+        overlay.historyGraphIcon:Hide()
     end
 end
 
-local function ClearMMRLegend()
-    if not mmrLegendFrame then return end
-    ResetCells(mmrLegendFrame)
-end
-
-local function AddLegendPiece(text, fontObject, color, fontSize)
-    local fs = AcquireFontString(mmrLegendFrame, fontObject)
-    if fontSize then
-        SetSmallFont(fs, fontSize)
-    end
-    if color then
-        fs:SetTextColor(color[1], color[2], color[3])
-    end
-    fs:SetText(text)
-    fs:SetWordWrap(false)
-    fs:SetNonSpaceWrap(false)
-    fs:Show()
-    return fs
-end
-
-local function UpdateMMRLegend(columns, showMMR)
-    if not mmrLegendFrame then return end
-
-    ClearMMRLegend()
-
-    local pvpStartX
-    local pvpWidth = 0
-    local pvpColumnCount = 0
-    local colX = ICON_SIZE + 4 + COL_NAME_WIDTH
-    for _, col in ipairs(columns) do
-        local w = ColWidth(col)
-        if Database.IsPVPColumn(col) then
-            pvpStartX = pvpStartX or colX
-            pvpWidth = pvpWidth + w
-            pvpColumnCount = pvpColumnCount + 1
+RefreshHistoryCellAffordances = function()
+    for _, row in ipairs(rowFrames) do
+        if row.cells then
+            for _, cell in ipairs(row.cells) do
+                if cell.historyCell then
+                    UpdateHistoryCellAffordance(cell, cell.historyHovered)
+                end
+            end
         end
-        colX = colX + w
+    end
+end
+
+local function ClearGraphDrawings()
+    if not graphPanel then return end
+
+    graphPanel.lineIndex = 0
+    if graphPanel.lines then
+        for _, line in ipairs(graphPanel.lines) do
+            line:Hide()
+        end
     end
 
-    if not showMMR or not pvpStartX or pvpWidth <= 0 then
-        mmrLegendFrame:Hide()
-        SetScrollAreaBottom(false)
+    graphPanel.dotIndex = 0
+    if graphPanel.dots then
+        for _, dot in ipairs(graphPanel.dots) do
+            dot:Hide()
+        end
+    end
+
+    if graphPanel.hoverLine then
+        graphPanel.hoverLine:Hide()
+    end
+    if graphPanel.hoverRatingDot then
+        graphPanel.hoverRatingDot:Hide()
+    end
+    if graphPanel.hoverMMRDot then
+        graphPanel.hoverMMRDot:Hide()
+    end
+    if graphPanel.canvas and GameTooltip:IsOwned(graphPanel.canvas) then
+        GameTooltip:Hide()
+    end
+    graphPanel.graphData = nil
+end
+
+local function AddGraphLine(x1, y1, x2, y2, r, g, b, alpha, thickness)
+    graphPanel.lines = graphPanel.lines or {}
+    graphPanel.lineIndex = (graphPanel.lineIndex or 0) + 1
+
+    local line = graphPanel.lines[graphPanel.lineIndex]
+    if not line then
+        line = graphPanel.canvas:CreateLine(nil, "ARTWORK")
+        graphPanel.lines[graphPanel.lineIndex] = line
+    end
+
+    line:SetColorTexture(r, g, b, alpha or 1)
+    line:SetThickness(thickness or 2)
+    line:SetStartPoint("TOPLEFT", graphPanel.canvas, x1, -y1)
+    line:SetEndPoint("TOPLEFT", graphPanel.canvas, x2, -y2)
+    line:Show()
+end
+
+local function AddGraphDot(x, y, r, g, b, alpha, size)
+    graphPanel.dots = graphPanel.dots or {}
+    graphPanel.dotIndex = (graphPanel.dotIndex or 0) + 1
+
+    local dot = graphPanel.dots[graphPanel.dotIndex]
+    if not dot then
+        dot = graphPanel.canvas:CreateTexture(nil, "OVERLAY")
+        graphPanel.dots[graphPanel.dotIndex] = dot
+    end
+
+    dot:SetSize(size or GRAPH_POINT_SIZE, size or GRAPH_POINT_SIZE)
+    dot:SetColorTexture(r, g, b, alpha or 1)
+    dot:ClearAllPoints()
+    dot:SetPoint("CENTER", graphPanel.canvas, "TOPLEFT", x, -y)
+    dot:Show()
+end
+
+local function FormatGraphValue(value)
+    return tostring(math.floor((tonumber(value) or 0) + 0.5))
+end
+
+local function FormatTooltipNumber(value)
+    value = math.floor((tonumber(value) or 0) + 0.5)
+    local sign = value < 0 and "-" or ""
+    local text = tostring(math.abs(value))
+    local left, num, right = text:match("^([^%d]*%d)(%d*)(.-)$")
+
+    if not left then
+        return sign .. text
+    end
+
+    return sign .. left .. (num:reverse():gsub("(%d%d%d)", "%1,"):reverse()) .. right
+end
+
+local function GetHistoryPointTime(point)
+    return tonumber(point and point[HISTORY_FIELD_TIME])
+end
+
+local function FormatGraphTimestamp(point)
+    local timestamp = GetHistoryPointTime(point)
+    if not timestamp or timestamp <= 0 then
+        return "Unknown"
+    end
+    return date("%Y-%m-%d %H:%M", timestamp)
+end
+
+local function GetHistoryPointRating(point)
+    return tonumber(point and point[HISTORY_FIELD_RATING]) or 0
+end
+
+local function GetHistoryPointMMR(point)
+    return tonumber(point and point[HISTORY_FIELD_MMR]) or 0
+end
+
+local function GetHistoryPointRatingDelta(point)
+    return tonumber(point and point[HISTORY_FIELD_RATING_DELTA]) or 0
+end
+
+local function IsHistoryPointPostMatchMMR(point)
+    return point and point[HISTORY_FIELD_MMR_IS_POSTMATCH] == true
+end
+
+local function FormatGraphDelta(delta)
+    delta = tonumber(delta) or 0
+    if delta > 0 then
+        return " (+" .. FormatGraphValue(delta) .. ")"
+    elseif delta < 0 then
+        return " (" .. FormatGraphValue(delta) .. ")"
+    end
+    return " (+0)"
+end
+
+local function GetAlignedGraphMMR(points, index)
+    local point = points and points[index]
+    if IsHistoryPointPostMatchMMR(point) then
+        return GetHistoryPointMMR(point)
+    end
+
+    local nextPoint = points and points[index + 1]
+    if nextPoint and not IsHistoryPointPostMatchMMR(nextPoint) then
+        return GetHistoryPointMMR(nextPoint)
+    end
+
+    return nil
+end
+
+local function GetGraphPointY(value, minValue, maxValue, plotHeight)
+    value = tonumber(value) or 0
+    if maxValue <= minValue then
+        return GRAPH_MARGIN_TOP + plotHeight / 2
+    end
+    return GRAPH_MARGIN_TOP + ((maxValue - value) / (maxValue - minValue)) * plotHeight
+end
+
+local function IncludeGraphScaleValue(value, scale)
+    value = tonumber(value)
+    if not value or value <= 0 then return end
+
+    scale.minValue = math.min(scale.minValue, value)
+    scale.maxValue = math.max(scale.maxValue, value)
+    scale.hasValue = true
+end
+
+local function RoundGraphScale(minValue, maxValue)
+    if maxValue <= minValue then
+        maxValue = minValue + 100
+        minValue = math.max(0, minValue - 100)
+    else
+        local padding = math.max(25, (maxValue - minValue) * 0.08)
+        minValue = math.max(0, minValue - padding)
+        maxValue = maxValue + padding
+    end
+
+    local span = maxValue - minValue
+    local step = span > 1000 and 100 or 50
+    minValue = math.max(0, math.floor(minValue / step) * step)
+    maxValue = math.ceil(maxValue / step) * step
+    if maxValue <= minValue then
+        maxValue = minValue + step
+    end
+
+    return minValue, maxValue
+end
+
+local function GetFullSeriesGraphScale(points, showRating, showMMR)
+    local scale = {
+        minValue = math.huge,
+        maxValue = 0,
+        hasValue = false,
+    }
+
+    for i = 1, points and #points or 0 do
+        if showRating then
+            IncludeGraphScaleValue(GetHistoryPointRating(points[i]), scale)
+        end
+        if showMMR then
+            IncludeGraphScaleValue(GetAlignedGraphMMR(points, i), scale)
+        end
+    end
+
+    if not scale.hasValue then
+        return nil, nil
+    end
+
+    return RoundGraphScale(scale.minValue, scale.maxValue)
+end
+
+local function GetGraphVisiblePointLimit(pointCount)
+    local settings = Database.GetSettings()
+    local requested = tonumber(settings.graphVisiblePointCount) or GRAPH_DEFAULT_VISIBLE_POINT_COUNT
+    requested = math.floor((requested / GRAPH_VISIBLE_POINT_STEP) + 0.5) * GRAPH_VISIBLE_POINT_STEP
+    requested = math.max(GRAPH_MIN_VISIBLE_POINT_COUNT, math.min(requested, GRAPH_MAX_VISIBLE_POINT_COUNT))
+    return math.min(requested, pointCount)
+end
+
+local function GetSpecLabel(specID)
+    specID = tonumber(specID)
+    if not specID or specID == 0 then return nil end
+
+    local _, name = GetSpecializationInfoByID(specID)
+    return name
+end
+
+local function HideGraphHover()
+    if not graphPanel then return end
+
+    if graphPanel.hoverLine then
+        graphPanel.hoverLine:Hide()
+    end
+    if graphPanel.hoverRatingDot then
+        graphPanel.hoverRatingDot:Hide()
+    end
+    if graphPanel.hoverMMRDot then
+        graphPanel.hoverMMRDot:Hide()
+    end
+    if GameTooltip:IsOwned(graphPanel.canvas) then
+        GameTooltip:Hide()
+    end
+end
+
+local function GetCanvasCursorPosition(canvas)
+    local cursorX, cursorY = GetCursorPosition()
+    local scale = canvas:GetEffectiveScale()
+    cursorX, cursorY = cursorX / scale, cursorY / scale
+
+    local left = canvas:GetLeft()
+    local top = canvas:GetTop()
+    if not left or not top then return nil, nil end
+
+    return cursorX - left, top - cursorY
+end
+
+local function SetHoverDot(dot, x, y, r, g, b)
+    dot:SetSize(GRAPH_HOVER_POINT_SIZE, GRAPH_HOVER_POINT_SIZE)
+    dot:SetColorTexture(r, g, b, 1)
+    dot:ClearAllPoints()
+    dot:SetPoint("CENTER", graphPanel.canvas, "TOPLEFT", x, -y)
+    dot:Show()
+end
+
+local function SetHistoryGraphViewportStart(start)
+    if not graphPanel then return end
+
+    local maxStart = graphPanel.maxViewportStart or 1
+    start = math.floor((tonumber(start) or maxStart) + 0.5)
+    start = math.max(1, math.min(start, maxStart))
+    if graphPanel.viewportStart == start then return end
+
+    graphPanel.viewportStart = start
+    graphPanel.viewportAtLatest = start == maxStart
+    HideGraphHover()
+    UI.RefreshHistoryGraph()
+end
+
+local function ScrollHistoryGraph(delta)
+    if not graphPanel or not graphPanel.maxViewportStart then return end
+
+    local currentStart = graphPanel.viewportStart or graphPanel.maxViewportStart
+    SetHistoryGraphViewportStart(currentStart - (delta * GRAPH_SCROLL_STEP))
+end
+
+local function UpdateGraphHover()
+    if not graphPanel or not graphPanel.graphData then return end
+
+    local data = graphPanel.graphData
+    local cursorX, cursorY = GetCanvasCursorPosition(graphPanel.canvas)
+    if not cursorX or not cursorY then
+        HideGraphHover()
         return
     end
 
-    local frameParent = mainFrame.InsetBg or mainFrame
-    mmrLegendFrame:ClearAllPoints()
+    local plotLeft = GRAPH_MARGIN_LEFT
+    local plotRight = GRAPH_MARGIN_LEFT + data.plotWidth
+    local plotTop = GRAPH_MARGIN_TOP
+    local plotBottom = GRAPH_MARGIN_TOP + data.plotHeight
+    if cursorX < plotLeft or cursorX > plotRight or cursorY < plotTop or cursorY > plotBottom then
+        HideGraphHover()
+        return
+    end
 
-    -- Anchor to the right edge of PvP columns so it extends left when shrinking
-    local rightEdgeX = 8 + pvpStartX + pvpWidth
-    mmrLegendFrame:SetPoint("TOPRIGHT", frameParent, "BOTTOMLEFT", rightEdgeX, -5)
+    local visibleIndex
+    if data.visiblePointCount <= 1 then
+        visibleIndex = 1
+    else
+        visibleIndex = math.floor(((cursorX - GRAPH_MARGIN_LEFT) / data.xStep) + 0.5) + 1
+        visibleIndex = math.max(1, math.min(visibleIndex, data.visiblePointCount))
+    end
 
-    local mutedGold = { 0.86, 0.75, 0.34 }
-    local grey = { 0.55, 0.55, 0.55 }
-    local prefix = AddLegendPiece("PvP ratings are displayed in the format \"", "GameFontNormalSmall", mutedGold)
-    local currentRating = AddLegendPiece("current rating", "GameFontHighlight")
-    local mmr = AddLegendPiece(" (MMR)", "GameFontHighlightSmall", grey, 9)
-    local suffix = AddLegendPiece("\".", "GameFontNormalSmall", mutedGold)
+    local index = data.visibleStart + visibleIndex - 1
+    local point = data.points[index]
+    local pointX = data.visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * data.xStep)
+        or (GRAPH_MARGIN_LEFT + data.plotWidth / 2)
+    local ratingY = GetGraphPointY(GetHistoryPointRating(point), data.minValue, data.maxValue, data.plotHeight)
+    local mmr = data.mmrValues[index]
+    local mmrY = mmr and GetGraphPointY(mmr, data.minValue, data.maxValue, data.plotHeight)
 
-    local gap = 1
-    local totalW = math.ceil(prefix:GetStringWidth())
-        + math.ceil(currentRating:GetStringWidth())
-        + math.ceil(mmr:GetStringWidth())
-        + math.ceil(suffix:GetStringWidth())
-        + gap * 3
+    local theme = GetActiveTheme()
+    SetTextureColor(graphPanel.hoverLine, theme.text, 0.55)
+    graphPanel.hoverLine:SetThickness(1.5)
+    graphPanel.hoverLine:SetStartPoint("TOPLEFT", graphPanel.canvas, pointX, -plotTop)
+    graphPanel.hoverLine:SetEndPoint("TOPLEFT", graphPanel.canvas, pointX, -plotBottom)
+    graphPanel.hoverLine:Show()
 
-    -- Use a fixed width when 3 or fewer columns, otherwise use pvpWidth
-    local frameWidth = pvpColumnCount <= 3 and math.max(pvpWidth, totalW + 20) or pvpWidth
-    mmrLegendFrame:SetWidth(frameWidth)
-    mmrLegendFrame:Show()
-    SetScrollAreaBottom(true)
+    if data.showMMR and mmrY then
+        SetHoverDot(graphPanel.hoverMMRDot, pointX, mmrY, data.mmrColor[1], data.mmrColor[2], data.mmrColor[3])
+    else
+        graphPanel.hoverMMRDot:Hide()
+    end
+    if data.showRating then
+        SetHoverDot(graphPanel.hoverRatingDot, pointX, ratingY, data.ratingColor[1], data.ratingColor[2], data.ratingColor[3])
+    else
+        graphPanel.hoverRatingDot:Hide()
+    end
 
-    local startX = (frameWidth - totalW) / 2
-    local y = -5
+    GameTooltip:SetOwner(graphPanel.canvas, "ANCHOR_CURSOR_RIGHT")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(FormatGraphTimestamp(point), 1, 1, 1)
+    if data.showRating then
+        GameTooltip:AddDoubleLine(
+            "Rating",
+            FormatGraphValue(GetHistoryPointRating(point)) .. FormatGraphDelta(GetHistoryPointRatingDelta(point)),
+            data.ratingColor[1], data.ratingColor[2], data.ratingColor[3],
+            1, 1, 1
+        )
+    end
 
-    prefix:SetPoint("TOPLEFT", mmrLegendFrame, "TOPLEFT", startX, y)
-    currentRating:SetPoint("LEFT", prefix, "RIGHT", gap, 0)
-    mmr:SetPoint("LEFT", currentRating, "RIGHT", gap, -1)
-    suffix:SetPoint("LEFT", mmr, "RIGHT", gap, 0)
+    if data.showMMR then
+        local mmrValue = "Pending next game"
+        if mmr then
+            mmrValue = FormatGraphValue(mmr)
+            local previousMMR = data.mmrValues[index - 1]
+            if previousMMR then
+                mmrValue = mmrValue .. FormatGraphDelta(mmr - previousMMR)
+            end
+        end
+        GameTooltip:AddDoubleLine(
+            "MMR",
+            mmrValue,
+            data.mmrColor[1], data.mmrColor[2], data.mmrColor[3],
+            1, 1, 1
+        )
+    end
+    GameTooltip:Show()
+end
+
+local function UpdateHistoryGraphDockButton()
+    if graphPanel and graphPanel.detachButton then
+        graphPanel.detachButton:SetText(graphPanel.detached and "Attach" or "Detach")
+    end
+end
+
+local function CloseHistoryGraph()
+    if not graphPanel then return end
+
+    selectedGraph = nil
+    HideGraphHover()
+    graphPanel:Hide()
+    RefreshHistoryCellAffordances()
+end
+
+local function SetHistoryGraphDetached(detached)
+    if not graphPanel then return end
+
+    local wasShown = graphPanel:IsShown()
+    HideGraphHover()
+
+    if detached then
+        graphPanel.detached = true
+        graphPanel:SetParent(UIParent)
+        graphPanel:ClearAllPoints()
+        graphPanel:SetSize(GRAPH_DETACHED_WIDTH, GRAPH_DETACHED_HEIGHT)
+        graphPanel:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+        graphPanel:SetFrameStrata("DIALOG")
+    else
+        if mainFrame and not mainFrame:IsShown() then
+            mainFrame:Show()
+        end
+        graphPanel.detached = false
+        graphPanel:SetParent(mainFrame)
+        graphPanel:ClearAllPoints()
+        graphPanel:SetHeight(GRAPH_PANEL_HEIGHT)
+        graphPanel:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", 0, 1)
+        graphPanel:SetPoint("TOPRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
+        graphPanel:SetFrameStrata("HIGH")
+    end
+
+    UpdateHistoryGraphDockButton()
+    UI.ApplyTheme()
+    if wasShown then
+        graphPanel:Show()
+        UI.RefreshHistoryGraph()
+    end
+end
+
+function UI.CreateHistoryGraphPanel()
+    if graphPanel then return graphPanel end
+
+    graphPanel = CreateFrame("Frame", "WarbandRatingsHistoryGraphPanel", mainFrame, "InsetFrameTemplate3")
+    graphPanel.showRating = true
+    graphPanel.showMMR = true
+    graphPanel.detached = false
+    graphPanel:SetHeight(GRAPH_PANEL_HEIGHT)
+    graphPanel:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", 0, 1)
+    graphPanel:SetPoint("TOPRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
+    graphPanel:SetFrameStrata("HIGH")
+    graphPanel:SetMovable(true)
+    graphPanel:SetClampedToScreen(true)
+    graphPanel:EnableMouse(true)
+    graphPanel:RegisterForDrag("LeftButton")
+    graphPanel:SetScript("OnDragStart", function(self)
+        if self.detached then
+            self:StartMoving()
+        end
+    end)
+    graphPanel:SetScript("OnDragStop", function(self)
+        if self.detached then
+            self:StopMovingOrSizing()
+        end
+    end)
+    graphPanel:SetScript("OnHide", function()
+        selectedGraph = nil
+        HideGraphHover()
+        RefreshHistoryCellAffordances()
+    end)
+    graphPanel:Hide()
+    HideTemplateArtwork(graphPanel)
+    tinsert(UISpecialFrames, "WarbandRatingsHistoryGraphPanel")
+
+    graphPanel.characterTitle = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    graphPanel.characterTitle:SetPoint("TOPLEFT", graphPanel, "TOPLEFT", 12, -10)
+    graphPanel.characterTitle:SetJustifyH("LEFT")
+
+    graphPanel.title = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    graphPanel.title:SetPoint("LEFT", graphPanel.characterTitle, "RIGHT", 0, 0)
+    graphPanel.title:SetJustifyH("LEFT")
+
+    graphPanel.closeButton = CreateFrame("Button", nil, graphPanel, "UIPanelCloseButton")
+    graphPanel.closeButton:SetSize(22, 22)
+    graphPanel.closeButton:SetPoint("TOPRIGHT", graphPanel, "TOPRIGHT", -4, -4)
+    graphPanel.closeButton:SetScript("OnClick", CloseHistoryGraph)
+
+    graphPanel.detachButton = CreateFrame("Button", nil, graphPanel, "UIPanelButtonTemplate")
+    graphPanel.detachButton:SetSize(58, 20)
+    graphPanel.detachButton:SetPoint("RIGHT", graphPanel.closeButton, "LEFT", -4, 0)
+    graphPanel.detachButton:SetScript("OnClick", function()
+        SetHistoryGraphDetached(not graphPanel.detached)
+    end)
+    UpdateHistoryGraphDockButton()
+
+    graphPanel.canvas = CreateFrame("Frame", nil, graphPanel)
+    graphPanel.canvas:SetPoint("TOPLEFT", graphPanel, "TOPLEFT", 8, -8)
+    graphPanel.canvas:SetPoint("BOTTOMRIGHT", graphPanel, "BOTTOMRIGHT", -8, 8)
+    graphPanel.canvas:EnableMouse(false)
+
+    graphPanel.hoverFrame = CreateFrame("Frame", nil, graphPanel.canvas)
+    graphPanel.hoverFrame:SetPoint("TOPLEFT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT, -GRAPH_MARGIN_TOP)
+    graphPanel.hoverFrame:SetPoint("BOTTOMRIGHT", graphPanel.canvas, "BOTTOMRIGHT", -GRAPH_MARGIN_RIGHT, GRAPH_MARGIN_BOTTOM)
+    graphPanel.hoverFrame:EnableMouse(true)
+    graphPanel.hoverFrame:SetScript("OnEnter", UpdateGraphHover)
+    graphPanel.hoverFrame:SetScript("OnLeave", HideGraphHover)
+    graphPanel.hoverFrame:SetScript("OnUpdate", UpdateGraphHover)
+    graphPanel.hoverFrame:EnableMouseWheel(true)
+    graphPanel.hoverFrame:SetScript("OnMouseWheel", function(_, delta)
+        ScrollHistoryGraph(delta)
+    end)
+
+    graphPanel.hoverLine = graphPanel.canvas:CreateLine(nil, "OVERLAY")
+    graphPanel.hoverLine:Hide()
+
+    graphPanel.hoverRatingDot = graphPanel.canvas:CreateTexture(nil, "OVERLAY")
+    graphPanel.hoverRatingDot:Hide()
+
+    graphPanel.hoverMMRDot = graphPanel.canvas:CreateTexture(nil, "OVERLAY")
+    graphPanel.hoverMMRDot:Hide()
+
+    graphPanel.emptyText = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    graphPanel.emptyText:SetPoint("CENTER", graphPanel.canvas, "CENTER", 0, 0)
+
+    graphPanel.maxLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.maxLabel:SetPoint("TOPLEFT", graphPanel.canvas, "TOPLEFT", 4, -GRAPH_MARGIN_TOP)
+
+    graphPanel.midLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.midLabel:SetPoint("LEFT", graphPanel.canvas, "LEFT", 4, 0)
+
+    graphPanel.minLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.minLabel:SetPoint("BOTTOMLEFT", graphPanel.canvas, "BOTTOMLEFT", 4, GRAPH_MARGIN_BOTTOM - 6)
+
+    graphPanel.gamesLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.gamesLabel:SetPoint("BOTTOMRIGHT", graphPanel.canvas, "BOTTOMRIGHT", -4, 8)
+    graphPanel.gamesLabel:SetWidth(GRAPH_GAMES_LABEL_WIDTH)
+    graphPanel.gamesLabel:SetJustifyH("RIGHT")
+
+    graphPanel.zoomLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.zoomLabel:SetText("Games")
+    graphPanel.zoomLabel:SetWidth(42)
+    graphPanel.zoomLabel:SetJustifyH("RIGHT")
+
+    graphPanel.zoomValueLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.zoomValueLabel:SetWidth(28)
+    graphPanel.zoomValueLabel:SetJustifyH("LEFT")
+
+    graphPanel.zoomSlider = CreateFrame("Slider", nil, graphPanel, "OptionsSliderTemplate")
+    graphPanel.zoomSlider:SetWidth(108)
+    graphPanel.zoomSlider:SetHeight(14)
+    graphPanel.zoomSlider:SetMinMaxValues(GRAPH_MIN_VISIBLE_POINT_COUNT, GRAPH_MAX_VISIBLE_POINT_COUNT)
+    graphPanel.zoomSlider:SetValueStep(GRAPH_VISIBLE_POINT_STEP)
+    if graphPanel.zoomSlider.SetObeyStepOnDrag then
+        graphPanel.zoomSlider:SetObeyStepOnDrag(true)
+    end
+    if graphPanel.zoomSlider.Text then
+        graphPanel.zoomSlider.Text:SetText("")
+    end
+    if graphPanel.zoomSlider.Low then
+        graphPanel.zoomSlider.Low:SetText("")
+    end
+    if graphPanel.zoomSlider.High then
+        graphPanel.zoomSlider.High:SetText("")
+    end
+    graphPanel.zoomSlider:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Visible games")
+        if graphPanel.zoomDisabled then
+            GameTooltip:AddLine("Available from " .. GRAPH_MIN_VISIBLE_POINT_COUNT .. " recorded games.", 1, 1, 1)
+            GameTooltip:AddLine("Current history: " .. (graphPanel.zoomPointCount or 0) .. " games.", 0.7, 0.7, 0.7)
+        else
+            GameTooltip:AddLine("Drag to show fewer or more games in the graph window.", 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
+    graphPanel.zoomSlider:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    graphPanel.zoomSlider:SetScript("OnValueChanged", function(_, value)
+        if graphPanel.updatingZoomSlider then return end
+        if graphPanel.zoomDisabled then return end
+        value = math.floor((value / GRAPH_VISIBLE_POINT_STEP) + 0.5) * GRAPH_VISIBLE_POINT_STEP
+        Database.SetSetting("graphVisiblePointCount", value)
+        if graphPanel.viewportAtLatest then
+            graphPanel.viewportStart = nil
+        end
+        UI.RefreshHistoryGraph()
+    end)
+
+    graphPanel.rangeSlider = CreateFrame("Slider", nil, graphPanel, "OptionsSliderTemplate")
+    graphPanel.rangeSlider:SetPoint("BOTTOMLEFT", graphPanel, "BOTTOMLEFT", GRAPH_MARGIN_LEFT + 8, 12)
+    graphPanel.rangeSlider:SetPoint(
+        "BOTTOMRIGHT",
+        graphPanel,
+        "BOTTOMRIGHT",
+        -GRAPH_MARGIN_RIGHT - GRAPH_GAMES_LABEL_WIDTH - GRAPH_GAMES_LABEL_GAP,
+        12
+    )
+    graphPanel.rangeSlider:SetHeight(14)
+    graphPanel.rangeSlider:SetMinMaxValues(1, 1)
+    graphPanel.rangeSlider:SetValueStep(1)
+    if graphPanel.rangeSlider.SetObeyStepOnDrag then
+        graphPanel.rangeSlider:SetObeyStepOnDrag(true)
+    end
+    if graphPanel.rangeSlider.Text then
+        graphPanel.rangeSlider.Text:SetText("")
+    end
+    if graphPanel.rangeSlider.Low then
+        graphPanel.rangeSlider.Low:SetText("")
+    end
+    if graphPanel.rangeSlider.High then
+        graphPanel.rangeSlider.High:SetText("")
+    end
+    graphPanel.rangeSlider:SetScript("OnValueChanged", function(_, value)
+        if graphPanel.updatingRangeSlider then return end
+        SetHistoryGraphViewportStart(value)
+    end)
+    graphPanel.rangeSlider:Hide()
+
+    graphPanel.ratingLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.ratingLabel:SetWidth(44)
+    graphPanel.ratingLabel:SetJustifyH("LEFT")
+    graphPanel.ratingLabel:SetPoint("RIGHT", graphPanel.detachButton, "LEFT", -12, 0)
+
+    graphPanel.ratingToggle = CreateFrame("CheckButton", nil, graphPanel, "UICheckButtonTemplate")
+    graphPanel.ratingToggle:SetSize(20, 20)
+    graphPanel.ratingToggle:SetPoint("RIGHT", graphPanel.ratingLabel, "LEFT", -2, 0)
+    graphPanel.ratingToggle:SetChecked(true)
+    graphPanel.ratingToggle:SetScript("OnClick", function(self)
+        graphPanel.showRating = self:GetChecked()
+        UI.RefreshHistoryGraph()
+    end)
+
+    graphPanel.mmrLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.mmrLabel:SetWidth(32)
+    graphPanel.mmrLabel:SetJustifyH("LEFT")
+    graphPanel.mmrLabel:SetPoint("RIGHT", graphPanel.ratingToggle, "LEFT", -18, 0)
+
+    graphPanel.mmrToggle = CreateFrame("CheckButton", nil, graphPanel, "UICheckButtonTemplate")
+    graphPanel.mmrToggle:SetSize(20, 20)
+    graphPanel.mmrToggle:SetPoint("RIGHT", graphPanel.mmrLabel, "LEFT", -2, 0)
+    graphPanel.mmrToggle:SetChecked(true)
+    graphPanel.mmrToggle:SetScript("OnClick", function(self)
+        graphPanel.showMMR = self:GetChecked()
+        UI.RefreshHistoryGraph()
+    end)
+
+    graphPanel.zoomValueLabel:SetPoint("RIGHT", graphPanel.mmrToggle, "LEFT", -30, 0)
+    graphPanel.zoomSlider:SetPoint("RIGHT", graphPanel.zoomValueLabel, "LEFT", -8, 0)
+    graphPanel.zoomLabel:SetPoint("RIGHT", graphPanel.zoomSlider, "LEFT", -6, 0)
+
+    graphPanel:SetScript("OnSizeChanged", function()
+        UI.RefreshHistoryGraph()
+    end)
+
+    return graphPanel
+end
+
+function UI.RefreshHistoryGraph()
+    if not graphPanel or not graphPanel:IsShown() or not selectedGraph then return end
+
+    ClearGraphDrawings()
+    local theme = GetActiveTheme()
+
+    local series = History and History.GetCurrentSeries(selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID)
+    local points = series and series.points
+    local pointCount = points and #points or 0
+
+    graphPanel.characterTitle:SetText(selectedGraph.characterTitle)
+    graphPanel.characterTitle:SetWidth(math.ceil(graphPanel.characterTitle:GetStringWidth()))
+    graphPanel.title:SetText(selectedGraph.titleSuffix)
+    local titleR, titleG, titleB = Utils.GetClassColor(selectedGraph.classFilename)
+    graphPanel.characterTitle:SetTextColor(titleR, titleG, titleB)
+    SetFontColor(graphPanel.title, theme.title)
+    graphPanel.ratingLabel:SetText("Rating")
+    graphPanel.mmrLabel:SetText("MMR")
+    graphPanel.gamesLabel:SetText(pointCount .. " game" .. (pointCount == 1 and "" or "s"))
+    SetFontColor(graphPanel.gamesLabel, theme.muted)
+    SetFontColor(graphPanel.emptyText, theme.muted)
+    SetFontColor(graphPanel.maxLabel, theme.muted)
+    SetFontColor(graphPanel.midLabel, theme.muted)
+    SetFontColor(graphPanel.minLabel, theme.muted)
+    SetFontColor(graphPanel.zoomLabel, theme.muted)
+    SetFontColor(graphPanel.zoomValueLabel, theme.muted)
+
+    local showRating = graphPanel.showRating ~= false
+    local showMMR = graphPanel.showMMR ~= false
+    graphPanel.ratingToggle:SetChecked(showRating)
+    graphPanel.mmrToggle:SetChecked(showMMR)
+
+    local cr, cg, cb = Utils.GetClassColor(selectedGraph.classFilename)
+    local mr, mg, mb = theme.mmr[1] or MMR_GRAPH_R, theme.mmr[2] or MMR_GRAPH_G, theme.mmr[3] or MMR_GRAPH_B
+    if showRating then
+        graphPanel.ratingLabel:SetTextColor(cr, cg, cb)
+    else
+        SetFontColor(graphPanel.ratingLabel, theme.muted, 0.75)
+    end
+    if showMMR then
+        graphPanel.mmrLabel:SetTextColor(mr, mg, mb)
+    else
+        SetFontColor(graphPanel.mmrLabel, theme.muted, 0.75)
+    end
+
+    if pointCount == 0 then
+        graphPanel.emptyText:SetText("No games recorded for this rating yet.")
+        graphPanel.emptyText:Show()
+        graphPanel.maxLabel:SetText("")
+        graphPanel.midLabel:SetText("")
+        graphPanel.minLabel:SetText("")
+        graphPanel.gamesLabel:SetText("0 games")
+        graphPanel.rangeSlider:Hide()
+        graphPanel.zoomLabel:Hide()
+        graphPanel.zoomSlider:Hide()
+        graphPanel.zoomValueLabel:SetText("")
+        graphPanel.zoomValueLabel:Hide()
+        return
+    end
+
+    graphPanel.emptyText:Hide()
+
+    local visiblePointCount = GetGraphVisiblePointLimit(pointCount)
+    local zoomDisabled = pointCount < GRAPH_MIN_VISIBLE_POINT_COUNT
+    local zoomMax = zoomDisabled and pointCount or math.min(pointCount, GRAPH_MAX_VISIBLE_POINT_COUNT)
+    local zoomMin = zoomDisabled and pointCount or math.min(GRAPH_MIN_VISIBLE_POINT_COUNT, zoomMax)
+    graphPanel.zoomDisabled = zoomDisabled
+    graphPanel.zoomPointCount = pointCount
+    graphPanel.zoomLabel:Show()
+    graphPanel.zoomSlider:Show()
+    graphPanel.zoomValueLabel:Show()
+    graphPanel.zoomValueLabel:SetText(tostring(visiblePointCount))
+    graphPanel.zoomLabel:SetAlpha(zoomDisabled and 0.55 or 1)
+    graphPanel.zoomSlider:SetAlpha(zoomDisabled and 0.45 or 1)
+    graphPanel.zoomValueLabel:SetAlpha(zoomDisabled and 0.55 or 1)
+    graphPanel.zoomSlider:SetMinMaxValues(zoomMin, zoomMax)
+    graphPanel.zoomSlider:SetValueStep(GRAPH_VISIBLE_POINT_STEP)
+    graphPanel.updatingZoomSlider = true
+    graphPanel.zoomSlider:SetValue(visiblePointCount)
+    graphPanel.updatingZoomSlider = false
+
+    local maxViewportStart = math.max(1, pointCount - visiblePointCount + 1)
+    graphPanel.maxViewportStart = maxViewportStart
+
+    if graphPanel.viewportAtLatest or not graphPanel.viewportStart or graphPanel.viewportStart > maxViewportStart then
+        graphPanel.viewportStart = maxViewportStart
+    end
+
+    local visibleStart = math.max(1, math.min(graphPanel.viewportStart, maxViewportStart))
+    local visibleEnd = math.min(pointCount, visibleStart + visiblePointCount - 1)
+    visiblePointCount = visibleEnd - visibleStart + 1
+    graphPanel.viewportStart = visibleStart
+    graphPanel.viewportAtLatest = visibleStart == maxViewportStart
+
+    if pointCount > visiblePointCount then
+        graphPanel.gamesLabel:SetText(visibleStart .. "-" .. visibleEnd .. " / " .. pointCount .. " games")
+        graphPanel.rangeSlider:Show()
+        graphPanel.rangeSlider:SetMinMaxValues(1, maxViewportStart)
+        graphPanel.rangeSlider:SetValueStep(1)
+        graphPanel.updatingRangeSlider = true
+        graphPanel.rangeSlider:SetValue(visibleStart)
+        graphPanel.updatingRangeSlider = false
+    else
+        graphPanel.gamesLabel:SetText(pointCount .. " game" .. (pointCount == 1 and "" or "s"))
+        graphPanel.rangeSlider:Hide()
+    end
+
+    local minValue, maxValue = GetFullSeriesGraphScale(points, showRating, showMMR)
+    if not minValue then
+        if not showRating and not showMMR then
+            graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
+        else
+            graphPanel.emptyText:SetText("No visible graph data yet.")
+        end
+        graphPanel.emptyText:Show()
+        graphPanel.maxLabel:SetText("")
+        graphPanel.midLabel:SetText("")
+        graphPanel.minLabel:SetText("")
+        HideGraphHover()
+        return
+    end
+
+    local hasVisibleValue = false
+    local mmrValues = {}
+    for i = visibleStart, visibleEnd do
+        local point = points[i]
+        local rating = GetHistoryPointRating(point)
+        local mmr = GetAlignedGraphMMR(points, i)
+        mmrValues[i] = mmr
+        if showRating and rating > 0 then
+            hasVisibleValue = true
+        end
+        if showMMR and mmr then
+            hasVisibleValue = true
+        end
+    end
+
+    if not hasVisibleValue then
+        if not showRating and not showMMR then
+            graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
+        elseif showMMR and not showRating then
+            graphPanel.emptyText:SetText("MMR is pending until the next game.")
+        else
+            graphPanel.emptyText:SetText("No visible graph data yet.")
+        end
+        graphPanel.emptyText:Show()
+        graphPanel.maxLabel:SetText("")
+        graphPanel.midLabel:SetText("")
+        graphPanel.minLabel:SetText("")
+        HideGraphHover()
+        return
+    end
+
+    graphPanel.maxLabel:SetText(FormatGraphValue(maxValue))
+    graphPanel.midLabel:SetText(FormatGraphValue((minValue + maxValue) / 2))
+    graphPanel.minLabel:SetText(FormatGraphValue(minValue))
+
+    local canvasWidth = math.max(graphPanel.canvas:GetWidth(), 1)
+    local canvasHeight = math.max(graphPanel.canvas:GetHeight(), 1)
+    local plotWidth = math.max(canvasWidth - GRAPH_MARGIN_LEFT - GRAPH_MARGIN_RIGHT, 1)
+    local plotHeight = math.max(canvasHeight - GRAPH_MARGIN_TOP - GRAPH_MARGIN_BOTTOM, 1)
+    local xStep = visiblePointCount > 1 and (plotWidth / (visiblePointCount - 1)) or 0
+    graphPanel.graphData = {
+        points = points,
+        pointCount = pointCount,
+        visibleStart = visibleStart,
+        visibleEnd = visibleEnd,
+        visiblePointCount = visiblePointCount,
+        minValue = minValue,
+        maxValue = maxValue,
+        plotWidth = plotWidth,
+        plotHeight = plotHeight,
+        xStep = xStep,
+        mmrValues = mmrValues,
+        showRating = showRating,
+        showMMR = showMMR,
+        ratingColor = { cr, cg, cb },
+        mmrColor = { mr, mg, mb },
+    }
+
+    for i = 1, 4 do
+        local y = GRAPH_MARGIN_TOP + plotHeight * (i - 1) / 3
+        AddGraphLine(GRAPH_MARGIN_LEFT, y, GRAPH_MARGIN_LEFT + plotWidth, y, theme.grid[1], theme.grid[2], theme.grid[3], theme.grid[4], 1)
+    end
+    AddGraphLine(
+        GRAPH_MARGIN_LEFT, GRAPH_MARGIN_TOP, GRAPH_MARGIN_LEFT, GRAPH_MARGIN_TOP + plotHeight,
+        theme.axis[1], theme.axis[2], theme.axis[3], theme.axis[4], 1
+    )
+    AddGraphLine(
+        GRAPH_MARGIN_LEFT, GRAPH_MARGIN_TOP + plotHeight, GRAPH_MARGIN_LEFT + plotWidth, GRAPH_MARGIN_TOP + plotHeight,
+        theme.axis[1], theme.axis[2], theme.axis[3], theme.axis[4], 1
+    )
+
+    if showMMR then
+        for i = visibleStart + 1, visibleEnd do
+            local visibleIndex = i - visibleStart + 1
+            local x1 = GRAPH_MARGIN_LEFT + (visibleIndex - 2) * xStep
+            local x2 = GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep
+            local prevMMR = mmrValues[i - 1]
+            local currentMMR = mmrValues[i]
+
+            if prevMMR and currentMMR then
+                local prevMMRY = GetGraphPointY(prevMMR, minValue, maxValue, plotHeight)
+                local currentMMRY = GetGraphPointY(currentMMR, minValue, maxValue, plotHeight)
+                AddGraphLine(x1, prevMMRY, x2, currentMMRY, mr, mg, mb, 0.9, 2)
+            end
+        end
+    end
+
+    if showRating then
+        for i = visibleStart + 1, visibleEnd do
+            local prev = points[i - 1]
+            local current = points[i]
+            local visibleIndex = i - visibleStart + 1
+            local x1 = GRAPH_MARGIN_LEFT + (visibleIndex - 2) * xStep
+            local x2 = GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep
+            local prevRatingY = GetGraphPointY(GetHistoryPointRating(prev), minValue, maxValue, plotHeight)
+            local currentRatingY = GetGraphPointY(GetHistoryPointRating(current), minValue, maxValue, plotHeight)
+
+            AddGraphLine(x1, prevRatingY, x2, currentRatingY, cr, cg, cb, 1, 2)
+        end
+    end
+
+    if showMMR then
+        for i = visibleStart, visibleEnd do
+            if mmrValues[i] then
+                local visibleIndex = i - visibleStart + 1
+                local x = visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep)
+                    or (GRAPH_MARGIN_LEFT + plotWidth / 2)
+                local y = GetGraphPointY(mmrValues[i], minValue, maxValue, plotHeight)
+                AddGraphDot(x, y, mr, mg, mb, 0.95, GRAPH_POINT_SIZE - 1)
+            end
+        end
+    end
+
+    if showRating then
+        for i = visibleStart, visibleEnd do
+            local point = points[i]
+            local visibleIndex = i - visibleStart + 1
+            local x = visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep)
+                or (GRAPH_MARGIN_LEFT + plotWidth / 2)
+            local y = GetGraphPointY(GetHistoryPointRating(point), minValue, maxValue, plotHeight)
+            AddGraphDot(x, y, cr, cg, cb, 1)
+        end
+    end
+end
+
+function UI.ShowHistoryGraph(charData, specID, col)
+    if not History or not Database.IsPVPColumn(col) then return end
+
+    local charKey = Utils.CharKey(charData.name, charData.realm)
+    local graphSpecID = Database.IsSpecColumn(col) and specID or 0
+    if graphPanel and graphPanel:IsShown() and selectedGraph
+        and selectedGraph.charKey == charKey
+        and selectedGraph.specID == graphSpecID
+        and selectedGraph.colKey == col.key then
+        return
+    end
+
+    local specLabel = GetSpecLabel(specID)
+    local characterTitle = charData.name .. "-" .. charData.realm
+    local titleSuffix = " - " .. col.label
+    if specLabel then
+        titleSuffix = titleSuffix .. " (" .. specLabel .. ")"
+    end
+
+    selectedGraph = {
+        charKey = charKey,
+        specID = graphSpecID,
+        colKey = col.key,
+        classFilename = charData.classFilename,
+        characterTitle = characterTitle,
+        titleSuffix = titleSuffix,
+    }
+
+    UI.CreateHistoryGraphPanel()
+    graphPanel.showRating = true
+    graphPanel.showMMR = col.key ~= "soloShuffle"
+    graphPanel.viewportStart = nil
+    graphPanel.viewportAtLatest = true
+    graphPanel:Show()
+    RefreshHistoryCellAffordances()
+    UI.RefreshHistoryGraph()
+end
+
+local function AddHistoryClickOverlay(row, x, y, w, h, charData, specID, col)
+    if not Database.IsPVPColumn(col) then return end
+
+    local overlay = AcquireOverlay(row)
+    EnsureHistoryCellAffordance(overlay)
+    overlay:SetPoint("TOPLEFT", row, "TOPLEFT", x, y)
+    overlay:SetSize(w, h)
+    overlay.historyCell = true
+    overlay.historyHovered = false
+    overlay.historyCharKey = Utils.CharKey(charData.name, charData.realm)
+    overlay.historySpecID = Database.IsSpecColumn(col) and specID or 0
+    overlay.historyColKey = col.key
+    overlay.historyClassFilename = charData.classFilename
+    UpdateHistoryCellAffordance(overlay, false)
+
+    overlay:SetScript("OnEnter", function()
+        SetRowHovered(row, true)
+        overlay.historyHovered = true
+        UpdateHistoryCellAffordance(overlay, true)
+    end)
+    overlay:SetScript("OnLeave", function()
+        SetRowHovered(row, false)
+        overlay.historyHovered = false
+        UpdateHistoryCellAffordance(overlay, false)
+    end)
+    overlay:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" then
+            UI.ShowHistoryGraph(charData, specID, col)
+        end
+    end)
+end
+
+local function AddConquestTooltipOverlay(row, x, y, w, h, charData, col)
+    if col.key ~= "conquest" then return end
+
+    local overlay = AcquireOverlay(row)
+    overlay:SetPoint("TOPLEFT", row, "TOPLEFT", x, y)
+    overlay:SetSize(w, h)
+
+    local ratings = charData.ratings or {}
+    overlay:SetScript("OnEnter", function(self)
+        SetRowHovered(row, true)
+
+        local info = C_CurrencyInfo
+            and C_CurrencyInfo.GetCurrencyInfo
+            and C_CurrencyInfo.GetCurrencyInfo(col.currencyID)
+        local iconID = info and info.iconFileID
+        local title = info and info.name or col.label
+        local description = info and info.description
+
+        if iconID then
+            title = "|T" .. iconID .. ":16:16:0:0|t " .. title
+        end
+
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine(title, 0.64, 0.21, 0.93)
+        if description and description ~= "" then
+            GameTooltip:AddLine(description, 1, 0.82, 0, true)
+        end
+        GameTooltip:AddDoubleLine(
+            "Total:",
+            FormatTooltipNumber(ratings.conquest),
+            1, 0.82, 0,
+            1, 1, 1
+        )
+
+        local seasonEarned = tonumber(ratings.conquest_totalEarned) or 0
+        local seasonMaximum = tonumber(ratings.conquest_maxQuantity) or 0
+        if seasonMaximum > 0 then
+            GameTooltip:AddDoubleLine(
+                "Season Maximum:",
+                FormatTooltipNumber(seasonEarned) .. "/" .. FormatTooltipNumber(seasonMaximum),
+                1, 0.82, 0,
+                1, 1, 1
+            )
+        end
+
+        GameTooltip:Show()
+    end)
+    overlay:SetScript("OnLeave", function()
+        SetRowHovered(row, false)
+        GameTooltip:Hide()
+    end)
 end
 
 function UI.RefreshTable()
@@ -637,19 +2029,20 @@ function UI.RefreshTable()
     local groups = Database.GetFilteredCharacterGroups()
     local columns = Database.GetVisibleColumns(groups)
     local showMMR = not Database.GetSettings().hideMMR
-
-    UpdateMMRLegend(columns, showMMR)
+    local theme = GetActiveTheme()
+    UI.ApplyTheme()
 
     -- Build header
     ResetCells(headerRow)
 
-    local hx = ICON_SIZE + 4
+    local hx = TABLE_CONTENT_PADDING_X + ICON_SIZE + 4
     do
         local fs = AcquireFontString(headerRow, "GameFontNormal")
         fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
         fs:SetWidth(COL_NAME_WIDTH)
         fs:SetJustifyH("LEFT")
         fs:SetText("Character")
+        SetFontColor(fs, theme.headerText)
         fs:Show()
         hx = hx + COL_NAME_WIDTH
     end
@@ -671,6 +2064,7 @@ function UI.RefreshTable()
                 fs:SetWidth(w)
                 fs:SetJustifyH("CENTER")
                 fs:SetText(col.label)
+                SetFontColor(fs, theme.headerText)
                 fs:Show()
             end
         elseif col.crests then
@@ -700,6 +2094,7 @@ function UI.RefreshTable()
             fs:SetWidth(w)
             fs:SetJustifyH("CENTER")
             fs:SetText(col.label)
+            SetFontColor(fs, theme.headerText)
             fs:Show()
         end
         hx = hx + w
@@ -713,11 +2108,13 @@ function UI.RefreshTable()
         row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
         row:SetHeight(SUBROW_HEIGHT)
         local fs = AcquireFontString(row, "GameFontDisable")
-        fs:SetPoint("LEFT", row, "LEFT", 10, 0)
+        fs:SetPoint("LEFT", row, "LEFT", TABLE_CONTENT_PADDING_X, 0)
         fs:SetWidth(400)
         fs:SetText("No characters recorded yet. Log in on your characters to populate data.")
+        SetFontColor(fs, theme.muted)
         fs:Show()
         scrollChild:SetHeight(SUBROW_HEIGHT)
+        UI.RefreshHistoryGraph()
         return
     end
 
@@ -760,9 +2157,9 @@ function UI.RefreshTable()
             row.bg:SetAllPoints()
         end
         if charIdx % 2 == 0 then
-            row.bg:SetColorTexture(1, 1, 1, 0.05)
+            SetTextureColor(row.bg, theme.rowEven)
         else
-            row.bg:SetColorTexture(0, 0, 0, 0.15)
+            SetTextureColor(row.bg, theme.rowOdd)
         end
         row.bg:Show()
 
@@ -771,13 +2168,13 @@ function UI.RefreshTable()
         if classTexture then
             local ico = AcquireTexture(row, "ARTWORK")
             ico:SetSize(ICON_SIZE, ICON_SIZE)
-            ico:SetPoint("LEFT", row, "LEFT", 0, 0)
+            ico:SetPoint("LEFT", row, "LEFT", TABLE_CONTENT_PADDING_X, 0)
             ico:SetTexture(classTexture)
             if classCoords then ico:SetTexCoord(unpack(classCoords)) end
             ico:Show()
         end
 
-        local nameX = ICON_SIZE + 4
+        local nameX = TABLE_CONTENT_PADDING_X + ICON_SIZE + 4
 
         -- Character name-realm (vertically centered like class icon)
         local nameFs = AcquireFontString(row, "GameFontNormal")
@@ -793,7 +2190,7 @@ function UI.RefreshTable()
         nameFs:Show()
 
         -- Rating columns
-        local colX = ICON_SIZE + 4 + COL_NAME_WIDTH
+        local colX = TABLE_CONTENT_PADDING_X + ICON_SIZE + 4 + COL_NAME_WIDTH
         for _, col in ipairs(columns) do
             local w = ColWidth(col)
             if Database.IsSpecColumn(col) then
@@ -829,8 +2226,10 @@ function UI.RefreshTable()
                             fs:SetWidth(w - SPEC_ICON_SIZE - 6)
                             fs:SetJustifyH("CENTER")
                             fs:SetText(Utils.FormatRating(val))
+                            SetFontColor(fs, theme.text)
                             fs:Show()
                         end
+                        AddHistoryClickOverlay(row, colX, subY, w, SUBROW_HEIGHT, charData, specID, col)
                     end
                 else
                     -- No spec has a rating: show single centered hyphen (offset to align with spec rating text)
@@ -839,6 +2238,7 @@ function UI.RefreshTable()
                     fs:SetWidth(w - SPEC_ICON_SIZE - 6)
                     fs:SetJustifyH("CENTER")
                     fs:SetText("-")
+                    SetFontColor(fs, theme.muted)
                     fs:Show()
                 end
             else
@@ -873,6 +2273,7 @@ function UI.RefreshTable()
                         fs:SetWidth(textW)
                         fs:SetJustifyH("CENTER")
                         fs:SetText(tostring(val))
+                        SetFontColor(fs, theme.text)
                         fs:Show()
                     else
                         local fs = AcquireFontString(row, "GameFontHighlight")
@@ -880,6 +2281,7 @@ function UI.RefreshTable()
                         fs:SetWidth(w)
                         fs:SetJustifyH("CENTER")
                         fs:SetText("-")
+                        SetFontColor(fs, theme.muted)
                         fs:Show()
                     end
                 else
@@ -894,9 +2296,15 @@ function UI.RefreshTable()
                         fs:SetWidth(w)
                         fs:SetJustifyH("CENTER")
                         fs:SetText(formatFn(val))
+                        SetFontColor(fs, Utils.IsEmptyRating(val) and theme.muted or theme.text)
                         fs:Show()
                     end
+                    if Database.IsPVPColumn(col) then
+                        AddHistoryClickOverlay(row, colX, 0, w, rowHeight, charData, 0, col)
+                    end
                 end
+
+                AddConquestTooltipOverlay(row, colX, 0, w, rowHeight, charData, col)
 
                 -- Tooltip overlay for crest columns
                 if col.crests then
@@ -969,13 +2377,14 @@ function UI.RefreshTable()
 
     scrollChild:SetHeight(math.max(yOff, 1))
 
-    -- Resize window width to fit exactly the visible columns
-    local FRAME_PADDING = 28 -- border + inset padding
+    -- Resize window width to fit exactly the visible columns and themed content insets.
+    local framePadding = TABLE_CONTENT_PADDING_X * 2
     local contentW = ICON_SIZE + 4 + COL_NAME_WIDTH
     for _, col in ipairs(columns) do
         contentW = contentW + ColWidth(col)
     end
-    mainFrame:SetWidth(math.max(contentW + FRAME_PADDING, 400))
+    mainFrame:SetWidth(math.max(contentW + framePadding, 400))
+    UI.RefreshHistoryGraph()
 end
 
 ------------------------------------------------------------

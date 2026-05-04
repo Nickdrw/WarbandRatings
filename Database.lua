@@ -89,14 +89,22 @@ function Database.Init()
             hideNoRating = false,
             hideEmptyColumns = false,
             hideNonMaxLevel = false,
-            hideMMR = false,
+            hideMMR = true,
+            themeKey = "obsidian",
+            graphVisiblePointCount = 50,
         }
+    end
+    if WarbandRatingsDB.settings.themeKey == nil then
+        WarbandRatingsDB.settings.themeKey = "obsidian"
     end
     if WarbandRatingsDB.settings.hideNonMaxLevel == nil then
         WarbandRatingsDB.settings.hideNonMaxLevel = false
     end
     if WarbandRatingsDB.settings.hideMMR == nil then
-        WarbandRatingsDB.settings.hideMMR = false
+        WarbandRatingsDB.settings.hideMMR = true
+    end
+    if WarbandRatingsDB.settings.graphVisiblePointCount == nil then
+        WarbandRatingsDB.settings.graphVisiblePointCount = 50
     end
     if WarbandRatingsDB.settings.minimapPos == nil then
         WarbandRatingsDB.settings.minimapPos = 220
@@ -221,13 +229,13 @@ end
 -- Returns grouped character data for display.
 -- Each entry = { charData = ..., specs = { specID1, specID2, ... } }
 -- Sorted by name-realm. specs sorted by specID.
-function Database.GetFilteredCharacterGroups()
+function Database.BuildCharacterGroups(characters)
     local settings = Database.GetSettings()
     local showMMR = not settings.hideMMR
     local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
     local groups = {}
 
-    for _, charData in pairs(WarbandRatingsDB.characters) do
+    for _, charData in pairs(characters or {}) do
         local skip = false
 
         -- Filter: hide non-max-level characters
@@ -342,11 +350,16 @@ function Database.GetFilteredCharacterGroups()
     return groups
 end
 
+function Database.GetFilteredCharacterGroups()
+    return Database.BuildCharacterGroups(WarbandRatingsDB and WarbandRatingsDB.characters)
+end
+
 -- For column visibility, check across all groups and their specs.
 function Database.GetVisibleColumns(groups)
     local settings = Database.GetSettings()
     local hiddenColumns = settings.hiddenColumns or {}
     local showMMR = not settings.hideMMR
+
     if not settings.hideEmptyColumns then
         local visible = {}
         for _, col in ipairs(Database.RATING_COLUMNS) do
@@ -356,33 +369,37 @@ function Database.GetVisibleColumns(groups)
         end
         return visible
     end
+
     local visible = {}
     for _, col in ipairs(Database.RATING_COLUMNS) do
         if not hiddenColumns[col.key] then
             local found = false
-        for _, grp in ipairs(groups) do
-            if Database.IsSpecColumn(col) then
-                for _, specID in ipairs(grp.specs) do
-                    local sr = grp.charData.specRatings and grp.charData.specRatings[specID]
-                    local sm = grp.charData.specLastMMR and grp.charData.specLastMMR[specID]
-                    if not Utils.IsEmptyRating(sr and sr[col.key])
-                        or (showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(sm and sm[col.key])) then
-                        found = true
-                        break
+
+            for _, grp in ipairs(groups or {}) do
+                if Database.IsSpecColumn(col) then
+                    for _, specID in ipairs(grp.specs) do
+                        local sr = grp.charData.specRatings and grp.charData.specRatings[specID]
+                        local sm = grp.charData.specLastMMR and grp.charData.specLastMMR[specID]
+                        if not Utils.IsEmptyRating(sr and sr[col.key])
+                            or (showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(sm and sm[col.key])) then
+                            found = true
+                            break
+                        end
                     end
-                end
-            else
-                if not Utils.IsEmptyRating(grp.charData.ratings and grp.charData.ratings[col.key])
-                    or (showMMR and Database.IsPVPColumn(col) and not Utils.IsEmptyRating(grp.charData.lastMMR and grp.charData.lastMMR[col.key])) then
+                elseif not Utils.IsEmptyRating(grp.charData.ratings and grp.charData.ratings[col.key])
+                    or (showMMR
+                        and Database.IsPVPColumn(col)
+                        and not Utils.IsEmptyRating(grp.charData.lastMMR and grp.charData.lastMMR[col.key])) then
                     found = true
                 end
+
+                if found then break end
             end
-            if found then break end
-        end
-        if found then
+
+            if found then
                 visible[#visible + 1] = col
             end
-        end -- if not hiddenColumns
+        end
     end
     return visible
 end
