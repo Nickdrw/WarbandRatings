@@ -6,6 +6,8 @@ local History = ns.History
 local Utils = ns.Utils
 local lastKnownRatedBracketIndex
 local lastKnownRatedBracketTime
+local ratedStatsSpecID
+local ratedStatsRequestedSpecID
 
 local function GetCurrentCharacterIdentity()
     local name = UnitName("player")
@@ -20,6 +22,50 @@ local function GetCurrentSpecID()
         specID = GetSpecializationInfo(specIndex)
     end
     return specID or 0
+end
+
+local function CanCollectSpecRatings(specID, isMaxLevel)
+    if not isMaxLevel then
+        return true
+    end
+
+    return ratedStatsSpecID == specID
+end
+
+function DataCollection.MarkRatedStatsStale()
+    ratedStatsSpecID = nil
+    ratedStatsRequestedSpecID = nil
+    return GetCurrentSpecID()
+end
+
+function DataCollection.RequestRatedInfo(expectedSpecID)
+    local specID = GetCurrentSpecID()
+    if expectedSpecID and expectedSpecID ~= specID then
+        return false
+    end
+
+    ratedStatsSpecID = nil
+    ratedStatsRequestedSpecID = specID
+
+    if RequestRatedInfo then
+        RequestRatedInfo()
+    end
+
+    return true
+end
+
+function DataCollection.MarkRatedStatsUpdated()
+    local specID = GetCurrentSpecID()
+    if ratedStatsRequestedSpecID and ratedStatsRequestedSpecID ~= specID then
+        return false
+    end
+    if not ratedStatsRequestedSpecID and not ratedStatsSpecID then
+        return false
+    end
+
+    ratedStatsSpecID = specID
+    ratedStatsRequestedSpecID = nil
+    return true
 end
 
 function DataCollection.CollectCurrentCharacter()
@@ -81,11 +127,17 @@ function DataCollection.CollectCurrentCharacter()
     end
 
     -- Per-spec ratings (Solo Shuffle, Solo BG) — zero out for sub-max-level characters
-    local specRatings = {}
-    for _, col in ipairs(Database.SPEC_COLUMNS) do
-        if col.bracketIndex then
-            local rating = isMaxLevel and GetPersonalRatedInfo(col.bracketIndex) or 0
-            specRatings[col.key] = rating or 0
+    -- GetPersonalRatedInfo() can keep returning the previous spec's solo ratings
+    -- briefly after a spec swap, so spec-scoped brackets are gated by a fresh
+    -- PVP_RATED_STATS_UPDATE for the active spec.
+    local specRatings
+    if CanCollectSpecRatings(specID, isMaxLevel) then
+        specRatings = {}
+        for _, col in ipairs(Database.SPEC_COLUMNS) do
+            if col.bracketIndex then
+                local rating = isMaxLevel and GetPersonalRatedInfo(col.bracketIndex) or 0
+                specRatings[col.key] = rating or 0
+            end
         end
     end
 
@@ -97,8 +149,8 @@ function DataCollection.CollectCurrentCharacter()
         level = level,
         ratings = globalRatings,
         lastMMR = {},
-        specRatings = { [specID] = specRatings },
-        specLastMMR = { [specID] = {} },
+        specRatings = specRatings and { [specID] = specRatings } or {},
+        specLastMMR = specRatings and { [specID] = {} } or {},
         currentSpecID = specID,
         currentSpecRatings = specRatings,
         lastUpdated = time(),
@@ -446,7 +498,9 @@ function DataCollection.CollectLastMatchMMR(recordHistory)
     local saved = Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
     local result = GetMatchResult(scoreInfo)
     if saved and recordHistory and result ~= nil and History then
-        History.RecordMatch(name, realm, specID, bracketIndex, GetCollectedRating(data, col, specID), mmr, result, time(), mmrIsPostMatch)
+        if not Database.IsSpecColumn(col) or data.currentSpecRatings then
+            History.RecordMatch(name, realm, specID, bracketIndex, GetCollectedRating(data, col, specID), mmr, result, time(), mmrIsPostMatch)
+        end
     end
     return saved
 end

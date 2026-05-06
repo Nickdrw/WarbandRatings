@@ -3,6 +3,7 @@ local Database = ns.Database
 local DataCollection = ns.DataCollection
 local History = ns.History
 local UI = ns.UI
+local SPEC_RATED_INFO_REQUEST_DELAY = 1
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -32,9 +33,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         History.Init()
 
         -- Request PvP data from server; ratings may not be available immediately
-        if RequestRatedInfo then
-            RequestRatedInfo()
-        end
+        DataCollection.RequestRatedInfo()
 
         -- Collect after a short delay to let PvP data load
         C_Timer.After(3, function()
@@ -64,17 +63,29 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         DataCollection.CollectCurrentCharacter()
         UI.RefreshTable()
 
-    elseif event == "PVP_RATED_STATS_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
+    elseif event == "PVP_RATED_STATS_UPDATE" then
+        DataCollection.MarkRatedStatsUpdated()
         DataCollection.UpdateActivePVPContext()
-        -- Re-collect when PvP stats arrive or spec changes
+        -- Re-collect when PvP stats arrive
         C_Timer.After(0.5, function()
             DataCollection.CollectCurrentCharacter()
             UI.RefreshTable()
         end)
 
-        if event == "PVP_RATED_STATS_UPDATE" then
-            TryCollectLastMatchMMRWithRetries(true)
-        end
+        TryCollectLastMatchMMRWithRetries(true)
+
+    elseif event == "ACTIVE_TALENT_GROUP_CHANGED" then
+        local expectedSpecID = DataCollection.MarkRatedStatsStale()
+        DataCollection.UpdateActivePVPContext()
+        C_Timer.After(SPEC_RATED_INFO_REQUEST_DELAY, function()
+            DataCollection.RequestRatedInfo(expectedSpecID)
+        end)
+        -- Re-collect global/currency data immediately; spec PvP ratings stay gated
+        -- until PVP_RATED_STATS_UPDATE confirms the active spec's rated cache.
+        C_Timer.After(0.5, function()
+            DataCollection.CollectCurrentCharacter()
+            UI.RefreshTable()
+        end)
 
     elseif event == "UPDATE_BATTLEFIELD_SCORE" then
         DataCollection.UpdateActivePVPContext()

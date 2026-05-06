@@ -192,7 +192,9 @@ function Database.SaveCharacter(data)
         existing.lastUpdated = data.lastUpdated
         existing.specRatings = existing.specRatings or {}
         existing.specLastMMR = existing.specLastMMR or {}
-        if data.currentSpecID and data.currentSpecID ~= 0 then
+        existing.currentSpecID = data.currentSpecID
+        existing.currentSpecRatings = data.currentSpecRatings
+        if data.currentSpecID and data.currentSpecID ~= 0 and data.currentSpecRatings then
             existing.specRatings[data.currentSpecID] = data.currentSpecRatings
         end
     else
