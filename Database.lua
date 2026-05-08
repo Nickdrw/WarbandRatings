@@ -77,6 +77,56 @@ function Database.GetPVPColumnByBracketIndex(bracketIndex)
     return pvpColumnByBracketIndex[bracketIndex]
 end
 
+local function NormalizeSpecID(specID)
+    specID = tonumber(specID)
+    if specID and specID > 0 then
+        return specID
+    end
+    return nil
+end
+
+local function MergeMissingSpecValues(target, source)
+    if type(source) ~= "table" then return end
+    for key, value in pairs(source) do
+        if target[key] == nil or (Utils.IsEmptyRating(target[key]) and not Utils.IsEmptyRating(value)) then
+            target[key] = value
+        end
+    end
+end
+
+local function NormalizeSpecMap(specMap, fallbackSpecID)
+    local normalized = {}
+    local unknownEntries = {}
+    local hasKnownSpec = false
+
+    for specID, values in pairs(specMap or {}) do
+        local normalizedSpecID = NormalizeSpecID(specID)
+        if normalizedSpecID then
+            hasKnownSpec = true
+            normalized[normalizedSpecID] = normalized[normalizedSpecID] or {}
+            MergeMissingSpecValues(normalized[normalizedSpecID], values)
+        elseif values then
+            unknownEntries[#unknownEntries + 1] = values
+        end
+    end
+
+    if fallbackSpecID and not hasKnownSpec then
+        normalized[fallbackSpecID] = normalized[fallbackSpecID] or {}
+        for _, values in ipairs(unknownEntries) do
+            MergeMissingSpecValues(normalized[fallbackSpecID], values)
+        end
+    end
+
+    return normalized
+end
+
+local function NormalizeCharacterSpecData(charData)
+    local currentSpecID = NormalizeSpecID(charData.currentSpecID) or NormalizeSpecID(charData.specID)
+    charData.currentSpecID = currentSpecID or 0
+    charData.specRatings = NormalizeSpecMap(charData.specRatings, currentSpecID)
+    charData.specLastMMR = NormalizeSpecMap(charData.specLastMMR, currentSpecID)
+end
+
 function Database.Init()
     if not WarbandRatingsDB then
         WarbandRatingsDB = {}
@@ -124,10 +174,14 @@ function Database.Migrate()
 
         if charData.ratings and not charData.specRatings then
             charData.specRatings = {}
-            local specID = tonumber(charData.specID) or tonumber(charData.currentSpecID) or 0
-            charData.specRatings[specID] = {}
+            local specID = NormalizeSpecID(charData.specID) or NormalizeSpecID(charData.currentSpecID)
+            if specID then
+                charData.specRatings[specID] = {}
+            end
             for _, sc in ipairs(Database.SPEC_COLUMNS) do
-                charData.specRatings[specID][sc.key] = charData.ratings[sc.key] or 0
+                if specID then
+                    charData.specRatings[specID][sc.key] = charData.ratings[sc.key] or 0
+                end
                 charData.ratings[sc.key] = nil
             end
         end
@@ -141,6 +195,7 @@ function Database.Migrate()
         if not charData.specLastMMR then
             charData.specLastMMR = {}
         end
+        NormalizeCharacterSpecData(charData)
     end
 end
 
@@ -161,7 +216,9 @@ end
 function Database.SaveCharacter(data)
     local key = Utils.CharKey(data.name, data.realm)
     local existing = WarbandRatingsDB.characters[key]
+    NormalizeCharacterSpecData(data)
     if existing then
+        NormalizeCharacterSpecData(existing)
         -- Merge: keep existing specRatings, update current spec and global ratings
         existing.classFilename = data.classFilename
         existing.classID = data.classID
@@ -194,7 +251,7 @@ function Database.SaveCharacter(data)
         existing.specLastMMR = existing.specLastMMR or {}
         existing.currentSpecID = data.currentSpecID
         existing.currentSpecRatings = data.currentSpecRatings
-        if data.currentSpecID and data.currentSpecID ~= 0 and data.currentSpecRatings then
+        if NormalizeSpecID(data.currentSpecID) and data.currentSpecRatings then
             existing.specRatings[data.currentSpecID] = data.currentSpecRatings
         end
     else
@@ -260,21 +317,27 @@ function Database.BuildCharacterGroups(characters)
             end
             local patchedSpecRatings = {}
             for specID, sr in pairs(charData.specRatings or {}) do
-                local psr = {}
-                for k, v in pairs(sr) do psr[k] = v end
-                for _, col in ipairs(Database.SPEC_COLUMNS) do
-                    if col.bracketIndex then psr[col.key] = 0 end
+                local normalizedSpecID = NormalizeSpecID(specID)
+                if normalizedSpecID then
+                    local psr = {}
+                    for k, v in pairs(sr) do psr[k] = v end
+                    for _, col in ipairs(Database.SPEC_COLUMNS) do
+                        if col.bracketIndex then psr[col.key] = 0 end
+                    end
+                    patchedSpecRatings[normalizedSpecID] = psr
                 end
-                patchedSpecRatings[specID] = psr
             end
             local patchedSpecLastMMR = {}
             for specID, sr in pairs(charData.specLastMMR or {}) do
-                local psr = {}
-                for k, v in pairs(sr) do psr[k] = v end
-                for _, col in ipairs(Database.SPEC_COLUMNS) do
-                    if col.bracketIndex then psr[col.key] = 0 end
+                local normalizedSpecID = NormalizeSpecID(specID)
+                if normalizedSpecID then
+                    local psr = {}
+                    for k, v in pairs(sr) do psr[k] = v end
+                    for _, col in ipairs(Database.SPEC_COLUMNS) do
+                        if col.bracketIndex then psr[col.key] = 0 end
+                    end
+                    patchedSpecLastMMR[normalizedSpecID] = psr
                 end
-                patchedSpecLastMMR[specID] = psr
             end
             -- Use a shallow copy so we don't mutate SavedVariables
             charData = Utils.ShallowCopy(charData)
@@ -286,9 +349,14 @@ function Database.BuildCharacterGroups(characters)
 
         -- Collect specs
         local specs = {}
+        local specsByID = {}
         if not skip and charData.specRatings then
             for specID, _ in pairs(charData.specRatings) do
-                specs[#specs + 1] = specID
+                local normalizedSpecID = NormalizeSpecID(specID)
+                if normalizedSpecID and not specsByID[normalizedSpecID] then
+                    specsByID[normalizedSpecID] = true
+                    specs[#specs + 1] = normalizedSpecID
+                end
             end
         end
         table.sort(specs)

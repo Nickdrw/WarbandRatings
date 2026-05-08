@@ -12,6 +12,8 @@ local SURFACE_INSET_X = 0
 local TABLE_CONTENT_PADDING_X = 8
 local CONTENT_TOP_OFFSET = 26
 local CONTENT_BOTTOM_INSET = 2
+local TITLE_BAR_TOP_INSET = 1
+local TITLE_BAR_HEIGHT = 22
 local SUBROW_HEIGHT = 30
 local HEADER_HEIGHT = 28
 local ICON_SIZE = 22
@@ -391,9 +393,9 @@ function UI.ApplyTheme()
         SetTextureColor(EnsureFillTexture(mainFrame, "themeBg", "BACKGROUND", 1, 0), theme.bg)
         if not mainFrame.themeTitleBg then
             mainFrame.themeTitleBg = mainFrame:CreateTexture(nil, "BACKGROUND", nil, 2)
-            mainFrame.themeTitleBg:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 1, -1)
-            mainFrame.themeTitleBg:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -1, -1)
-            mainFrame.themeTitleBg:SetHeight(22)
+            mainFrame.themeTitleBg:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", TITLE_BAR_TOP_INSET, -TITLE_BAR_TOP_INSET)
+            mainFrame.themeTitleBg:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -TITLE_BAR_TOP_INSET, -TITLE_BAR_TOP_INSET)
+            mainFrame.themeTitleBg:SetHeight(TITLE_BAR_HEIGHT)
         end
         SetTextureColor(mainFrame.themeTitleBg, theme.surfaceRaised)
         if not mainFrame.themeAccentLine then
@@ -492,6 +494,12 @@ function UI.CreateMainFrame()
     HideTemplateArtwork(mainFrame)
 
     mainFrame.TitleText:SetText("Warband Ratings")
+    mainFrame.TitleText:ClearAllPoints()
+    mainFrame.TitleText:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -TITLE_BAR_TOP_INSET)
+    mainFrame.TitleText:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, -TITLE_BAR_TOP_INSET)
+    mainFrame.TitleText:SetHeight(TITLE_BAR_HEIGHT)
+    mainFrame.TitleText:SetJustifyH("CENTER")
+    mainFrame.TitleText:SetJustifyV("MIDDLE")
 
     -- Close with Escape: insert into the special frames table
     tinsert(UISpecialFrames, "WarbandRatingsMainFrame")
