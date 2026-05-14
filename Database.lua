@@ -142,6 +142,7 @@ function Database.Init()
             hideMMR = true,
             themeKey = "obsidian",
             graphVisiblePointCount = 50,
+            windowHeight = 450,
         }
     end
     if WarbandRatingsDB.settings.themeKey == nil then
@@ -155,6 +156,9 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.graphVisiblePointCount == nil then
         WarbandRatingsDB.settings.graphVisiblePointCount = 50
+    end
+    if WarbandRatingsDB.settings.windowHeight == nil then
+        WarbandRatingsDB.settings.windowHeight = 450
     end
     if WarbandRatingsDB.settings.minimapPos == nil then
         WarbandRatingsDB.settings.minimapPos = 220

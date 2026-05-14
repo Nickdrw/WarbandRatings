@@ -14,6 +14,7 @@ read_globals = {
     "Minimap",
     "GameTooltip",
     "GetCursorPosition",
+    "IsMouseButtonDown",
 
     -- Tables & constants
     "RAID_CLASS_COLORS",

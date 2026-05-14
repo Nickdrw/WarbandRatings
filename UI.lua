@@ -8,6 +8,11 @@ local Utils = ns.Utils
 
 local WINDOW_WIDTH = 780 -- initial size, resized dynamically in RefreshTable
 local WINDOW_HEIGHT = 450
+local WINDOW_MIN_WIDTH = 400
+local WINDOW_MIN_HEIGHT = 260
+local WINDOW_SCREEN_MARGIN = 20
+local RESIZE_GRIP_WIDTH = 72
+local RESIZE_GRIP_HEIGHT = 10
 local SURFACE_INSET_X = 0
 local TABLE_CONTENT_PADDING_X = 8
 local CONTENT_TOP_OFFSET = 26
@@ -39,6 +44,7 @@ local GRAPH_MIN_VISIBLE_POINT_COUNT = 20
 local GRAPH_MAX_VISIBLE_POINT_COUNT = 200
 local GRAPH_VISIBLE_POINT_STEP = 5
 local GRAPH_SCROLL_STEP = 5
+local GRAPH_Y_AXIS_STEP = 500
 local HISTORY_GRAPH_ICON_SIZE = 14
 local HISTORY_GRAPH_ICON_PADDING = 4
 local HISTORY_SELECTED_ALPHA = 0.16
@@ -143,12 +149,14 @@ local HISTORY_FIELD_MMR = 3
 local HISTORY_FIELD_RATING_DELTA = 4
 local HISTORY_FIELD_MMR_IS_POSTMATCH = 7
 
-local mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel, filtersWindow
+local mainDockFrame, mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel, filtersWindow
 local selectedGraph
 local rowFrames = {}
 local minimapButton
 local themeButtons = {}
 local RefreshHistoryCellAffordances
+local movingMainFrame
+local resizingMainFrame
 
 local function GetActiveTheme()
     local key = WarbandRatingsDB and WarbandRatingsDB.settings and WarbandRatingsDB.settings.themeKey or DEFAULT_THEME_KEY
@@ -165,6 +173,216 @@ local function SetFontColor(fontString, color, alpha)
     if fontString and fontString.SetTextColor and color then
         fontString:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
     end
+end
+
+local function GetDockedGraphHeight()
+    if graphPanel and graphPanel:IsShown() and not graphPanel.detached then
+        return math.max(graphPanel:GetHeight() - 1, 0)
+    end
+    return 0
+end
+
+local function GetWindowMaxHeight()
+    local parentHeight = UIParent and UIParent:GetHeight()
+    if parentHeight and parentHeight > 0 then
+        local maxHeight = parentHeight - WINDOW_SCREEN_MARGIN * 2
+        if mainFrame then
+            local top = mainFrame:GetTop()
+            if top and top > 0 then
+                maxHeight = math.min(maxHeight, top - WINDOW_SCREEN_MARGIN - GetDockedGraphHeight())
+            end
+        end
+        return math.max(WINDOW_MIN_HEIGHT, maxHeight)
+    end
+    return WINDOW_MIN_HEIGHT
+end
+
+local function ClampWindowHeight(height)
+    local value = tonumber(height) or WINDOW_HEIGHT
+    return math.max(WINDOW_MIN_HEIGHT, math.min(value, GetWindowMaxHeight()))
+end
+
+local function ClampTableScroll()
+    if not scrollFrame or not scrollChild then return end
+
+    local maxScroll = math.max(scrollChild:GetHeight() - scrollFrame:GetHeight(), 0)
+    if scrollFrame:GetVerticalScroll() > maxScroll then
+        scrollFrame:SetVerticalScroll(maxScroll)
+    end
+end
+
+local function SaveMainFrameHeight()
+    if not mainFrame or not WarbandRatingsDB or not WarbandRatingsDB.settings then return end
+
+    local height = math.floor(ClampWindowHeight(mainFrame:GetHeight()) + 0.5)
+    if WarbandRatingsDB.settings.windowHeight ~= height then
+        Database.SetSetting("windowHeight", height)
+    end
+end
+
+local function ApplyMainFrameResizeBounds()
+    if not mainFrame then return end
+
+    local maxHeight = GetWindowMaxHeight()
+    if mainFrame.SetResizeBounds then
+        mainFrame:SetResizeBounds(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, 10000, maxHeight)
+    else
+        mainFrame:SetMinResize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        if mainFrame.SetMaxResize then
+            mainFrame:SetMaxResize(10000, maxHeight)
+        end
+    end
+end
+
+local function RefreshScrollAreaLayout()
+    if not scrollFrame then return end
+
+    if scrollFrame.SetClipsChildren then
+        scrollFrame:SetClipsChildren(true)
+    end
+    if scrollChild then
+        scrollChild:SetWidth(scrollFrame:GetWidth())
+    end
+    if scrollFrame.UpdateScrollChildRect then
+        scrollFrame:UpdateScrollChildRect()
+    end
+
+    ClampTableScroll()
+end
+
+local function SetMainDockFrameTopLeft(left, top)
+    if not mainDockFrame then return end
+
+    mainDockFrame:ClearAllPoints()
+    mainDockFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+end
+
+local function ClampMainDockFrameToScreen()
+    if not mainDockFrame or not UIParent then return end
+
+    local parentWidth = UIParent:GetWidth()
+    local parentHeight = UIParent:GetHeight()
+    if not parentWidth or not parentHeight or parentWidth <= 0 or parentHeight <= 0 then return end
+
+    local width = mainDockFrame:GetWidth()
+    local height = mainDockFrame:GetHeight()
+    local left = mainDockFrame:GetLeft() or ((parentWidth - width) / 2)
+    local top = mainDockFrame:GetTop() or ((parentHeight + height) / 2)
+
+    if width <= parentWidth then
+        left = math.max(0, math.min(left, parentWidth - width))
+    else
+        left = 0
+    end
+
+    if height <= parentHeight then
+        top = math.max(height, math.min(top, parentHeight))
+    else
+        top = parentHeight
+    end
+
+    SetMainDockFrameTopLeft(left, top)
+    RefreshScrollAreaLayout()
+end
+
+local function UpdateMainDockFrameSize()
+    if not mainDockFrame or not mainFrame then return end
+
+    local left = mainDockFrame:GetLeft()
+    local top = mainDockFrame:GetTop()
+    mainDockFrame:SetSize(mainFrame:GetWidth(), mainFrame:GetHeight() + GetDockedGraphHeight())
+    if left and top then
+        SetMainDockFrameTopLeft(left, top)
+    end
+    ClampMainDockFrameToScreen()
+    RefreshScrollAreaLayout()
+end
+
+local function GetScaledCursorPosition()
+    local cursorX, cursorY = GetCursorPosition()
+    local scale = UIParent and UIParent:GetEffectiveScale() or 1
+    return cursorX / scale, cursorY / scale
+end
+
+local function StopMainFrameResize()
+    if not resizingMainFrame then return end
+
+    resizingMainFrame = nil
+    if mainFrame then
+        mainFrame:SetScript("OnUpdate", nil)
+        SaveMainFrameHeight()
+    end
+    RefreshScrollAreaLayout()
+    UpdateMainDockFrameSize()
+end
+
+local function StopMainWindowMove()
+    if not movingMainFrame then return end
+
+    if mainFrame then
+        mainFrame:SetScript("OnUpdate", nil)
+    end
+    movingMainFrame = nil
+    ClampMainDockFrameToScreen()
+    RefreshScrollAreaLayout()
+end
+
+local function UpdateMainWindowMove()
+    if not movingMainFrame or not mainDockFrame then return end
+
+    if not IsMouseButtonDown("LeftButton") then
+        StopMainWindowMove()
+        return
+    end
+
+    local cursorX, cursorY = GetScaledCursorPosition()
+    SetMainDockFrameTopLeft(
+        movingMainFrame.left + cursorX - movingMainFrame.cursorX,
+        movingMainFrame.top + cursorY - movingMainFrame.cursorY
+    )
+    ClampMainDockFrameToScreen()
+end
+
+local function UpdateMainFrameResize()
+    if not resizingMainFrame or not mainFrame then return end
+
+    if not IsMouseButtonDown("LeftButton") then
+        StopMainFrameResize()
+        return
+    end
+
+    local _, cursorY = GetScaledCursorPosition()
+    local delta = resizingMainFrame.cursorY - cursorY
+    mainFrame:SetHeight(ClampWindowHeight(resizingMainFrame.height + delta))
+end
+
+local function StartMainWindowMove()
+    if not mainDockFrame or not mainFrame then return end
+
+    StopMainFrameResize()
+    UpdateMainDockFrameSize()
+
+    local cursorX, cursorY = GetScaledCursorPosition()
+    movingMainFrame = {
+        cursorX = cursorX,
+        cursorY = cursorY,
+        left = mainDockFrame:GetLeft() or 0,
+        top = mainDockFrame:GetTop() or 0,
+    }
+    mainFrame:SetScript("OnUpdate", UpdateMainWindowMove)
+end
+
+local function StartMainFrameResize()
+    if not mainFrame then return end
+
+    StopMainWindowMove()
+    local _, cursorY = GetScaledCursorPosition()
+    resizingMainFrame = {
+        cursorY = cursorY,
+        height = mainFrame:GetHeight(),
+    }
+    ApplyMainFrameResizeBounds()
+    mainFrame:SetScript("OnUpdate", UpdateMainFrameResize)
 end
 
 local TEMPLATE_ARTWORK_KEYS = {
@@ -408,6 +626,10 @@ function UI.ApplyTheme()
         SetTextureColor(mainFrame.themeAccentLine, theme.accent, 0.65)
         SetBorderColor(mainFrame, theme.border)
         SetFontColor(mainFrame.TitleText, theme.title)
+        if mainFrame.resizeGrip then
+            SetTextureColor(mainFrame.resizeGrip.line, theme.border, 0.9)
+            SetTextureColor(mainFrame.resizeGrip.hoverLine, theme.accent, 0.95)
+        end
     end
 
     if scrollFrame then
@@ -459,6 +681,11 @@ function UI.ApplyTheme()
         SetFontColor(graphPanel.maxLabel, theme.muted)
         SetFontColor(graphPanel.midLabel, theme.muted)
         SetFontColor(graphPanel.minLabel, theme.muted)
+        if graphPanel.yAxisLabels then
+            for _, label in ipairs(graphPanel.yAxisLabels) do
+                SetFontColor(label, theme.muted)
+            end
+        end
         SetFontColor(graphPanel.gamesLabel, theme.muted)
         SetFontColor(graphPanel.zoomLabel, theme.muted)
         SetFontColor(graphPanel.zoomValueLabel, theme.muted)
@@ -477,19 +704,79 @@ end
 ------------------------------------------------------------
 -- Main Window
 ------------------------------------------------------------
+local function CreateMainResizeGrip()
+    local grip = CreateFrame("Button", nil, mainFrame)
+    grip:SetSize(RESIZE_GRIP_WIDTH, RESIZE_GRIP_HEIGHT)
+    grip:SetPoint("BOTTOM", mainFrame, "BOTTOM", 0, 1)
+    grip:SetFrameLevel(mainFrame:GetFrameLevel() + 20)
+    grip:EnableMouse(true)
+
+    grip.line = grip:CreateTexture(nil, "OVERLAY")
+    grip.line:SetSize(RESIZE_GRIP_WIDTH - 20, 2)
+    grip.line:SetPoint("CENTER", grip, "CENTER", 0, 0)
+
+    grip.hoverLine = grip:CreateTexture(nil, "OVERLAY")
+    grip.hoverLine:SetSize(RESIZE_GRIP_WIDTH - 20, 2)
+    grip.hoverLine:SetPoint("CENTER", grip, "CENTER", 0, 0)
+    grip.hoverLine:Hide()
+
+    grip:SetScript("OnEnter", function(self)
+        self.hoverLine:Show()
+    end)
+    grip:SetScript("OnLeave", function(self)
+        self.hoverLine:Hide()
+    end)
+    grip:SetScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" then return end
+
+        StartMainFrameResize()
+    end)
+    grip:SetScript("OnMouseUp", function()
+        StopMainFrameResize()
+    end)
+    grip:SetScript("OnHide", function()
+        StopMainFrameResize()
+    end)
+
+    mainFrame.resizeGrip = grip
+end
+
 function UI.CreateMainFrame()
     if mainFrame then return mainFrame end
 
-    mainFrame = CreateFrame("Frame", "WarbandRatingsMainFrame", UIParent, "BasicFrameTemplateWithInset")
-    mainFrame:SetSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-    mainFrame:SetPoint("CENTER")
+    local settings = WarbandRatingsDB and WarbandRatingsDB.settings
+    mainDockFrame = CreateFrame("Frame", "WarbandRatingsDockFrame", UIParent)
+    mainDockFrame:SetSize(WINDOW_WIDTH, ClampWindowHeight(settings and settings.windowHeight))
+    mainDockFrame:SetPoint("CENTER")
+    mainDockFrame:SetMovable(true)
+    mainDockFrame:SetClampedToScreen(true)
+    mainDockFrame:SetFrameStrata("HIGH")
+
+    mainFrame = CreateFrame("Frame", "WarbandRatingsMainFrame", mainDockFrame, "BasicFrameTemplateWithInset")
+    mainFrame:SetSize(WINDOW_WIDTH, ClampWindowHeight(settings and settings.windowHeight))
+    mainFrame:SetPoint("TOPLEFT", mainDockFrame, "TOPLEFT", 0, 0)
     mainFrame:SetMovable(true)
+    mainFrame:SetResizable(true)
+    ApplyMainFrameResizeBounds()
     mainFrame:EnableMouse(true)
     mainFrame:RegisterForDrag("LeftButton")
-    mainFrame:SetScript("OnDragStart", mainFrame.StartMoving)
-    mainFrame:SetScript("OnDragStop", mainFrame.StopMovingOrSizing)
+    mainFrame:SetScript("OnDragStart", StartMainWindowMove)
+    mainFrame:SetScript("OnDragStop", StopMainWindowMove)
+    mainFrame:SetScript("OnSizeChanged", function(self, _, height)
+        local clampedHeight = ClampWindowHeight(height)
+        if math.abs(height - clampedHeight) > 0.5 then
+            self:SetHeight(clampedHeight)
+            return
+        end
+
+        if not resizingMainFrame then
+            SaveMainFrameHeight()
+        end
+        ClampTableScroll()
+        UpdateMainDockFrameSize()
+    end)
     mainFrame:SetFrameStrata("HIGH")
-    mainFrame:SetClampedToScreen(true)
+    mainFrame:SetClampedToScreen(false)
     mainFrame:Hide()
     HideTemplateArtwork(mainFrame)
 
@@ -517,6 +804,7 @@ function UI.CreateMainFrame()
     UI.CreateScrollArea()
     UI.CreateSettingsPanel()
     UI.CreateHistoryGraphPanel()
+    CreateMainResizeGrip()
     UI.ApplyTheme()
 
     return mainFrame
@@ -535,6 +823,9 @@ function UI.CreateScrollArea()
     scrollFrame = CreateFrame("ScrollFrame", "WarbandRatingsScrollFrame", mainFrame)
     scrollFrame:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, -2)
     scrollFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -SURFACE_INSET_X, CONTENT_BOTTOM_INSET)
+    if scrollFrame.SetClipsChildren then
+        scrollFrame:SetClipsChildren(true)
+    end
 
     scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetWidth(scrollFrame:GetWidth())
@@ -552,6 +843,7 @@ function UI.CreateScrollArea()
     -- Resize scrollChild width when scrollFrame changes size
     scrollFrame:SetScript("OnSizeChanged", function(_, w)
         scrollChild:SetWidth(w)
+        RefreshScrollAreaLayout()
     end)
 end
 
@@ -1041,6 +1333,12 @@ end
 local function ClearGraphDrawings()
     if not graphPanel then return end
 
+    if graphPanel.drawLayer then
+        for _, region in ipairs({ graphPanel.drawLayer:GetRegions() }) do
+            region:Hide()
+        end
+    end
+
     graphPanel.lineIndex = 0
     if graphPanel.lines then
         for _, line in ipairs(graphPanel.lines) do
@@ -1067,40 +1365,88 @@ local function ClearGraphDrawings()
     if graphPanel.canvas and GameTooltip:IsOwned(graphPanel.canvas) then
         GameTooltip:Hide()
     end
+    if graphPanel.yAxisLabels then
+        for _, label in ipairs(graphPanel.yAxisLabels) do
+            label:SetText("")
+            label:Hide()
+        end
+    end
     graphPanel.graphData = nil
+end
+
+local function EnsureGraphDrawLayer()
+    if not graphPanel.drawLayer then
+        graphPanel.drawLayer = CreateFrame("Frame", nil, graphPanel.canvas)
+        graphPanel.drawLayer:SetAllPoints(graphPanel.canvas)
+        graphPanel.drawLayer:EnableMouse(false)
+    end
+
+    graphPanel.drawLayer:SetFrameLevel(graphPanel.canvas:GetFrameLevel() + 1)
+    graphPanel.drawLayer:Show()
+    return graphPanel.drawLayer
+end
+
+local function EnsureGraphHoverLayer()
+    if not graphPanel.hoverLayer then
+        graphPanel.hoverLayer = CreateFrame("Frame", nil, graphPanel.canvas)
+        graphPanel.hoverLayer:SetAllPoints(graphPanel.canvas)
+        graphPanel.hoverLayer:EnableMouse(false)
+    end
+
+    graphPanel.hoverLayer:SetFrameLevel(graphPanel.canvas:GetFrameLevel() + 4)
+    graphPanel.hoverLayer:Show()
+    return graphPanel.hoverLayer
+end
+
+local function AcquireGraphYAxisLabel(index)
+    graphPanel.yAxisLabels = graphPanel.yAxisLabels or {}
+    local drawLayer = EnsureGraphDrawLayer()
+
+    local label = graphPanel.yAxisLabels[index]
+    if not label then
+        label = drawLayer:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        label:SetWidth(GRAPH_MARGIN_LEFT - 8)
+        label:SetJustifyH("RIGHT")
+        label:SetJustifyV("MIDDLE")
+        graphPanel.yAxisLabels[index] = label
+    end
+
+    return label
 end
 
 local function AddGraphLine(x1, y1, x2, y2, r, g, b, alpha, thickness)
     graphPanel.lines = graphPanel.lines or {}
     graphPanel.lineIndex = (graphPanel.lineIndex or 0) + 1
+    local drawLayer = EnsureGraphDrawLayer()
 
     local line = graphPanel.lines[graphPanel.lineIndex]
     if not line then
-        line = graphPanel.canvas:CreateLine(nil, "ARTWORK")
+        line = drawLayer:CreateLine(nil, "ARTWORK")
         graphPanel.lines[graphPanel.lineIndex] = line
     end
 
     line:SetColorTexture(r, g, b, alpha or 1)
     line:SetThickness(thickness or 2)
-    line:SetStartPoint("TOPLEFT", graphPanel.canvas, x1, -y1)
-    line:SetEndPoint("TOPLEFT", graphPanel.canvas, x2, -y2)
+    line:SetStartPoint("TOPLEFT", drawLayer, x1, -y1)
+    line:SetEndPoint("TOPLEFT", drawLayer, x2, -y2)
     line:Show()
 end
 
 local function AddGraphDot(x, y, r, g, b, alpha, size)
     graphPanel.dots = graphPanel.dots or {}
     graphPanel.dotIndex = (graphPanel.dotIndex or 0) + 1
+    local drawLayer = EnsureGraphDrawLayer()
 
     local dot = graphPanel.dots[graphPanel.dotIndex]
     if not dot then
-        dot = graphPanel.canvas:CreateTexture(nil, "OVERLAY")
+        dot = drawLayer:CreateTexture(nil, "OVERLAY")
         graphPanel.dots[graphPanel.dotIndex] = dot
     end
 
     dot:SetSize(size or GRAPH_POINT_SIZE, size or GRAPH_POINT_SIZE)
     dot:SetColorTexture(r, g, b, alpha or 1)
     dot:ClearAllPoints()
-    dot:SetPoint("CENTER", graphPanel.canvas, "TOPLEFT", x, -y)
+    dot:SetPoint("CENTER", drawLayer, "TOPLEFT", x, -y)
     dot:Show()
 end
 
@@ -1181,6 +1527,31 @@ local function GetGraphPointY(value, minValue, maxValue, plotHeight)
     return GRAPH_MARGIN_TOP + ((maxValue - value) / (maxValue - minValue)) * plotHeight
 end
 
+local function DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotHeight, theme)
+    local labelIndex = 1
+    local tickValue = minValue
+
+    while tickValue <= maxValue + 0.5 do
+        local y = GetGraphPointY(tickValue, minValue, maxValue, plotHeight)
+        local label = AcquireGraphYAxisLabel(labelIndex)
+        label:ClearAllPoints()
+        label:SetPoint("RIGHT", graphPanel.drawLayer, "TOPLEFT", GRAPH_MARGIN_LEFT - 6, -y)
+        label:SetText(FormatGraphValue(tickValue))
+        SetFontColor(label, theme.muted)
+        label:Show()
+
+        labelIndex = labelIndex + 1
+        tickValue = tickValue + tickStep
+    end
+
+    if graphPanel.yAxisLabels then
+        for i = labelIndex, #graphPanel.yAxisLabels do
+            graphPanel.yAxisLabels[i]:SetText("")
+            graphPanel.yAxisLabels[i]:Hide()
+        end
+    end
+end
+
 local function IncludeGraphScaleValue(value, scale)
     value = tonumber(value)
     if not value or value <= 0 then return end
@@ -1190,25 +1561,12 @@ local function IncludeGraphScaleValue(value, scale)
     scale.hasValue = true
 end
 
-local function RoundGraphScale(minValue, maxValue)
-    if maxValue <= minValue then
-        maxValue = minValue + 100
-        minValue = math.max(0, minValue - 100)
-    else
-        local padding = math.max(25, (maxValue - minValue) * 0.08)
-        minValue = math.max(0, minValue - padding)
-        maxValue = maxValue + padding
-    end
+local function RoundGraphScale(_, maxValue)
+    local tickStep = GRAPH_Y_AXIS_STEP
+    local upperValue = math.max(tickStep, tonumber(maxValue) or 0)
+    upperValue = math.ceil(upperValue / tickStep) * tickStep
 
-    local span = maxValue - minValue
-    local step = span > 1000 and 100 or 50
-    minValue = math.max(0, math.floor(minValue / step) * step)
-    maxValue = math.ceil(maxValue / step) * step
-    if maxValue <= minValue then
-        maxValue = minValue + step
-    end
-
-    return minValue, maxValue
+    return 0, upperValue, tickStep
 end
 
 local function GetFullSeriesGraphScale(points, showRating, showMMR)
@@ -1280,10 +1638,12 @@ local function GetCanvasCursorPosition(canvas)
 end
 
 local function SetHoverDot(dot, x, y, r, g, b)
+    local hoverLayer = EnsureGraphHoverLayer()
+
     dot:SetSize(GRAPH_HOVER_POINT_SIZE, GRAPH_HOVER_POINT_SIZE)
     dot:SetColorTexture(r, g, b, 1)
     dot:ClearAllPoints()
-    dot:SetPoint("CENTER", graphPanel.canvas, "TOPLEFT", x, -y)
+    dot:SetPoint("CENTER", hoverLayer, "TOPLEFT", x, -y)
     dot:Show()
 end
 
@@ -1344,10 +1704,11 @@ local function UpdateGraphHover()
     local mmrY = mmr and GetGraphPointY(mmr, data.minValue, data.maxValue, data.plotHeight)
 
     local theme = GetActiveTheme()
+    local hoverLayer = EnsureGraphHoverLayer()
     SetTextureColor(graphPanel.hoverLine, theme.text, 0.55)
     graphPanel.hoverLine:SetThickness(1.5)
-    graphPanel.hoverLine:SetStartPoint("TOPLEFT", graphPanel.canvas, pointX, -plotTop)
-    graphPanel.hoverLine:SetEndPoint("TOPLEFT", graphPanel.canvas, pointX, -plotBottom)
+    graphPanel.hoverLine:SetStartPoint("TOPLEFT", hoverLayer, pointX, -plotTop)
+    graphPanel.hoverLine:SetEndPoint("TOPLEFT", hoverLayer, pointX, -plotBottom)
     graphPanel.hoverLine:Show()
 
     if data.showMMR and mmrY then
@@ -1404,6 +1765,7 @@ local function CloseHistoryGraph()
     selectedGraph = nil
     HideGraphHover()
     graphPanel:Hide()
+    UpdateMainDockFrameSize()
     RefreshHistoryCellAffordances()
 end
 
@@ -1420,6 +1782,7 @@ local function SetHistoryGraphDetached(detached)
         graphPanel:SetSize(GRAPH_DETACHED_WIDTH, GRAPH_DETACHED_HEIGHT)
         graphPanel:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
         graphPanel:SetFrameStrata("DIALOG")
+        graphPanel:SetClampedToScreen(true)
     else
         if mainFrame and not mainFrame:IsShown() then
             mainFrame:Show()
@@ -1431,12 +1794,15 @@ local function SetHistoryGraphDetached(detached)
         graphPanel:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", 0, 1)
         graphPanel:SetPoint("TOPRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
         graphPanel:SetFrameStrata("HIGH")
+        graphPanel:SetClampedToScreen(false)
     end
 
+    UpdateMainDockFrameSize()
     UpdateHistoryGraphDockButton()
     UI.ApplyTheme()
     if wasShown then
         graphPanel:Show()
+        UpdateMainDockFrameSize()
         UI.RefreshHistoryGraph()
     end
 end
@@ -1453,7 +1819,7 @@ function UI.CreateHistoryGraphPanel()
     graphPanel:SetPoint("TOPRIGHT", mainFrame, "BOTTOMRIGHT", 0, 1)
     graphPanel:SetFrameStrata("HIGH")
     graphPanel:SetMovable(true)
-    graphPanel:SetClampedToScreen(true)
+    graphPanel:SetClampedToScreen(false)
     graphPanel:EnableMouse(true)
     graphPanel:RegisterForDrag("LeftButton")
     graphPanel:SetScript("OnDragStart", function(self)
@@ -1469,6 +1835,7 @@ function UI.CreateHistoryGraphPanel()
     graphPanel:SetScript("OnHide", function()
         selectedGraph = nil
         HideGraphHover()
+        UpdateMainDockFrameSize()
         RefreshHistoryCellAffordances()
     end)
     graphPanel:Hide()
@@ -1501,9 +1868,12 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.canvas:SetPoint("BOTTOMRIGHT", graphPanel, "BOTTOMRIGHT", -8, 8)
     graphPanel.canvas:EnableMouse(false)
 
+    EnsureGraphDrawLayer()
+
     graphPanel.hoverFrame = CreateFrame("Frame", nil, graphPanel.canvas)
     graphPanel.hoverFrame:SetPoint("TOPLEFT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT, -GRAPH_MARGIN_TOP)
     graphPanel.hoverFrame:SetPoint("BOTTOMRIGHT", graphPanel.canvas, "BOTTOMRIGHT", -GRAPH_MARGIN_RIGHT, GRAPH_MARGIN_BOTTOM)
+    graphPanel.hoverFrame:SetFrameLevel(graphPanel.canvas:GetFrameLevel() + 3)
     graphPanel.hoverFrame:EnableMouse(true)
     graphPanel.hoverFrame:SetScript("OnEnter", UpdateGraphHover)
     graphPanel.hoverFrame:SetScript("OnLeave", HideGraphHover)
@@ -1513,13 +1883,15 @@ function UI.CreateHistoryGraphPanel()
         ScrollHistoryGraph(delta)
     end)
 
-    graphPanel.hoverLine = graphPanel.canvas:CreateLine(nil, "OVERLAY")
+    local hoverLayer = EnsureGraphHoverLayer()
+
+    graphPanel.hoverLine = hoverLayer:CreateLine(nil, "OVERLAY")
     graphPanel.hoverLine:Hide()
 
-    graphPanel.hoverRatingDot = graphPanel.canvas:CreateTexture(nil, "OVERLAY")
+    graphPanel.hoverRatingDot = hoverLayer:CreateTexture(nil, "OVERLAY")
     graphPanel.hoverRatingDot:Hide()
 
-    graphPanel.hoverMMRDot = graphPanel.canvas:CreateTexture(nil, "OVERLAY")
+    graphPanel.hoverMMRDot = hoverLayer:CreateTexture(nil, "OVERLAY")
     graphPanel.hoverMMRDot:Hide()
 
     graphPanel.emptyText = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisable")
@@ -1766,7 +2138,7 @@ function UI.RefreshHistoryGraph()
         graphPanel.rangeSlider:Hide()
     end
 
-    local minValue, maxValue = GetFullSeriesGraphScale(points, showRating, showMMR)
+    local minValue, maxValue, tickStep = GetFullSeriesGraphScale(points, showRating, showMMR)
     if not minValue then
         if not showRating and not showMMR then
             graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
@@ -1812,9 +2184,9 @@ function UI.RefreshHistoryGraph()
         return
     end
 
-    graphPanel.maxLabel:SetText(FormatGraphValue(maxValue))
-    graphPanel.midLabel:SetText(FormatGraphValue((minValue + maxValue) / 2))
-    graphPanel.minLabel:SetText(FormatGraphValue(minValue))
+    graphPanel.maxLabel:SetText("")
+    graphPanel.midLabel:SetText("")
+    graphPanel.minLabel:SetText("")
 
     local canvasWidth = math.max(graphPanel.canvas:GetWidth(), 1)
     local canvasHeight = math.max(graphPanel.canvas:GetHeight(), 1)
@@ -1829,6 +2201,7 @@ function UI.RefreshHistoryGraph()
         visiblePointCount = visiblePointCount,
         minValue = minValue,
         maxValue = maxValue,
+        tickStep = tickStep,
         plotWidth = plotWidth,
         plotHeight = plotHeight,
         xStep = xStep,
@@ -1839,9 +2212,13 @@ function UI.RefreshHistoryGraph()
         mmrColor = { mr, mg, mb },
     }
 
-    for i = 1, 4 do
-        local y = GRAPH_MARGIN_TOP + plotHeight * (i - 1) / 3
+    DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotHeight, theme)
+
+    local tickValue = minValue
+    while tickValue <= maxValue + 0.5 do
+        local y = GetGraphPointY(tickValue, minValue, maxValue, plotHeight)
         AddGraphLine(GRAPH_MARGIN_LEFT, y, GRAPH_MARGIN_LEFT + plotWidth, y, theme.grid[1], theme.grid[2], theme.grid[3], theme.grid[4], 1)
+        tickValue = tickValue + tickStep
     end
     AddGraphLine(
         GRAPH_MARGIN_LEFT, GRAPH_MARGIN_TOP, GRAPH_MARGIN_LEFT, GRAPH_MARGIN_TOP + plotHeight,
@@ -1940,6 +2317,7 @@ function UI.ShowHistoryGraph(charData, specID, col)
     graphPanel.viewportStart = nil
     graphPanel.viewportAtLatest = true
     graphPanel:Show()
+    UpdateMainDockFrameSize()
     RefreshHistoryCellAffordances()
     UI.RefreshHistoryGraph()
 end
@@ -2391,7 +2769,7 @@ function UI.RefreshTable()
     for _, col in ipairs(columns) do
         contentW = contentW + ColWidth(col)
     end
-    mainFrame:SetWidth(math.max(contentW + framePadding, 400))
+    mainFrame:SetWidth(math.max(contentW + framePadding, WINDOW_MIN_WIDTH))
     UI.RefreshHistoryGraph()
 end
 
