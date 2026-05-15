@@ -26,11 +26,17 @@ local SPEC_ICON_SIZE = 20
 local COL_NAME_WIDTH = 220
 local COL_RATING_WIDTH = 80
 local SETTINGS_WIDTH = 220
+local SETTINGS_HEIGHT = WINDOW_HEIGHT
+local SETTINGS_WINDOW_OFFSET = 8
+local SETTINGS_TAB_WIDTH = 92
+local SETTINGS_TAB_HEIGHT = 24
+local FILTER_PRESET_BUTTON_WIDTH = 60
+local FILTER_PRESET_BUTTON_HEIGHT = 22
 local COL_SPEC_RATING_WIDTH = 100
 local RATING_TEXT_HEIGHT = 14
 local GRAPH_PANEL_HEIGHT = 210
 local GRAPH_MARGIN_LEFT = 44
-local GRAPH_MARGIN_RIGHT = 18
+local GRAPH_MARGIN_RIGHT = 44
 local GRAPH_MARGIN_TOP = 34
 local GRAPH_MARGIN_BOTTOM = 48
 local GRAPH_GAMES_LABEL_WIDTH = 126
@@ -45,6 +51,7 @@ local GRAPH_MAX_VISIBLE_POINT_COUNT = 200
 local GRAPH_VISIBLE_POINT_STEP = 5
 local GRAPH_SCROLL_STEP = 5
 local GRAPH_Y_AXIS_STEP = 500
+local GRAPH_Y_AXIS_MINOR_STEP = GRAPH_Y_AXIS_STEP / 2
 local HISTORY_GRAPH_ICON_SIZE = 14
 local HISTORY_GRAPH_ICON_PADDING = 4
 local HISTORY_SELECTED_ALPHA = 0.16
@@ -149,7 +156,7 @@ local HISTORY_FIELD_MMR = 3
 local HISTORY_FIELD_RATING_DELTA = 4
 local HISTORY_FIELD_MMR_IS_POSTMATCH = 7
 
-local mainDockFrame, mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel, filtersWindow
+local mainDockFrame, mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel
 local selectedGraph
 local rowFrames = {}
 local minimapButton
@@ -157,6 +164,10 @@ local themeButtons = {}
 local RefreshHistoryCellAffordances
 local movingMainFrame
 local resizingMainFrame
+local mainWindowNeedsInitialCenter
+local UpdateMainDockFrameSize
+local UpdateSettingsTabs
+local UpdateFilterPresetButtons
 
 local function GetActiveTheme()
     local key = WarbandRatingsDB and WarbandRatingsDB.settings and WarbandRatingsDB.settings.themeKey or DEFAULT_THEME_KEY
@@ -285,17 +296,98 @@ local function ClampMainDockFrameToScreen()
     RefreshScrollAreaLayout()
 end
 
-local function UpdateMainDockFrameSize()
+local function CenterMainDockFrameOnScreen()
+    if not mainDockFrame or not UIParent then return end
+
+    local parentWidth = UIParent:GetWidth()
+    local parentHeight = UIParent:GetHeight()
+    local width = mainDockFrame:GetWidth()
+    local height = mainDockFrame:GetHeight()
+    if not parentWidth or not parentHeight or not width or not height
+        or parentWidth <= 0 or parentHeight <= 0 or width <= 0 or height <= 0 then
+        return
+    end
+
+    SetMainDockFrameTopLeft((parentWidth - width) / 2, (parentHeight + height) / 2)
+    ClampMainDockFrameToScreen()
+end
+
+local function CenterMainDockFrameAfterInitialLayout()
+    if not mainWindowNeedsInitialCenter then return end
+
+    UpdateMainDockFrameSize()
+    CenterMainDockFrameOnScreen()
+    mainWindowNeedsInitialCenter = nil
+end
+
+UpdateMainDockFrameSize = function()
     if not mainDockFrame or not mainFrame then return end
 
     local left = mainDockFrame:GetLeft()
     local top = mainDockFrame:GetTop()
-    mainDockFrame:SetSize(mainFrame:GetWidth(), mainFrame:GetHeight() + GetDockedGraphHeight())
+    mainDockFrame:SetSize(
+        mainFrame:GetWidth(),
+        mainFrame:GetHeight() + GetDockedGraphHeight()
+    )
     if left and top then
         SetMainDockFrameTopLeft(left, top)
     end
     ClampMainDockFrameToScreen()
     RefreshScrollAreaLayout()
+end
+
+local function PositionSettingsPanelNearMain(panel)
+    if not panel or not UIParent then return end
+
+    local parentWidth = UIParent:GetWidth()
+    local parentHeight = UIParent:GetHeight()
+    local panelWidth = panel:GetWidth() or SETTINGS_WIDTH
+    local panelHeight = (panel:GetHeight() or SETTINGS_HEIGHT) + SETTINGS_TAB_HEIGHT
+
+    panel:ClearAllPoints()
+
+    if not mainFrame or not parentWidth or not parentHeight or parentWidth <= 0 or parentHeight <= 0 then
+        panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        return
+    end
+
+    local mainLeft = mainFrame:GetLeft()
+    local mainRight = mainFrame:GetRight()
+    local mainTop = mainFrame:GetTop()
+    if not mainLeft or not mainRight or not mainTop then
+        panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        return
+    end
+
+    local margin = WINDOW_SCREEN_MARGIN
+    local canOpenRight = mainRight + SETTINGS_WINDOW_OFFSET + panelWidth + margin <= parentWidth
+    local canOpenLeft = mainLeft - SETTINGS_WINDOW_OFFSET - panelWidth >= margin
+    local left
+
+    if canOpenRight then
+        left = mainRight + SETTINGS_WINDOW_OFFSET
+    elseif canOpenLeft then
+        left = mainLeft - SETTINGS_WINDOW_OFFSET - panelWidth
+    elseif (parentWidth - mainRight) >= mainLeft then
+        left = mainRight + SETTINGS_WINDOW_OFFSET
+    else
+        left = mainLeft - SETTINGS_WINDOW_OFFSET - panelWidth
+    end
+
+    local minLeft = margin
+    local maxLeft = math.max(minLeft, parentWidth - panelWidth - margin)
+    left = math.max(minLeft, math.min(left, maxLeft))
+
+    local top = mainTop
+    if panelHeight + margin * 2 <= parentHeight then
+        local minTop = panelHeight + margin
+        local maxTop = parentHeight - margin
+        top = math.max(minTop, math.min(top, maxTop))
+    else
+        top = parentHeight - margin
+    end
+
+    panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
 end
 
 local function GetScaledCursorPosition()
@@ -589,17 +681,211 @@ local function ApplyPanelTheme(frame, fillColor, borderColor)
     SetBorderColor(frame, borderColor)
 end
 
+local function CreateThemeChoiceButton(parent, width)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(width, THEME_BUTTON_HEIGHT)
+    button.hovered = false
+
+    button.bg = button:CreateTexture(nil, "BACKGROUND")
+    button.bg:SetAllPoints()
+
+    button.hover = button:CreateTexture(nil, "BORDER")
+    button.hover:SetAllPoints()
+    button.hover:Hide()
+
+    button.selectedBar = button:CreateTexture(nil, "OVERLAY")
+    button.selectedBar:SetPoint("TOPLEFT", button, "TOPLEFT", 0, -3)
+    button.selectedBar:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 3)
+    button.selectedBar:SetWidth(3)
+
+    button.swatches = {}
+    for i = 1, 3 do
+        local swatch = button:CreateTexture(nil, "ARTWORK")
+        swatch:SetSize(10, 10)
+        swatch:SetPoint("LEFT", button, "LEFT", 12 + (i - 1) * 12, 0)
+        button.swatches[i] = swatch
+    end
+
+    button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    button.label:SetPoint("LEFT", button, "LEFT", 54, 0)
+    button.label:SetPoint("RIGHT", button, "RIGHT", -8, 0)
+    button.label:SetJustifyH("LEFT")
+
+    return button
+end
+
+local function SetThemeChoiceButtonPreset(button, preset)
+    if not button or not preset then return end
+
+    button.themeKey = preset.key
+    button.label:SetText(preset.label)
+
+    local swatches = { preset.header, preset.surfaceRaised, preset.accent }
+    for i, color in ipairs(swatches) do
+        SetTextureColor(button.swatches[i], color)
+    end
+end
+
+local function ApplyThemeChoiceButtonStyle(button, selected, activeTheme)
+    if not button then return end
+
+    SetTextureColor(button.bg, selected and activeTheme.header or activeTheme.surfaceRaised)
+    SetTextureColor(button.hover, activeTheme.rowHover)
+    SetTextureColor(button.selectedBar, activeTheme.accent)
+    SetFontColor(button.label, selected and activeTheme.title or activeTheme.text)
+    button.selectedBar:SetShown(selected)
+    button.hover:SetShown(button.hovered and not selected)
+end
+
 local function UpdateThemeSelector()
     local activeTheme = GetActiveTheme()
     local activeKey = activeTheme.key
 
+    if settingsPanel and settingsPanel.themeDropdown then
+        local dropdown = settingsPanel.themeDropdown
+        SetThemeChoiceButtonPreset(dropdown.selectedButton, activeTheme)
+        ApplyThemeChoiceButtonStyle(dropdown.selectedButton, true, activeTheme)
+        if dropdown.arrow then
+            dropdown.arrow:SetText(dropdown.menu:IsShown() and "^" or "v")
+            SetFontColor(dropdown.arrow, activeTheme.text)
+        end
+        if dropdown.menu then
+            ApplyPanelTheme(dropdown.menu, activeTheme.surface, activeTheme.border)
+        end
+    end
+
     for _, button in ipairs(themeButtons) do
         local selected = button.themeKey == activeKey
-        SetTextureColor(button.bg, selected and activeTheme.header or activeTheme.surfaceRaised)
-        SetTextureColor(button.hover, activeTheme.rowHover)
-        SetTextureColor(button.selectedBar, activeTheme.accent)
-        SetFontColor(button.label, selected and activeTheme.title or activeTheme.text)
-        button.selectedBar:SetShown(selected)
+        ApplyThemeChoiceButtonStyle(button, selected, activeTheme)
+    end
+end
+
+local function GetHiddenColumns()
+    local settings = Database.GetSettings()
+    settings.hiddenColumns = settings.hiddenColumns or {}
+    return settings.hiddenColumns
+end
+
+local function IsFilterPVPColumn(col)
+    return Database.IsPVPColumn(col)
+        or col.key == "honor"
+        or col.key == "conquest"
+        or col.key == "hk"
+end
+
+local function IsFilterPVEColumn(col)
+    return col.key == "mythicPlus" or col.key == "crests"
+end
+
+local function ShouldShowColumnForFilterPreset(col, presetKey)
+    if presetKey == "pvp" then
+        return IsFilterPVPColumn(col)
+    elseif presetKey == "pve" then
+        return IsFilterPVEColumn(col)
+    end
+    return not GetHiddenColumns()[col.key]
+end
+
+local function DoesFilterMatchPreset(presetKey)
+    local hiddenColumns = GetHiddenColumns()
+    for _, col in ipairs(Database.RATING_COLUMNS) do
+        local visible = not hiddenColumns[col.key]
+        if visible ~= ShouldShowColumnForFilterPreset(col, presetKey) then
+            return false
+        end
+    end
+    return true
+end
+
+local function GetActiveFilterPreset()
+    if DoesFilterMatchPreset("pvp") then
+        return "pvp"
+    elseif DoesFilterMatchPreset("pve") then
+        return "pve"
+    end
+    return "custom"
+end
+
+local function RefreshSettingsFilterCheckboxes()
+    if not settingsPanel or not settingsPanel.filterCheckboxes then return end
+
+    local hiddenColumns = GetHiddenColumns()
+    for _, cb in ipairs(settingsPanel.filterCheckboxes) do
+        cb:SetChecked(not hiddenColumns[cb.columnKey])
+    end
+    if UpdateFilterPresetButtons then
+        UpdateFilterPresetButtons()
+    end
+end
+
+local function ApplyFilterPreset(presetKey)
+    if presetKey == "custom" then
+        if UpdateFilterPresetButtons then
+            UpdateFilterPresetButtons()
+        end
+        return
+    end
+
+    local hiddenColumns = GetHiddenColumns()
+    for _, col in ipairs(Database.RATING_COLUMNS) do
+        if ShouldShowColumnForFilterPreset(col, presetKey) then
+            hiddenColumns[col.key] = nil
+        else
+            hiddenColumns[col.key] = true
+        end
+    end
+
+    RefreshSettingsFilterCheckboxes()
+    UI.RefreshTable()
+end
+
+local function SetSettingsTab(tabKey)
+    if not settingsPanel then return end
+
+    settingsPanel.activeTab = tabKey
+    if settingsPanel.themeDropdown and settingsPanel.themeDropdown.menu then
+        settingsPanel.themeDropdown.menu:Hide()
+    end
+    if settingsPanel.settingsPage then
+        settingsPanel.settingsPage:SetShown(tabKey == "settings")
+    end
+    if settingsPanel.filtersPage then
+        settingsPanel.filtersPage:SetShown(tabKey == "filters")
+    end
+    if tabKey == "filters" then
+        RefreshSettingsFilterCheckboxes()
+    end
+    if UpdateSettingsTabs then
+        UpdateSettingsTabs()
+    end
+end
+
+UpdateSettingsTabs = function()
+    if not settingsPanel or not settingsPanel.tabs then return end
+
+    local theme = GetActiveTheme()
+    local activeTab = settingsPanel.activeTab or "settings"
+    for _, tab in ipairs(settingsPanel.tabs) do
+        local selected = tab.key == activeTab
+        SetTextureColor(tab.bg, selected and theme.header or theme.surfaceRaised)
+        SetTextureColor(tab.hover, theme.rowHover)
+        SetTextureColor(tab.accent, selected and theme.accent or theme.border, selected and 1 or 0.55)
+        SetFontColor(tab.label, selected and theme.title or theme.text)
+        tab.hover:SetShown(tab.hovered and not selected)
+    end
+end
+
+UpdateFilterPresetButtons = function()
+    if not settingsPanel or not settingsPanel.filterPresetButtons then return end
+
+    local theme = GetActiveTheme()
+    local activePreset = GetActiveFilterPreset()
+    for _, button in ipairs(settingsPanel.filterPresetButtons) do
+        local selected = button.key == activePreset
+        SetTextureColor(button.bg, selected and theme.header or theme.surfaceRaised)
+        SetTextureColor(button.hover, theme.rowHover)
+        SetTextureColor(button.accent, selected and theme.accent or theme.border, selected and 1 or 0.55)
+        SetFontColor(button.label, selected and theme.title or theme.text)
         button.hover:SetShown(button.hovered and not selected)
     end
 end
@@ -656,15 +942,17 @@ function UI.ApplyTheme()
                 SetFontColor(cb.Text, theme.text)
             end
         end
-    end
-
-    if filtersWindow then
-        ApplyPanelTheme(filtersWindow, theme.surface, theme.border)
-        SetFontColor(filtersWindow.TitleText, theme.title)
-        for _, child in ipairs({ filtersWindow:GetChildren() }) do
-            if child.Text then
-                SetFontColor(child.Text, theme.text)
-            end
+        if settingsPanel.filterLabel then
+            SetFontColor(settingsPanel.filterLabel, theme.headerText)
+        end
+        if settingsPanel.filterPresetLabel then
+            SetFontColor(settingsPanel.filterPresetLabel, theme.headerText)
+        end
+        if UpdateSettingsTabs then
+            UpdateSettingsTabs()
+        end
+        if UpdateFilterPresetButtons then
+            UpdateFilterPresetButtons()
         end
     end
 
@@ -683,6 +971,11 @@ function UI.ApplyTheme()
         SetFontColor(graphPanel.minLabel, theme.muted)
         if graphPanel.yAxisLabels then
             for _, label in ipairs(graphPanel.yAxisLabels) do
+                SetFontColor(label, theme.muted)
+            end
+        end
+        if graphPanel.yAxisRightLabels then
+            for _, label in ipairs(graphPanel.yAxisRightLabels) do
                 SetFontColor(label, theme.muted)
             end
         end
@@ -745,9 +1038,10 @@ function UI.CreateMainFrame()
     if mainFrame then return mainFrame end
 
     local settings = WarbandRatingsDB and WarbandRatingsDB.settings
+    mainWindowNeedsInitialCenter = true
     mainDockFrame = CreateFrame("Frame", "WarbandRatingsDockFrame", UIParent)
     mainDockFrame:SetSize(WINDOW_WIDTH, ClampWindowHeight(settings and settings.windowHeight))
-    mainDockFrame:SetPoint("CENTER")
+    mainDockFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     mainDockFrame:SetMovable(true)
     mainDockFrame:SetClampedToScreen(true)
     mainDockFrame:SetFrameStrata("HIGH")
@@ -791,13 +1085,11 @@ function UI.CreateMainFrame()
     -- Close with Escape: insert into the special frames table
     tinsert(UISpecialFrames, "WarbandRatingsMainFrame")
 
-    -- Cogwheel button for settings
-    local cogBtn = CreateFrame("Button", nil, mainFrame)
-    cogBtn:SetSize(24, 24)
-    cogBtn:SetPoint("RIGHT", mainFrame.CloseButton, "LEFT", -4, 0)
-    cogBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
-    cogBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-    cogBtn:SetScript("OnClick", function()
+    local settingsBtn = CreateFrame("Button", nil, mainFrame, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(76, 20)
+    settingsBtn:SetPoint("RIGHT", mainFrame.CloseButton, "LEFT", -4, 0)
+    settingsBtn:SetText("Settings")
+    settingsBtn:SetScript("OnClick", function()
         UI.ToggleSettings()
     end)
 
@@ -852,45 +1144,52 @@ end
 ------------------------------------------------------------
 function UI.CreateThemeSelector(parent, yOffset)
     themeButtons = {}
+    local owner = parent.settingsWindow or parent
 
     local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     label:SetPoint("TOPLEFT", 14, yOffset)
     label:SetText("Theme")
-    parent.themeLabel = label
+    owner.themeLabel = label
 
     local buttonY = yOffset - 22
+    local dropdown = CreateFrame("Frame", nil, parent)
+    dropdown:SetPoint("TOPLEFT", 12, buttonY)
+    dropdown:SetSize(THEME_BUTTON_WIDTH, THEME_BUTTON_HEIGHT)
+    dropdown:SetFrameLevel(parent:GetFrameLevel() + 5)
+    owner.themeDropdown = dropdown
+
+    dropdown.selectedButton = CreateThemeChoiceButton(dropdown, THEME_BUTTON_WIDTH)
+    dropdown.selectedButton:SetPoint("TOPLEFT", dropdown, "TOPLEFT", 0, 0)
+    dropdown.selectedButton.label:SetPoint("RIGHT", dropdown.selectedButton, "RIGHT", -24, 0)
+    dropdown.arrow = dropdown.selectedButton:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    dropdown.arrow:SetPoint("RIGHT", dropdown.selectedButton, "RIGHT", -8, 0)
+    dropdown.arrow:SetWidth(12)
+    dropdown.arrow:SetJustifyH("CENTER")
+
+    dropdown.menu = CreateFrame("Frame", nil, dropdown)
+    dropdown.menu:SetPoint("TOPLEFT", dropdown.selectedButton, "BOTTOMLEFT", 0, -4)
+    dropdown.menu:SetSize(THEME_BUTTON_WIDTH, (#THEME_PRESETS * THEME_BUTTON_HEIGHT) + ((#THEME_PRESETS - 1) * 6) + 8)
+    dropdown.menu:SetFrameLevel(dropdown:GetFrameLevel() + 10)
+    dropdown.menu:Hide()
+
+    dropdown.selectedButton:SetScript("OnEnter", function(self)
+        self.hovered = true
+        UpdateThemeSelector()
+    end)
+    dropdown.selectedButton:SetScript("OnLeave", function(self)
+        self.hovered = false
+        UpdateThemeSelector()
+    end)
+    dropdown.selectedButton:SetScript("OnClick", function()
+        dropdown.menu:SetShown(not dropdown.menu:IsShown())
+        UpdateThemeSelector()
+    end)
+
+    local optionY = -4
     for _, preset in ipairs(THEME_PRESETS) do
-        local button = CreateFrame("Button", nil, parent)
-        button:SetPoint("TOPLEFT", 12, buttonY)
-        button:SetSize(THEME_BUTTON_WIDTH, THEME_BUTTON_HEIGHT)
-        button.themeKey = preset.key
-        button.hovered = false
-
-        button.bg = button:CreateTexture(nil, "BACKGROUND")
-        button.bg:SetAllPoints()
-
-        button.hover = button:CreateTexture(nil, "BORDER")
-        button.hover:SetAllPoints()
-        button.hover:Hide()
-
-        button.selectedBar = button:CreateTexture(nil, "OVERLAY")
-        button.selectedBar:SetPoint("TOPLEFT", button, "TOPLEFT", 0, -3)
-        button.selectedBar:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 3)
-        button.selectedBar:SetWidth(3)
-
-        local swatches = { preset.header, preset.surfaceRaised, preset.accent }
-        for i, color in ipairs(swatches) do
-            local swatch = button:CreateTexture(nil, "ARTWORK")
-            swatch:SetSize(10, 10)
-            swatch:SetPoint("LEFT", button, "LEFT", 12 + (i - 1) * 12, 0)
-            SetTextureColor(swatch, color)
-        end
-
-        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        button.label:SetPoint("LEFT", button, "LEFT", 54, 0)
-        button.label:SetPoint("RIGHT", button, "RIGHT", -8, 0)
-        button.label:SetJustifyH("LEFT")
-        button.label:SetText(preset.label)
+        local button = CreateThemeChoiceButton(dropdown.menu, THEME_BUTTON_WIDTH - 8)
+        button:SetPoint("TOPLEFT", dropdown.menu, "TOPLEFT", 4, optionY)
+        SetThemeChoiceButtonPreset(button, preset)
 
         button:SetScript("OnEnter", function(self)
             self.hovered = true
@@ -901,117 +1200,212 @@ function UI.CreateThemeSelector(parent, yOffset)
             UpdateThemeSelector()
         end)
         button:SetScript("OnClick", function(self)
-            if GetActiveTheme().key == self.themeKey then return end
-            Database.SetSetting("themeKey", self.themeKey)
-            UI.ApplyTheme()
-            UI.RefreshTable()
-            UI.RefreshHistoryGraph()
+            dropdown.menu:Hide()
+            if GetActiveTheme().key ~= self.themeKey then
+                Database.SetSetting("themeKey", self.themeKey)
+                UI.ApplyTheme()
+                UI.RefreshTable()
+                UI.RefreshHistoryGraph()
+            else
+                UpdateThemeSelector()
+            end
         end)
 
         themeButtons[#themeButtons + 1] = button
-        buttonY = buttonY - (THEME_BUTTON_HEIGHT + 6)
+        optionY = optionY - (THEME_BUTTON_HEIGHT + 6)
     end
 
     UpdateThemeSelector()
-    return buttonY - 4
+    return buttonY - THEME_BUTTON_HEIGHT - 8
+end
+
+local function CreateSettingsTabButton(parent, key, label, index)
+    local tab = CreateFrame("Button", nil, parent)
+    tab:SetSize(SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT)
+    tab:SetPoint("TOPLEFT", parent, "BOTTOMLEFT", 10 + (index - 1) * (SETTINGS_TAB_WIDTH + 4), 1)
+    tab.key = key
+    tab.hovered = false
+
+    tab.bg = tab:CreateTexture(nil, "BACKGROUND")
+    tab.bg:SetAllPoints()
+
+    tab.hover = tab:CreateTexture(nil, "BORDER")
+    tab.hover:SetAllPoints()
+    tab.hover:Hide()
+
+    tab.accent = tab:CreateTexture(nil, "OVERLAY")
+    tab.accent:SetPoint("TOPLEFT", tab, "TOPLEFT", 0, 0)
+    tab.accent:SetPoint("TOPRIGHT", tab, "TOPRIGHT", 0, 0)
+    tab.accent:SetHeight(2)
+
+    tab.label = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    tab.label:SetPoint("CENTER", tab, "CENTER", 0, 0)
+    tab.label:SetText(label)
+
+    tab:SetScript("OnEnter", function(self)
+        self.hovered = true
+        UpdateSettingsTabs()
+    end)
+    tab:SetScript("OnLeave", function(self)
+        self.hovered = false
+        UpdateSettingsTabs()
+    end)
+    tab:SetScript("OnClick", function(self)
+        SetSettingsTab(self.key)
+    end)
+
+    return tab
+end
+
+local function CreateFilterPresetButton(parent, key, label, index)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(FILTER_PRESET_BUTTON_WIDTH, FILTER_PRESET_BUTTON_HEIGHT)
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 12 + (index - 1) * (FILTER_PRESET_BUTTON_WIDTH + 4), -60)
+    button.key = key
+    button.hovered = false
+
+    button.bg = button:CreateTexture(nil, "BACKGROUND")
+    button.bg:SetAllPoints()
+
+    button.hover = button:CreateTexture(nil, "BORDER")
+    button.hover:SetAllPoints()
+    button.hover:Hide()
+
+    button.accent = button:CreateTexture(nil, "OVERLAY")
+    button.accent:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    button.accent:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 0, 0)
+    button.accent:SetWidth(3)
+
+    button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+    button.label:SetText(label)
+
+    button:SetScript("OnEnter", function(self)
+        self.hovered = true
+        UpdateFilterPresetButtons()
+    end)
+    button:SetScript("OnLeave", function(self)
+        self.hovered = false
+        UpdateFilterPresetButtons()
+    end)
+    button:SetScript("OnClick", function(self)
+        ApplyFilterPreset(self.key)
+    end)
+
+    return button
 end
 
 function UI.CreateSettingsPanel()
-    settingsPanel = CreateFrame("Frame", nil, mainFrame, "InsetFrameTemplate3" )
-    settingsPanel:SetWidth(SETTINGS_WIDTH)
-    settingsPanel:SetPoint("TOPLEFT", mainFrame, "TOPRIGHT", -1, 0)
-    settingsPanel:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMRIGHT", -1, 0)
+    if settingsPanel then return settingsPanel end
+
+    settingsPanel = CreateFrame("Frame", "WarbandRatingsSettingsWindow", UIParent, "BasicFrameTemplateWithInset")
+    tinsert(UISpecialFrames, "WarbandRatingsSettingsWindow")
+    settingsPanel:SetSize(SETTINGS_WIDTH, SETTINGS_HEIGHT)
+    PositionSettingsPanelNearMain(settingsPanel)
     settingsPanel:Hide()
+    settingsPanel:SetMovable(true)
+    settingsPanel:EnableMouse(true)
+    settingsPanel:RegisterForDrag("LeftButton")
+    settingsPanel:SetScript("OnDragStart", settingsPanel.StartMoving)
+    settingsPanel:SetScript("OnDragStop", settingsPanel.StopMovingOrSizing)
+    settingsPanel:SetScript("OnHide", function(self)
+        if self.themeDropdown and self.themeDropdown.menu then
+            self.themeDropdown.menu:Hide()
+        end
+    end)
+    settingsPanel:SetFrameStrata("DIALOG")
+    settingsPanel:SetClampedToScreen(true)
     HideTemplateArtwork(settingsPanel)
 
-    local title = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 12, -12)
-    title:SetText("Settings")
-    settingsPanel.title = title
+    settingsPanel.TitleText:SetText("Settings")
+    settingsPanel.TitleText:ClearAllPoints()
+    settingsPanel.TitleText:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 0, -TITLE_BAR_TOP_INSET)
+    settingsPanel.TitleText:SetPoint("TOPRIGHT", settingsPanel, "TOPRIGHT", 0, -TITLE_BAR_TOP_INSET)
+    settingsPanel.TitleText:SetHeight(TITLE_BAR_HEIGHT)
+    settingsPanel.TitleText:SetJustifyH("CENTER")
+    settingsPanel.TitleText:SetJustifyV("MIDDLE")
+    settingsPanel.title = settingsPanel.TitleText
+
+    settingsPanel.checkboxes = {}
+    settingsPanel.filterCheckboxes = {}
+    settingsPanel.filterPresetButtons = {}
+
+    local settingsPage = CreateFrame("Frame", nil, settingsPanel)
+    settingsPage:SetAllPoints(settingsPanel)
+    settingsPage.settingsWindow = settingsPanel
+    settingsPanel.settingsPage = settingsPage
+
+    local filtersPage = CreateFrame("Frame", nil, settingsPanel)
+    filtersPage:SetAllPoints(settingsPanel)
+    filtersPage.settingsWindow = settingsPanel
+    filtersPage:Hide()
+    settingsPanel.filtersPage = filtersPage
 
     local yOffset = -38
-    UI.CreateCheckbox(settingsPanel, "Max level only", "hideNonMaxLevel", yOffset)
+    UI.CreateCheckbox(settingsPage, "Max level only", "hideNonMaxLevel", yOffset)
     yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPanel, "Hide characters with no rating", "hideNoRating", yOffset)
+    UI.CreateCheckbox(settingsPage, "Hide characters with no rating", "hideNoRating", yOffset)
     yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPanel, "Hide brackets with no rating", "hideEmptyColumns", yOffset)
+    UI.CreateCheckbox(settingsPage, "Hide brackets with no rating", "hideEmptyColumns", yOffset)
     yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPanel, "Hide MMR for PvP ratings", "hideMMR", yOffset)
-    yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPanel, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
+    UI.CreateCheckbox(settingsPage, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
         UI.UpdateMinimapVisibility()
     end)
     yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPanel, "Hide compartment icon", "hideCompartmentIcon", yOffset, function()
+    UI.CreateCheckbox(settingsPage, "Hide compartment icon", "hideCompartmentIcon", yOffset, function()
         UI.UpdateCompartmentVisibility()
     end)
     yOffset = yOffset - 42
-    yOffset = UI.CreateThemeSelector(settingsPanel, yOffset)
-    yOffset = yOffset - 10
-    local filtersBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
-    filtersBtn:SetSize(120, 22)
-    filtersBtn:SetPoint("TOPLEFT", 12, yOffset)
-    filtersBtn:SetText("Filters")
-    filtersBtn:SetScript("OnClick", function()
-        UI.ToggleFiltersWindow()
-    end)
-end
+    UI.CreateThemeSelector(settingsPage, yOffset)
 
-------------------------------------------------------------
--- Filters Window
-------------------------------------------------------------
-function UI.ToggleFiltersWindow()
-    if filtersWindow and filtersWindow:IsShown() then
-        filtersWindow:Hide()
-        return
-    end
-    if not filtersWindow then
-        filtersWindow = CreateFrame("Frame", "WarbandRatingsFiltersWindow", UIParent, "BasicFrameTemplateWithInset")
-        tinsert(UISpecialFrames, "WarbandRatingsFiltersWindow")
-        filtersWindow:SetSize(220, 44 + #Database.RATING_COLUMNS * 26)
-        filtersWindow:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", mainFrame:GetRight() + 4, mainFrame:GetTop())
-        filtersWindow:SetMovable(true)
-        filtersWindow:EnableMouse(true)
-        filtersWindow:RegisterForDrag("LeftButton")
-        filtersWindow:SetScript("OnDragStart", filtersWindow.StartMoving)
-        filtersWindow:SetScript("OnDragStop", filtersWindow.StopMovingOrSizing)
-        filtersWindow:SetFrameStrata("DIALOG")
-        filtersWindow:SetClampedToScreen(true)
-        HideTemplateArtwork(filtersWindow)
-        filtersWindow.TitleText:SetText("Filters")
+    local presetLabel = filtersPage:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    presetLabel:SetPoint("TOPLEFT", 14, -38)
+    presetLabel:SetText("Preset")
+    settingsPanel.filterPresetLabel = presetLabel
 
-        local yOff = -30
-        local hiddenColumns = Database.GetSettings().hiddenColumns
+    settingsPanel.filterPresetButtons = {
+        CreateFilterPresetButton(filtersPage, "pvp", "PvP", 1),
+        CreateFilterPresetButton(filtersPage, "pve", "PvE", 2),
+        CreateFilterPresetButton(filtersPage, "custom", "Custom", 3),
+    }
 
-        for _, col in ipairs(Database.RATING_COLUMNS) do
-            local cb = CreateFrame("CheckButton", nil, filtersWindow, "InterfaceOptionsCheckButtonTemplate")
-            cb:SetPoint("TOPLEFT", 10, yOff)
-            cb.Text:SetText(col.label)
-            cb.Text:SetFontObject("GameFontNormalSmall")
-            cb:SetChecked(not hiddenColumns[col.key])
-            cb.columnKey = col.key
-            cb:SetScript("OnClick", function(self)
-                local hidden = Database.GetSettings().hiddenColumns
-                if self:GetChecked() then
-                    hidden[self.columnKey] = nil
-                else
-                    hidden[self.columnKey] = true
-                end
-                UI.RefreshTable()
-            end)
-            yOff = yOff - 26
-        end
-    else
-        -- Refresh checkbox states when reopening
-        local hiddenColumns = Database.GetSettings().hiddenColumns
-        for _, child in ipairs({ filtersWindow:GetChildren() }) do
-            if child.columnKey then
-                child:SetChecked(not hiddenColumns[child.columnKey])
+    local filterLabel = filtersPage:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filterLabel:SetPoint("TOPLEFT", 14, -94)
+    filterLabel:SetText("Visible columns")
+    settingsPanel.filterLabel = filterLabel
+
+    local yOff = -124
+    local hiddenColumns = GetHiddenColumns()
+    for _, col in ipairs(Database.RATING_COLUMNS) do
+        local cb = CreateFrame("CheckButton", nil, filtersPage, "InterfaceOptionsCheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", 12, yOff)
+        cb.Text:SetText(col.label)
+        cb.Text:SetFontObject("GameFontNormalSmall")
+        cb:SetChecked(not hiddenColumns[col.key])
+        cb.columnKey = col.key
+        cb:SetScript("OnClick", function(self)
+            local hidden = GetHiddenColumns()
+            if self:GetChecked() then
+                hidden[self.columnKey] = nil
+            else
+                hidden[self.columnKey] = true
             end
-        end
+            UpdateFilterPresetButtons()
+            UI.RefreshTable()
+        end)
+        settingsPanel.checkboxes[#settingsPanel.checkboxes + 1] = cb
+        settingsPanel.filterCheckboxes[#settingsPanel.filterCheckboxes + 1] = cb
+        yOff = yOff - 26
     end
-    UI.ApplyTheme()
-    filtersWindow:Show()
+
+    settingsPanel.tabs = {
+        CreateSettingsTabButton(settingsPanel, "settings", "Settings", 1),
+        CreateSettingsTabButton(settingsPanel, "filters", "Filters", 2),
+    }
+    settingsPanel.activeTab = "settings"
+    SetSettingsTab("settings")
+
+    return settingsPanel
 end
 
 function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
@@ -1020,8 +1414,9 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
     cb.Text:SetText(label)
     cb.Text:SetFontObject("GameFontNormalSmall")
     SetFontColor(cb.Text, GetActiveTheme().text)
-    parent.checkboxes = parent.checkboxes or {}
-    parent.checkboxes[#parent.checkboxes + 1] = cb
+    local owner = parent.settingsWindow or parent
+    owner.checkboxes = owner.checkboxes or {}
+    owner.checkboxes[#owner.checkboxes + 1] = cb
 
     cb:SetChecked(Database.GetSettings()[settingKey])
     cb:SetScript("OnClick", function(self)
@@ -1032,10 +1427,12 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
 end
 
 function UI.ToggleSettings()
-    if settingsPanel:IsShown() then
-        settingsPanel:Hide()
+    local panel = UI.CreateSettingsPanel()
+    if panel:IsShown() then
+        panel:Hide()
     else
-        settingsPanel:Show()
+        PositionSettingsPanelNearMain(panel)
+        panel:Show()
     end
 end
 
@@ -1192,47 +1589,8 @@ local function ColWidth(col)
     return COL_RATING_WIDTH
 end
 
-local function HasLastMMR(mmr)
-    return not Utils.IsEmptyRating(mmr)
-end
-
-local function SetSmallFont(fs, size)
-    local font, _, flags = fs:GetFont()
-    if font then
-        fs:SetFont(font, size, flags)
-    end
-end
-
 local function GetRatingTextY(subY)
     return subY - (SUBROW_HEIGHT - RATING_TEXT_HEIGHT) / 2
-end
-
-local function AddRatingWithMMRText(row, x, y, w, rating, mmr)
-    local theme = GetActiveTheme()
-    local ratingFs = AcquireFontString(row, "GameFontHighlight")
-    ratingFs:SetText(Utils.FormatRating(rating))
-    SetFontColor(ratingFs, Utils.IsEmptyRating(rating) and theme.muted or theme.text)
-
-    local mmrFs = AcquireFontString(row, "GameFontHighlightSmall")
-    SetSmallFont(mmrFs, 9)
-    SetFontColor(mmrFs, theme.muted)
-    mmrFs:SetText(" (" .. Utils.FormatLastMMR(mmr) .. ")")
-
-    local gap = 2
-    local ratingW = math.ceil(ratingFs:GetStringWidth())
-    local mmrW = math.ceil(mmrFs:GetStringWidth())
-    local totalW = ratingW + gap + mmrW
-    local startX = x + (w - totalW) / 2
-
-    ratingFs:SetPoint("TOPLEFT", row, "TOPLEFT", startX, y)
-    ratingFs:SetWidth(ratingW)
-    ratingFs:SetJustifyH("LEFT")
-    ratingFs:Show()
-
-    mmrFs:SetPoint("LEFT", ratingFs, "RIGHT", gap, 1)
-    mmrFs:SetWidth(mmrW)
-    mmrFs:SetJustifyH("LEFT")
-    mmrFs:Show()
 end
 
 local function SetHistoryGraphIconColor(icon, r, g, b)
@@ -1371,6 +1729,12 @@ local function ClearGraphDrawings()
             label:Hide()
         end
     end
+    if graphPanel.yAxisRightLabels then
+        for _, label in ipairs(graphPanel.yAxisRightLabels) do
+            label:SetText("")
+            label:Hide()
+        end
+    end
     graphPanel.graphData = nil
 end
 
@@ -1398,17 +1762,31 @@ local function EnsureGraphHoverLayer()
     return graphPanel.hoverLayer
 end
 
-local function AcquireGraphYAxisLabel(index)
-    graphPanel.yAxisLabels = graphPanel.yAxisLabels or {}
+local function AcquireGraphYAxisLabel(index, side)
     local drawLayer = EnsureGraphDrawLayer()
+    local labels
+    local width
+    local justify
 
-    local label = graphPanel.yAxisLabels[index]
+    if side == "right" then
+        graphPanel.yAxisRightLabels = graphPanel.yAxisRightLabels or {}
+        labels = graphPanel.yAxisRightLabels
+        width = GRAPH_MARGIN_RIGHT - 8
+        justify = "LEFT"
+    else
+        graphPanel.yAxisLabels = graphPanel.yAxisLabels or {}
+        labels = graphPanel.yAxisLabels
+        width = GRAPH_MARGIN_LEFT - 8
+        justify = "RIGHT"
+    end
+
+    local label = labels[index]
     if not label then
         label = drawLayer:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        label:SetWidth(GRAPH_MARGIN_LEFT - 8)
-        label:SetJustifyH("RIGHT")
+        label:SetWidth(width)
+        label:SetJustifyH(justify)
         label:SetJustifyV("MIDDLE")
-        graphPanel.yAxisLabels[index] = label
+        labels[index] = label
     end
 
     return label
@@ -1527,7 +1905,7 @@ local function GetGraphPointY(value, minValue, maxValue, plotHeight)
     return GRAPH_MARGIN_TOP + ((maxValue - value) / (maxValue - minValue)) * plotHeight
 end
 
-local function DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotHeight, theme)
+local function DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotWidth, plotHeight, theme)
     local labelIndex = 1
     local tickValue = minValue
 
@@ -1540,6 +1918,13 @@ local function DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotHeight, th
         SetFontColor(label, theme.muted)
         label:Show()
 
+        local rightLabel = AcquireGraphYAxisLabel(labelIndex, "right")
+        rightLabel:ClearAllPoints()
+        rightLabel:SetPoint("LEFT", graphPanel.drawLayer, "TOPLEFT", GRAPH_MARGIN_LEFT + plotWidth + 6, -y)
+        rightLabel:SetText(FormatGraphValue(tickValue))
+        SetFontColor(rightLabel, theme.muted)
+        rightLabel:Show()
+
         labelIndex = labelIndex + 1
         tickValue = tickValue + tickStep
     end
@@ -1548,6 +1933,12 @@ local function DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotHeight, th
         for i = labelIndex, #graphPanel.yAxisLabels do
             graphPanel.yAxisLabels[i]:SetText("")
             graphPanel.yAxisLabels[i]:Hide()
+        end
+    end
+    if graphPanel.yAxisRightLabels then
+        for i = labelIndex, #graphPanel.yAxisRightLabels do
+            graphPanel.yAxisRightLabels[i]:SetText("")
+            graphPanel.yAxisRightLabels[i]:Hide()
         end
     end
 end
@@ -2138,7 +2529,7 @@ function UI.RefreshHistoryGraph()
         graphPanel.rangeSlider:Hide()
     end
 
-    local minValue, maxValue, tickStep = GetFullSeriesGraphScale(points, showRating, showMMR)
+    local minValue, maxValue, tickStep = GetFullSeriesGraphScale(points, true, true)
     if not minValue then
         if not showRating and not showMMR then
             graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
@@ -2212,7 +2603,26 @@ function UI.RefreshHistoryGraph()
         mmrColor = { mr, mg, mb },
     }
 
-    DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotHeight, theme)
+    DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotWidth, plotHeight, theme)
+
+    local minorTickValue = minValue + GRAPH_Y_AXIS_MINOR_STEP
+    while minorTickValue < maxValue - 0.5 do
+        if minorTickValue % tickStep ~= 0 then
+            local y = GetGraphPointY(minorTickValue, minValue, maxValue, plotHeight)
+            AddGraphLine(
+                GRAPH_MARGIN_LEFT,
+                y,
+                GRAPH_MARGIN_LEFT + plotWidth,
+                y,
+                theme.grid[1],
+                theme.grid[2],
+                theme.grid[3],
+                (theme.grid[4] or 0.25) * 0.75,
+                1
+            )
+        end
+        minorTickValue = minorTickValue + GRAPH_Y_AXIS_MINOR_STEP
+    end
 
     local tickValue = minValue
     while tickValue <= maxValue + 0.5 do
@@ -2414,7 +2824,6 @@ function UI.RefreshTable()
 
     local groups = Database.GetFilteredCharacterGroups()
     local columns = Database.GetVisibleColumns(groups)
-    local showMMR = not Database.GetSettings().hideMMR
     local theme = GetActiveTheme()
     UI.ApplyTheme()
 
@@ -2500,6 +2909,7 @@ function UI.RefreshTable()
         SetFontColor(fs, theme.muted)
         fs:Show()
         scrollChild:SetHeight(SUBROW_HEIGHT)
+        CenterMainDockFrameAfterInitialLayout()
         UI.RefreshHistoryGraph()
         return
     end
@@ -2510,16 +2920,14 @@ function UI.RefreshTable()
         local charData = grp.charData
 
         -- Only expand to subrows if at least one spec column has rating details
-        -- Build list of specs that have a rating or last MMR in any spec column
+        -- Build list of specs that have a rating in any spec column
         local ratedSpecs = {}
         for _, specID in ipairs(grp.specs) do
             local specRatings = charData.specRatings and charData.specRatings[specID]
-            local specMMR = charData.specLastMMR and charData.specLastMMR[specID]
             if specRatings then
                 for _, col in ipairs(columns) do
                     if Database.IsSpecColumn(col)
-                        and (not Utils.IsEmptyRating(specRatings[col.key])
-                            or (showMMR and Database.IsPVPColumn(col) and HasLastMMR(specMMR and specMMR[col.key]))) then
+                        and not Utils.IsEmptyRating(specRatings[col.key]) then
                         ratedSpecs[#ratedSpecs + 1] = specID
                         break
                     end
@@ -2585,13 +2993,10 @@ function UI.RefreshTable()
                     for specIdx, specID in ipairs(ratedSpecs) do
                         local specRatings = charData.specRatings and charData.specRatings[specID]
                         local val = specRatings and specRatings[col.key]
-                        local specMMR = charData.specLastMMR and charData.specLastMMR[specID]
-                        local mmr = specMMR and specMMR[col.key]
-                        local hasMMR = showMMR and Database.IsPVPColumn(col) and HasLastMMR(mmr)
                         local subY = -(specIdx - 1) * SUBROW_HEIGHT
 
                         -- Spec icon (only if this column has rating details)
-                        if not Utils.IsEmptyRating(val) or hasMMR then
+                        if not Utils.IsEmptyRating(val) then
                             local specIcon = Utils.GetSpecIcon(specID)
                             if specIcon then
                                 local ico = AcquireTexture(row, "ARTWORK")
@@ -2604,17 +3009,13 @@ function UI.RefreshTable()
                         end
 
                         -- Rating text
-                        if hasMMR then
-                            AddRatingWithMMRText(row, colX + SPEC_ICON_SIZE + 4, GetRatingTextY(subY), w - SPEC_ICON_SIZE - 6, val, mmr)
-                        else
-                            local fs = AcquireFontString(row, "GameFontHighlight")
-                            fs:SetPoint("TOPLEFT", row, "TOPLEFT", colX + SPEC_ICON_SIZE + 4, GetRatingTextY(subY))
-                            fs:SetWidth(w - SPEC_ICON_SIZE - 6)
-                            fs:SetJustifyH("CENTER")
-                            fs:SetText(Utils.FormatRating(val))
-                            SetFontColor(fs, theme.text)
-                            fs:Show()
-                        end
+                        local fs = AcquireFontString(row, "GameFontHighlight")
+                        fs:SetPoint("TOPLEFT", row, "TOPLEFT", colX + SPEC_ICON_SIZE + 4, GetRatingTextY(subY))
+                        fs:SetWidth(w - SPEC_ICON_SIZE - 6)
+                        fs:SetJustifyH("CENTER")
+                        fs:SetText(Utils.FormatRating(val))
+                        SetFontColor(fs, Utils.IsEmptyRating(val) and theme.muted or theme.text)
+                        fs:Show()
                         AddHistoryClickOverlay(row, colX, subY, w, SUBROW_HEIGHT, charData, specID, col)
                     end
                 else
@@ -2671,20 +3072,14 @@ function UI.RefreshTable()
                         fs:Show()
                     end
                 else
-                    local mmr = charData.lastMMR and charData.lastMMR[col.key]
-                    local hasMMR = showMMR and Database.IsPVPColumn(col) and HasLastMMR(mmr)
                     local formatFn = col.formatFn or Utils.FormatRating
-                    if hasMMR then
-                        AddRatingWithMMRText(row, colX, GetRatingTextY(0), w, val, mmr)
-                    else
-                        local fs = AcquireFontString(row, "GameFontHighlight")
-                        fs:SetPoint("LEFT", row, "LEFT", colX, 0)
-                        fs:SetWidth(w)
-                        fs:SetJustifyH("CENTER")
-                        fs:SetText(formatFn(val))
-                        SetFontColor(fs, Utils.IsEmptyRating(val) and theme.muted or theme.text)
-                        fs:Show()
-                    end
+                    local fs = AcquireFontString(row, "GameFontHighlight")
+                    fs:SetPoint("LEFT", row, "LEFT", colX, 0)
+                    fs:SetWidth(w)
+                    fs:SetJustifyH("CENTER")
+                    fs:SetText(formatFn(val))
+                    SetFontColor(fs, Utils.IsEmptyRating(val) and theme.muted or theme.text)
+                    fs:Show()
                     if Database.IsPVPColumn(col) then
                         AddHistoryClickOverlay(row, colX, 0, w, rowHeight, charData, 0, col)
                     end
@@ -2770,6 +3165,7 @@ function UI.RefreshTable()
         contentW = contentW + ColWidth(col)
     end
     mainFrame:SetWidth(math.max(contentW + framePadding, WINDOW_MIN_WIDTH))
+    CenterMainDockFrameAfterInitialLayout()
     UI.RefreshHistoryGraph()
 end
 
@@ -2874,8 +3270,10 @@ function UI.ShowWithSettings()
     local frame = UI.CreateMainFrame()
     frame:Show()
     UI.RefreshTable()
-    if not settingsPanel:IsShown() then
-        settingsPanel:Show()
+    local panel = UI.CreateSettingsPanel()
+    if not panel:IsShown() then
+        PositionSettingsPanelNearMain(panel)
+        panel:Show()
     end
 end
 
