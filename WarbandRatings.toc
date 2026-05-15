@@ -2,7 +2,7 @@
 ## Title: Warband Ratings
 ## Notes: Tracks and displays PvP and M+ ratings & currencies for all your characters.
 ## Author: NickDrew
-## Version: 2.0.2
+## Version: 2.1.0
 ## IconTexture: 2022761
 ## Category: PvP
 ## SavedVariables: WarbandRatingsDB
