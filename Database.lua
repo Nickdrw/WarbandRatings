@@ -123,7 +123,9 @@ end
 local function NormalizeCharacterSpecData(charData)
     local currentSpecID = NormalizeSpecID(charData.currentSpecID) or NormalizeSpecID(charData.specID)
     charData.currentSpecID = currentSpecID or 0
+    charData.pvpStats = charData.pvpStats or {}
     charData.specRatings = NormalizeSpecMap(charData.specRatings, currentSpecID)
+    charData.specPVPStats = NormalizeSpecMap(charData.specPVPStats, currentSpecID)
     charData.specLastMMR = NormalizeSpecMap(charData.specLastMMR, currentSpecID)
 end
 
@@ -189,6 +191,12 @@ function Database.Migrate()
         if not charData.specRatings then
             charData.specRatings = {}
         end
+        if not charData.pvpStats then
+            charData.pvpStats = {}
+        end
+        if not charData.specPVPStats then
+            charData.specPVPStats = {}
+        end
         if not charData.lastMMR then
             charData.lastMMR = {}
         end
@@ -238,6 +246,7 @@ function Database.SaveCharacter(data)
             end
         end
         existing.ratings = data.ratings
+        existing.pvpStats = data.pvpStats or existing.pvpStats or {}
         existing.lastMMR = existing.lastMMR or {}
         if data.lastMMR then
             for k, v in pairs(data.lastMMR) do
@@ -248,11 +257,15 @@ function Database.SaveCharacter(data)
         end
         existing.lastUpdated = data.lastUpdated
         existing.specRatings = existing.specRatings or {}
+        existing.specPVPStats = existing.specPVPStats or {}
         existing.specLastMMR = existing.specLastMMR or {}
         existing.currentSpecID = data.currentSpecID
         existing.currentSpecRatings = data.currentSpecRatings
         if NormalizeSpecID(data.currentSpecID) and data.currentSpecRatings then
             existing.specRatings[data.currentSpecID] = data.currentSpecRatings
+            if data.specPVPStats and data.specPVPStats[data.currentSpecID] then
+                existing.specPVPStats[data.currentSpecID] = data.specPVPStats[data.currentSpecID]
+            end
         end
     else
         WarbandRatingsDB.characters[key] = data

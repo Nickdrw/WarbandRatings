@@ -32,6 +32,50 @@ local function CanCollectSpecRatings(specID, isMaxLevel)
     return ratedStatsSpecID == specID
 end
 
+local function AddPVPBracketSpecStats(stats, colKey)
+    local specStats
+    local countField
+    if colKey == "soloShuffle" and C_PvP and C_PvP.GetPersonalRatedSoloShuffleSpecStats then
+        specStats = C_PvP.GetPersonalRatedSoloShuffleSpecStats()
+        countField = "Rounds"
+    elseif colKey == "soloBG" and C_PvP and C_PvP.GetPersonalRatedBGBlitzSpecStats then
+        specStats = C_PvP.GetPersonalRatedBGBlitzSpecStats()
+        countField = "Games"
+    end
+    if not specStats then return end
+
+    stats.weeklyMostPlayedSpecID = tonumber(specStats.weeklyMostPlayedSpecID) or 0
+    stats.seasonMostPlayedSpecID = tonumber(specStats.seasonMostPlayedSpecID) or 0
+    stats.weeklyMostPlayedSpecCount = tonumber(specStats["weeklyMostPlayedSpec" .. countField]) or 0
+    stats.seasonMostPlayedSpecCount = tonumber(specStats["seasonMostPlayedSpec" .. countField]) or 0
+end
+
+local function CollectPVPBracketInfo(bracketIndex, isMaxLevel, colKey)
+    if not isMaxLevel then
+        return 0, nil
+    end
+
+    local rating, seasonBest, weeklyBest, seasonPlayed, seasonWon, weeklyPlayed, weeklyWon,
+        _, _, _, _, roundsSeasonPlayed, roundsSeasonWon, roundsWeeklyPlayed, roundsWeeklyWon = GetPersonalRatedInfo(bracketIndex)
+    rating = tonumber(rating) or 0
+
+    local stats = {
+        rating = rating,
+        seasonBest = tonumber(seasonBest) or 0,
+        weeklyBest = tonumber(weeklyBest) or 0,
+        seasonPlayed = tonumber(seasonPlayed) or 0,
+        seasonWon = tonumber(seasonWon) or 0,
+        weeklyPlayed = tonumber(weeklyPlayed) or 0,
+        weeklyWon = tonumber(weeklyWon) or 0,
+        roundsSeasonPlayed = tonumber(roundsSeasonPlayed) or 0,
+        roundsSeasonWon = tonumber(roundsSeasonWon) or 0,
+        roundsWeeklyPlayed = tonumber(roundsWeeklyPlayed) or 0,
+        roundsWeeklyWon = tonumber(roundsWeeklyWon) or 0,
+    }
+    AddPVPBracketSpecStats(stats, colKey)
+    return rating, stats
+end
+
 function DataCollection.MarkRatedStatsStale()
     ratedStatsSpecID = nil
     ratedStatsRequestedSpecID = nil
@@ -80,11 +124,13 @@ function DataCollection.CollectCurrentCharacter()
 
     -- Global ratings (not per-spec)
     local globalRatings = {}
+    local globalPVPStats = {}
     for _, col in ipairs(Database.GLOBAL_COLUMNS) do
         if col.bracketIndex then
             -- PvP bracket ratings are season-specific; zero out for sub-max-level characters
-            local rating = isMaxLevel and GetPersonalRatedInfo(col.bracketIndex) or 0
-            globalRatings[col.key] = rating or 0
+            local rating, stats = CollectPVPBracketInfo(col.bracketIndex, isMaxLevel, col.key)
+            globalRatings[col.key] = rating
+            globalPVPStats[col.key] = stats
         elseif col.key == "mythicPlus" then
             local score = C_ChallengeMode
                 and C_ChallengeMode.GetOverallDungeonScore
@@ -131,12 +177,15 @@ function DataCollection.CollectCurrentCharacter()
     -- briefly after a spec swap, so spec-scoped brackets are gated by a fresh
     -- PVP_RATED_STATS_UPDATE for the active spec.
     local specRatings
+    local specPVPStats
     if CanCollectSpecRatings(specID, isMaxLevel) then
         specRatings = {}
+        specPVPStats = {}
         for _, col in ipairs(Database.SPEC_COLUMNS) do
             if col.bracketIndex then
-                local rating = isMaxLevel and GetPersonalRatedInfo(col.bracketIndex) or 0
-                specRatings[col.key] = rating or 0
+                local rating, stats = CollectPVPBracketInfo(col.bracketIndex, isMaxLevel, col.key)
+                specRatings[col.key] = rating
+                specPVPStats[col.key] = stats
             end
         end
     end
@@ -148,8 +197,10 @@ function DataCollection.CollectCurrentCharacter()
         classID = classID,
         level = level,
         ratings = globalRatings,
+        pvpStats = globalPVPStats,
         lastMMR = {},
         specRatings = specRatings and { [specID] = specRatings } or {},
+        specPVPStats = specPVPStats and { [specID] = specPVPStats } or {},
         specLastMMR = specRatings and { [specID] = {} } or {},
         currentSpecID = specID,
         currentSpecRatings = specRatings,

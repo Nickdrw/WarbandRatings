@@ -168,6 +168,7 @@ local mainWindowNeedsInitialCenter
 local UpdateMainDockFrameSize
 local UpdateSettingsTabs
 local UpdateFilterPresetButtons
+UI.TableSort = UI.TableSort or { key = "character", direction = "asc" }
 
 local function GetActiveTheme()
     local key = WarbandRatingsDB and WarbandRatingsDB.settings and WarbandRatingsDB.settings.themeKey or DEFAULT_THEME_KEY
@@ -1589,6 +1590,171 @@ local function ColWidth(col)
     return COL_RATING_WIDTH
 end
 
+function UI.TableSort.IsActive(sortKey)
+    return UI.TableSort.key == sortKey
+end
+
+function UI.TableSort.AddArrow(owner, x, direction, theme)
+    local arrow = AcquirePooledCell(owner, "sortArrow", function()
+        return owner:CreateTexture(nil, "OVERLAY")
+    end)
+
+    arrow:SetSize(12, 12)
+    arrow:SetPoint("LEFT", owner, "LEFT", x, 0)
+    arrow:SetTexture(direction == "asc" and "Interface\\Buttons\\Arrow-Up-Up" or "Interface\\Buttons\\Arrow-Down-Up")
+    arrow:SetVertexColor(theme.headerText[1], theme.headerText[2], theme.headerText[3], theme.headerText[4] or 1)
+    arrow:Show()
+end
+
+function UI.TableSort.AddTextArrow(owner, sortKey, x, width, fontString, justifyH, theme)
+    if not UI.TableSort.IsActive(sortKey) then return end
+
+    local textWidth = math.min(math.ceil(fontString:GetStringWidth()), math.max(width - 14, 0))
+    local arrowX
+    if justifyH == "LEFT" then
+        arrowX = x + textWidth + 6
+    else
+        arrowX = x + (width + textWidth) / 2 + 4
+    end
+    arrowX = math.min(arrowX, x + width - 10)
+    UI.TableSort.AddArrow(owner, arrowX, UI.TableSort.direction, theme)
+end
+
+function UI.TableSort.CompareText(a, b, ascending)
+    local textA = string.lower(tostring(a or ""))
+    local textB = string.lower(tostring(b or ""))
+    if textA ~= textB then
+        if ascending then
+            return textA < textB
+        end
+        return textA > textB
+    end
+    return nil
+end
+
+function UI.TableSort.CompareNumber(a, b, ascending)
+    local valueA = tonumber(a)
+    local valueB = tonumber(b)
+
+    if valueA and valueB then
+        if valueA ~= valueB then
+            if ascending then
+                return valueA < valueB
+            end
+            return valueA > valueB
+        end
+        return nil
+    elseif valueA then
+        return true
+    elseif valueB then
+        return false
+    end
+    return nil
+end
+
+function UI.TableSort.CompareCharacter(a, b, direction)
+    if not a then return false end
+    if not b then return true end
+
+    local ascending = direction ~= "desc"
+    local charA = a.charData or {}
+    local charB = b.charData or {}
+    local result = UI.TableSort.CompareText(charA.classFilename, charB.classFilename, ascending)
+    if result ~= nil then return result end
+
+    result = UI.TableSort.CompareText(charA.name, charB.name, ascending)
+    if result ~= nil then return result end
+
+    result = UI.TableSort.CompareText(charA.realm, charB.realm, ascending)
+    if result ~= nil then return result end
+
+    return (charA.level or 0) > (charB.level or 0)
+end
+
+function UI.TableSort.GetColumnValue(group, col)
+    if not group or not col then return nil end
+
+    local charData = group.charData or {}
+
+    if Database.IsSpecColumn(col) then
+        local bestValue
+        for _, specID in ipairs(group.specs or {}) do
+            local specRatings = charData.specRatings and charData.specRatings[specID]
+            local value = specRatings and tonumber(specRatings[col.key])
+            if value and value > 0 and (not bestValue or value > bestValue) then
+                bestValue = value
+            end
+        end
+        return bestValue
+    end
+
+    local value = charData.ratings and tonumber(charData.ratings[col.key])
+    if value and value > 0 then
+        return value
+    end
+    return nil
+end
+
+function UI.TableSort.CompareColumn(a, b, col, direction)
+    local result = UI.TableSort.CompareNumber(
+        UI.TableSort.GetColumnValue(a, col),
+        UI.TableSort.GetColumnValue(b, col),
+        direction == "asc"
+    )
+    if result ~= nil then return result end
+    return UI.TableSort.CompareCharacter(a, b, "asc")
+end
+
+function UI.TableSort.FindVisibleColumn(columns)
+    if UI.TableSort.key == "character" then return nil end
+
+    for _, col in ipairs(columns) do
+        if col.key == UI.TableSort.key and not col.crests then
+            return col
+        end
+    end
+    return nil
+end
+
+function UI.TableSort.SortGroups(groups, columns)
+    local sortCol = UI.TableSort.FindVisibleColumn(columns)
+    if UI.TableSort.key ~= "character" and not sortCol then
+        UI.TableSort.key = "character"
+        UI.TableSort.direction = "asc"
+    end
+
+    if UI.TableSort.key == "character" then
+        table.sort(groups, function(a, b)
+            return UI.TableSort.CompareCharacter(a, b, UI.TableSort.direction)
+        end)
+    else
+        table.sort(groups, function(a, b)
+            return UI.TableSort.CompareColumn(a, b, sortCol, UI.TableSort.direction)
+        end)
+    end
+end
+
+function UI.TableSort.Set(sortKey)
+    if UI.TableSort.key == sortKey then
+        UI.TableSort.direction = UI.TableSort.direction == "asc" and "desc" or "asc"
+    else
+        UI.TableSort.key = sortKey
+        UI.TableSort.direction = sortKey == "character" and "asc" or "desc"
+    end
+    UI.RefreshTable()
+end
+
+function UI.TableSort.AddHeaderOverlay(x, w, sortKey)
+    local overlay = AcquireOverlay(headerRow)
+    overlay:SetPoint("LEFT", headerRow, "LEFT", x, 0)
+    overlay:SetSize(w, HEADER_HEIGHT)
+    overlay:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" then
+            UI.TableSort.Set(sortKey)
+        end
+    end)
+end
+
 local function GetRatingTextY(subY)
     return subY - (SUBROW_HEIGHT - RATING_TEXT_HEIGHT) / 2
 end
@@ -1701,6 +1867,9 @@ local function ClearGraphDrawings()
     if graphPanel.lines then
         for _, line in ipairs(graphPanel.lines) do
             line:Hide()
+            if line.ClearAllPoints then
+                line:ClearAllPoints()
+            end
         end
     end
 
@@ -1708,11 +1877,15 @@ local function ClearGraphDrawings()
     if graphPanel.dots then
         for _, dot in ipairs(graphPanel.dots) do
             dot:Hide()
+            dot:ClearAllPoints()
         end
     end
 
     if graphPanel.hoverLine then
         graphPanel.hoverLine:Hide()
+        if graphPanel.hoverLine.ClearAllPoints then
+            graphPanel.hoverLine:ClearAllPoints()
+        end
     end
     if graphPanel.hoverRatingDot then
         graphPanel.hoverRatingDot:Hide()
@@ -1803,6 +1976,9 @@ local function AddGraphLine(x1, y1, x2, y2, r, g, b, alpha, thickness)
         graphPanel.lines[graphPanel.lineIndex] = line
     end
 
+    if line.ClearAllPoints then
+        line:ClearAllPoints()
+    end
     line:SetColorTexture(r, g, b, alpha or 1)
     line:SetThickness(thickness or 2)
     line:SetStartPoint("TOPLEFT", drawLayer, x1, -y1)
@@ -1843,6 +2019,148 @@ local function FormatTooltipNumber(value)
     end
 
     return sign .. left .. (num:reverse():gsub("(%d%d%d)", "%1,"):reverse()) .. right
+end
+
+UI.PVPTooltip = UI.PVPTooltip or {
+    titles = {
+        soloShuffle = "Solo Shuffle",
+        soloBG = "Solo Battlegrounds",
+        arena2v2 = "2v2 Arena Battles",
+        arena3v3 = "3v3 Arena Battles",
+        rbg10v10 = "10v10 Rated Battlegrounds",
+    },
+}
+
+function UI.PVPTooltip.GetStats(charData, specID, col)
+    if Database.IsSpecColumn(col) then
+        local specStats = charData.specPVPStats and charData.specPVPStats[specID]
+        return specStats and specStats[col.key]
+    end
+    return charData.pvpStats and charData.pvpStats[col.key]
+end
+
+function UI.PVPTooltip.GetRating(charData, specID, col, stats)
+    if stats and stats.rating and stats.rating > 0 then
+        return stats.rating
+    end
+
+    if Database.IsSpecColumn(col) then
+        local specRatings = charData.specRatings and charData.specRatings[specID]
+        return specRatings and specRatings[col.key]
+    end
+    return charData.ratings and charData.ratings[col.key]
+end
+
+function UI.PVPTooltip.GetMMR(charData, specID, col)
+    if Database.IsSpecColumn(col) then
+        local specMMR = charData.specLastMMR and charData.specLastMMR[specID]
+        return specMMR and specMMR[col.key]
+    end
+    return charData.lastMMR and charData.lastMMR[col.key]
+end
+
+function UI.PVPTooltip.GetSpecName(specID)
+    specID = tonumber(specID)
+    if not specID or specID <= 0 then return nil end
+
+    local _, name = GetSpecializationInfoByID(specID)
+    return name
+end
+
+function UI.PVPTooltip.ColorName(charData)
+    local r, g, b = Utils.GetClassColor(charData.classFilename)
+    return string.format(
+        "|cff%02x%02x%02x%s|r",
+        math.floor(r * 255 + 0.5),
+        math.floor(g * 255 + 0.5),
+        math.floor(b * 255 + 0.5),
+        charData.name or "?"
+    )
+end
+
+function UI.PVPTooltip.GetTitle(charData, specID, col)
+    local prefix = ""
+    if Database.IsSpecColumn(col) then
+        local specIcon = Utils.GetSpecIcon(specID)
+        if specIcon then
+            prefix = "|T" .. specIcon .. ":14:14:0:0|t "
+        end
+    end
+    return prefix .. UI.PVPTooltip.ColorName(charData) .. "'s " .. (UI.PVPTooltip.titles[col.key] or col.label)
+end
+
+function UI.PVPTooltip.AddStatsBlock(title, best, won, played, unitLabel, mostPlayedSpecID, mostPlayedCount)
+    unitLabel = unitLabel or "Games"
+    GameTooltip:AddLine(title, 1, 0.82, 0)
+    GameTooltip:AddDoubleLine("Best Rating:", FormatTooltipNumber(best), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine(unitLabel .. " Won:", FormatTooltipNumber(won), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine(unitLabel .. " Played:", FormatTooltipNumber(played), 1, 1, 1, 1, 1, 1)
+
+    local mostPlayedSpecName = UI.PVPTooltip.GetSpecName(mostPlayedSpecID)
+    mostPlayedCount = tonumber(mostPlayedCount) or 0
+    if mostPlayedSpecName and mostPlayedCount > 0 then
+        GameTooltip:AddDoubleLine("Most Played:", mostPlayedSpecName .. " (" .. FormatTooltipNumber(mostPlayedCount) .. ")", 1, 1, 1, 1, 1, 1)
+    end
+end
+
+function UI.PVPTooltip.Show(owner, charData, specID, col)
+    if not Database.IsPVPColumn(col) then return false end
+
+    local theme = GetActiveTheme()
+    local stats = UI.PVPTooltip.GetStats(charData, specID, col)
+    local rating = UI.PVPTooltip.GetRating(charData, specID, col, stats)
+    local mmr = UI.PVPTooltip.GetMMR(charData, specID, col)
+    GameTooltip:SetOwner(owner, "ANCHOR_TOP")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(UI.PVPTooltip.GetTitle(charData, specID, col), 1, 0.82, 0)
+
+    if not Utils.IsEmptyRating(rating) then
+        GameTooltip:AddDoubleLine("Current Rating:", FormatTooltipNumber(rating), 1, 1, 1, 1, 1, 1)
+    end
+    if not Utils.IsEmptyRating(mmr) then
+        local mmrLabel = Database.IsSpecColumn(col) and "Current MMR:" or "Last MMR:"
+        GameTooltip:AddDoubleLine(mmrLabel, FormatTooltipNumber(mmr), 1, 1, 1, 1, 1, 1)
+    end
+
+    if stats then
+        local useRounds = col.key == "soloShuffle"
+        local unitLabel = useRounds and "Rounds" or "Games"
+        local weeklyWon = useRounds and stats.roundsWeeklyWon or stats.weeklyWon
+        local weeklyPlayed = useRounds and stats.roundsWeeklyPlayed or stats.weeklyPlayed
+        local seasonWon = useRounds and stats.roundsSeasonWon or stats.seasonWon
+        local seasonPlayed = useRounds and stats.roundsSeasonPlayed or stats.seasonPlayed
+        local mostPlayedWeeklySpecID = not Database.IsSpecColumn(col) and stats.weeklyMostPlayedSpecID or nil
+        local mostPlayedWeeklyCount = not Database.IsSpecColumn(col) and stats.weeklyMostPlayedSpecCount or nil
+        local mostPlayedSeasonSpecID = not Database.IsSpecColumn(col) and stats.seasonMostPlayedSpecID or nil
+        local mostPlayedSeasonCount = not Database.IsSpecColumn(col) and stats.seasonMostPlayedSpecCount or nil
+
+        GameTooltip:AddLine(" ")
+        UI.PVPTooltip.AddStatsBlock(
+            "Weekly Stats",
+            stats.weeklyBest,
+            weeklyWon,
+            weeklyPlayed,
+            unitLabel,
+            mostPlayedWeeklySpecID,
+            mostPlayedWeeklyCount
+        )
+        GameTooltip:AddLine(" ")
+        UI.PVPTooltip.AddStatsBlock(
+            "Season Stats",
+            stats.seasonBest,
+            seasonWon,
+            seasonPlayed,
+            unitLabel,
+            mostPlayedSeasonSpecID,
+            mostPlayedSeasonCount
+        )
+    else
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Log in on this character to record weekly and season stats.", theme.muted[1], theme.muted[2], theme.muted[3], true)
+    end
+
+    GameTooltip:Show()
+    return true
 end
 
 local function GetHistoryPointTime(point)
@@ -2004,6 +2322,9 @@ local function HideGraphHover()
 
     if graphPanel.hoverLine then
         graphPanel.hoverLine:Hide()
+        if graphPanel.hoverLine.ClearAllPoints then
+            graphPanel.hoverLine:ClearAllPoints()
+        end
     end
     if graphPanel.hoverRatingDot then
         graphPanel.hoverRatingDot:Hide()
@@ -2098,6 +2419,9 @@ local function UpdateGraphHover()
     local hoverLayer = EnsureGraphHoverLayer()
     SetTextureColor(graphPanel.hoverLine, theme.text, 0.55)
     graphPanel.hoverLine:SetThickness(1.5)
+    if graphPanel.hoverLine.ClearAllPoints then
+        graphPanel.hoverLine:ClearAllPoints()
+    end
     graphPanel.hoverLine:SetStartPoint("TOPLEFT", hoverLayer, pointX, -plotTop)
     graphPanel.hoverLine:SetEndPoint("TOPLEFT", hoverLayer, pointX, -plotBottom)
     graphPanel.hoverLine:Show()
@@ -2751,11 +3075,15 @@ local function AddHistoryClickOverlay(row, x, y, w, h, charData, specID, col)
         SetRowHovered(row, true)
         overlay.historyHovered = true
         UpdateHistoryCellAffordance(overlay, true)
+        UI.PVPTooltip.Show(overlay, charData, specID, col)
     end)
     overlay:SetScript("OnLeave", function()
         SetRowHovered(row, false)
         overlay.historyHovered = false
         UpdateHistoryCellAffordance(overlay, false)
+        if GameTooltip:IsOwned(overlay) then
+            GameTooltip:Hide()
+        end
     end)
     overlay:SetScript("OnMouseUp", function(_, button)
         if button == "LeftButton" then
@@ -2824,6 +3152,7 @@ function UI.RefreshTable()
 
     local groups = Database.GetFilteredCharacterGroups()
     local columns = Database.GetVisibleColumns(groups)
+    UI.TableSort.SortGroups(groups, columns)
     local theme = GetActiveTheme()
     UI.ApplyTheme()
 
@@ -2836,9 +3165,11 @@ function UI.RefreshTable()
         fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
         fs:SetWidth(COL_NAME_WIDTH)
         fs:SetJustifyH("LEFT")
-        fs:SetText("Character")
+        fs:SetText("Class / Character")
         SetFontColor(fs, theme.headerText)
         fs:Show()
+        UI.TableSort.AddTextArrow(headerRow, "character", hx, COL_NAME_WIDTH, fs, "LEFT", theme)
+        UI.TableSort.AddHeaderOverlay(hx, COL_NAME_WIDTH, "character")
         hx = hx + COL_NAME_WIDTH
     end
     for _, col in ipairs(columns) do
@@ -2848,11 +3179,16 @@ function UI.RefreshTable()
             local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(col.currencyID)
             local iconID = info and info.iconFileID
             if iconID then
+                local hasArrow = UI.TableSort.IsActive(col.key)
+                local iconX = hx + (w - (hasArrow and 32 or 20)) / 2
                 local ico = AcquireTexture(headerRow, "OVERLAY")
                 ico:SetSize(20, 20)
-                ico:SetPoint("LEFT", headerRow, "LEFT", hx + (w - 20) / 2, 0)
+                ico:SetPoint("LEFT", headerRow, "LEFT", iconX, 0)
                 ico:SetTexture(iconID)
                 ico:Show()
+                if hasArrow then
+                    UI.TableSort.AddArrow(headerRow, iconX + 24, UI.TableSort.direction, theme)
+                end
             else
                 local fs = AcquireFontString(headerRow, "GameFontNormal")
                 fs:SetPoint("LEFT", headerRow, "LEFT", hx, 0)
@@ -2861,7 +3197,9 @@ function UI.RefreshTable()
                 fs:SetText(col.label)
                 SetFontColor(fs, theme.headerText)
                 fs:Show()
+                UI.TableSort.AddTextArrow(headerRow, col.key, hx, w, fs, "CENTER", theme)
             end
+            UI.TableSort.AddHeaderOverlay(hx, w, col.key)
         elseif col.crests then
             -- Render crest icons in header (highest to lowest, skip lowest tier)
             local iconSize = 16
@@ -2891,6 +3229,8 @@ function UI.RefreshTable()
             fs:SetText(col.label)
             SetFontColor(fs, theme.headerText)
             fs:Show()
+            UI.TableSort.AddTextArrow(headerRow, col.key, hx, w, fs, "CENTER", theme)
+            UI.TableSort.AddHeaderOverlay(hx, w, col.key)
         end
         hx = hx + w
     end

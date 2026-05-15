@@ -2,8 +2,14 @@ local _, ns = ...
 local Database = ns.Database
 local DataCollection = ns.DataCollection
 local History = ns.History
-local UI = ns.UI
 local SPEC_RATED_INFO_REQUEST_DELAY = 1
+
+local function CallUI(method, ...)
+    local UI = ns.UI
+    if UI and UI[method] then
+        return UI[method](...)
+    end
+end
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -21,7 +27,7 @@ local function TryCollectLastMatchMMRWithRetries(recordHistory)
     for _, delay in ipairs(delays) do
         C_Timer.After(delay, function()
             if DataCollection.CollectLastMatchMMR(recordHistory) then
-                UI.RefreshTable()
+                CallUI("RefreshTable")
             end
         end)
     end
@@ -38,13 +44,13 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         -- Collect after a short delay to let PvP data load
         C_Timer.After(3, function()
             DataCollection.CollectCurrentCharacter()
-            UI.RefreshTable()
+            CallUI("RefreshTable")
         end)
 
-        UI.AttachGroupFinderButtons()
-        UI.CreateMinimapButton()
-        UI.RegisterAddonSettings()
-        UI.UpdateCompartmentVisibility()
+        CallUI("AttachGroupFinderButtons")
+        CallUI("CreateMinimapButton")
+        CallUI("RegisterAddonSettings")
+        CallUI("UpdateCompartmentVisibility")
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- Request achievement/statistics data from server so GetStatistic() returns real values.
@@ -61,7 +67,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
     elseif event == "CRITERIA_UPDATE" then
         -- Statistics are now available from the server; update HK and other stat columns.
         DataCollection.CollectCurrentCharacter()
-        UI.RefreshTable()
+        CallUI("RefreshTable")
 
     elseif event == "PVP_RATED_STATS_UPDATE" then
         DataCollection.MarkRatedStatsUpdated()
@@ -69,7 +75,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         -- Re-collect when PvP stats arrive
         C_Timer.After(0.5, function()
             DataCollection.CollectCurrentCharacter()
-            UI.RefreshTable()
+            CallUI("RefreshTable")
         end)
 
         TryCollectLastMatchMMRWithRetries(true)
@@ -84,7 +90,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         -- until PVP_RATED_STATS_UPDATE confirms the active spec's rated cache.
         C_Timer.After(0.5, function()
             DataCollection.CollectCurrentCharacter()
-            UI.RefreshTable()
+            CallUI("RefreshTable")
         end)
 
     elseif event == "UPDATE_BATTLEFIELD_SCORE" then
@@ -109,12 +115,12 @@ end)
 SLASH_WARBANDRATINGS1 = "/warbandratings"
 SLASH_WARBANDRATINGS2 = "/wr"
 SlashCmdList["WARBANDRATINGS"] = function()
-    UI.Toggle()
+    CallUI("Toggle")
 end
 
 -- Addon Compartment callbacks
 function WarbandRatings_OnAddonCompartmentClick()
-    UI.Toggle()
+    CallUI("Toggle")
 end
 
 function WarbandRatings_OnAddonCompartmentEnter(_, btn)
