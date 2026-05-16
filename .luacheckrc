@@ -12,6 +12,7 @@ read_globals = {
     "PVPUIFrame",
     "ChallengesFrame",
     "Minimap",
+    "MerchantFrame",
     "GameTooltip",
     "GetCursorPosition",
     "IsMouseButtonDown",
@@ -56,6 +57,20 @@ read_globals = {
 
     -- Currency
     "C_CurrencyInfo",
+
+    -- Items & merchants
+    "C_Item",
+    "C_Container",
+    "C_MerchantFrame",
+    "Enum",
+    "GetItemCount",
+    "GetMerchantNumItems",
+    "GetMerchantItemInfo",
+    "GetMerchantItemID",
+    "GetMerchantItemLink",
+    "GetMerchantItemCostInfo",
+    "GetMerchantItemCostItem",
+    "BuyMerchantItem",
 
     -- Misc
     "C_Timer",

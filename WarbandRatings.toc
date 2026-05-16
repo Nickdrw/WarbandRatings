@@ -14,5 +14,6 @@ Database.lua
 History.lua
 DataProvider.lua
 DataCollection.lua
+Merchant.lua
 UI.lua
 Core.lua

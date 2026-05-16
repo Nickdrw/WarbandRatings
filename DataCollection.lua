@@ -9,6 +9,14 @@ local lastKnownRatedBracketTime
 local ratedStatsSpecID
 local ratedStatsRequestedSpecID
 
+local ACCOUNT_BANK_BAG_IDS = {
+    12,
+    13,
+    14,
+    15,
+    16,
+}
+
 local function GetCurrentCharacterIdentity()
     local name = UnitName("player")
     local realm = GetNormalizedRealmName() or GetRealmName():gsub("%s", "")
@@ -74,6 +82,68 @@ local function CollectPVPBracketInfo(bracketIndex, isMaxLevel, colKey)
     }
     AddPVPBracketSpecStats(stats, colKey)
     return rating, stats
+end
+
+local function GetItemCount(itemID, includeBank, includeUses, includeReagentBank, includeAccountBank)
+    if C_Item and C_Item.GetItemCount then
+        return tonumber(C_Item.GetItemCount(itemID, includeBank, includeUses, includeReagentBank, includeAccountBank)) or 0
+    elseif _G.GetItemCount then
+        return tonumber(_G.GetItemCount(itemID, includeBank, includeUses)) or 0
+    end
+    return 0
+end
+
+local function GetCharacterHeliotropeCount()
+    return GetItemCount(Database.HELIOTROPE_ITEM_ID, true, false, true, false)
+end
+
+local function GetAccountBankBagIDs()
+    local bagIndex = Enum and Enum.BagIndex
+    if not bagIndex or not bagIndex.AccountBankTab_1 then
+        return ACCOUNT_BANK_BAG_IDS
+    end
+
+    return {
+        bagIndex.AccountBankTab_1,
+        bagIndex.AccountBankTab_2,
+        bagIndex.AccountBankTab_3,
+        bagIndex.AccountBankTab_4,
+        bagIndex.AccountBankTab_5,
+    }
+end
+
+local function GetContainerItemID(itemInfo)
+    if not itemInfo then return nil end
+    if itemInfo.itemID then return itemInfo.itemID end
+    return itemInfo.hyperlink and tonumber(itemInfo.hyperlink:match("item:(%d+)"))
+end
+
+function DataCollection.ScanWarbandBankHeliotrope()
+    if not C_Container or not C_Container.GetContainerNumSlots or not C_Container.GetContainerItemInfo then
+        return false
+    end
+
+    local total = 0
+    local scanned = false
+    for _, bagID in ipairs(GetAccountBankBagIDs()) do
+        if bagID then
+            local slots = tonumber(C_Container.GetContainerNumSlots(bagID)) or 0
+            if slots > 0 then
+                scanned = true
+                for slot = 1, slots do
+                    local itemInfo = C_Container.GetContainerItemInfo(bagID, slot)
+                    if GetContainerItemID(itemInfo) == Database.HELIOTROPE_ITEM_ID then
+                        total = total + (tonumber(itemInfo.stackCount) or 1)
+                    end
+                end
+            end
+        end
+    end
+
+    if scanned then
+        Database.SaveWarbandItemCount(Database.HELIOTROPE_ITEM_ID, total)
+    end
+    return scanned
 end
 
 function DataCollection.MarkRatedStatsStale()
@@ -198,6 +268,9 @@ function DataCollection.CollectCurrentCharacter()
         level = level,
         ratings = globalRatings,
         pvpStats = globalPVPStats,
+        itemCounts = {
+            [Database.HELIOTROPE_ITEM_ID] = GetCharacterHeliotropeCount(),
+        },
         lastMMR = {},
         specRatings = specRatings and { [specID] = specRatings } or {},
         specPVPStats = specPVPStats and { [specID] = specPVPStats } or {},

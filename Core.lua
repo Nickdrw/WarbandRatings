@@ -20,6 +20,10 @@ eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 eventFrame:RegisterEvent("PVP_MATCH_COMPLETE")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+eventFrame:RegisterEvent("BANKFRAME_OPENED")
+eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+eventFrame:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED")
 eventFrame:RegisterEvent("SAVED_VARIABLES_TOO_LARGE")
 
 local function TryCollectLastMatchMMRWithRetries(recordHistory)
@@ -33,6 +37,12 @@ local function TryCollectLastMatchMMRWithRetries(recordHistory)
     end
 end
 
+local function RefreshHeliotropeCounts()
+    DataCollection.CollectCurrentCharacter()
+    DataCollection.ScanWarbandBankHeliotrope()
+    CallUI("RefreshHeliotropeCounter")
+end
+
 eventFrame:SetScript("OnEvent", function(_, event, addOnName)
     if event == "PLAYER_LOGIN" then
         Database.Init()
@@ -44,6 +54,7 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         -- Collect after a short delay to let PvP data load
         C_Timer.After(3, function()
             DataCollection.CollectCurrentCharacter()
+            DataCollection.ScanWarbandBankHeliotrope()
             CallUI("RefreshTable")
         end)
 
@@ -92,6 +103,15 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
             DataCollection.CollectCurrentCharacter()
             CallUI("RefreshTable")
         end)
+
+    elseif event == "BAG_UPDATE_DELAYED"
+        or event == "BANKFRAME_OPENED"
+        or event == "PLAYERBANKSLOTS_CHANGED"
+        or event == "PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED" then
+        RefreshHeliotropeCounts()
+        if event == "BANKFRAME_OPENED" then
+            C_Timer.After(0.5, RefreshHeliotropeCounts)
+        end
 
     elseif event == "UPDATE_BATTLEFIELD_SCORE" then
         DataCollection.UpdateActivePVPContext()

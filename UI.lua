@@ -61,6 +61,10 @@ local MMR_GRAPH_B = 0.82
 local THEME_BUTTON_WIDTH = 184
 local THEME_BUTTON_HEIGHT = 26
 local DEFAULT_THEME_KEY = "obsidian"
+local HONOR_WARNING_THRESHOLD = 13000
+local HONOR_CAP_THRESHOLD = 15000
+local HONOR_WARNING_COLOR = { 1.000, 0.560, 0.120, 1 }
+local HONOR_CAP_COLOR = { 1.000, 0.180, 0.140, 1 }
 
 local THEME_PRESETS = {
     {
@@ -158,6 +162,7 @@ local HISTORY_FIELD_MMR_IS_POSTMATCH = 7
 
 local mainDockFrame, mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel
 local selectedGraph
+local heliotropeCounter
 local rowFrames = {}
 local minimapButton
 local themeButtons = {}
@@ -175,6 +180,10 @@ local function GetActiveTheme()
     return THEME_BY_KEY[key] or THEME_BY_KEY[DEFAULT_THEME_KEY] or THEME_PRESETS[1]
 end
 
+function UI.GetActiveTheme()
+    return GetActiveTheme()
+end
+
 local function SetTextureColor(texture, color, alpha)
     if texture and texture.SetColorTexture and color then
         texture:SetColorTexture(color[1], color[2], color[3], alpha or color[4] or 1)
@@ -185,6 +194,18 @@ local function SetFontColor(fontString, color, alpha)
     if fontString and fontString.SetTextColor and color then
         fontString:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
     end
+end
+
+local function GetGlobalColumnTextColor(col, value, theme)
+    if col.key == "honor" then
+        local honor = tonumber(value) or 0
+        if honor >= HONOR_CAP_THRESHOLD then
+            return HONOR_CAP_COLOR
+        elseif honor >= HONOR_WARNING_THRESHOLD then
+            return HONOR_WARNING_COLOR
+        end
+    end
+    return Utils.IsEmptyRating(value) and theme.muted or theme.text
 end
 
 local function GetDockedGraphHeight()
@@ -957,6 +978,10 @@ function UI.ApplyTheme()
         end
     end
 
+    if heliotropeCounter then
+        SetFontColor(heliotropeCounter.text, theme.text)
+    end
+
     if graphPanel then
         ApplyPanelTheme(graphPanel, theme.surface, theme.border)
         if selectedGraph and graphPanel.characterTitle then
@@ -993,6 +1018,9 @@ function UI.ApplyTheme()
 
     UpdateThemeSelector()
     RefreshHistoryCellAffordances()
+    if ns.Merchant and ns.Merchant.ApplyTheme then
+        ns.Merchant.ApplyTheme()
+    end
 end
 
 ------------------------------------------------------------
@@ -1035,10 +1063,73 @@ local function CreateMainResizeGrip()
     mainFrame.resizeGrip = grip
 end
 
+local function GetHeliotropeIcon()
+    if C_Item and C_Item.GetItemIconByID then
+        return C_Item.GetItemIconByID(Database.HELIOTROPE_ITEM_ID)
+    elseif C_Item and C_Item.GetItemInfoInstant then
+        local _, _, _, _, icon = C_Item.GetItemInfoInstant(Database.HELIOTROPE_ITEM_ID)
+        return icon
+    end
+    return nil
+end
+
+local function ShowHeliotropeTooltip(owner)
+    local total, entries = Database.GetItemWarbandSummary(Database.HELIOTROPE_ITEM_ID)
+
+    GameTooltip:SetOwner(owner, "ANCHOR_TOP")
+    GameTooltip:ClearLines()
+    GameTooltip:AddDoubleLine("Warband total", Utils.FormatNumber(total), 1, 0.82, 0, 1, 1, 1)
+
+    for _, entry in ipairs(entries) do
+        if entry.classFilename then
+            local r, g, b = Utils.GetClassColor(entry.classFilename)
+            GameTooltip:AddDoubleLine(entry.label, Utils.FormatNumber(entry.quantity), r, g, b, 1, 1, 1)
+        else
+            GameTooltip:AddDoubleLine(entry.label, Utils.FormatNumber(entry.quantity), 0.8, 0.8, 0.8, 1, 1, 1)
+        end
+    end
+
+    GameTooltip:Show()
+end
+
+function UI.RefreshHeliotropeCounter()
+    if not heliotropeCounter then return end
+
+    local total = Database.GetItemWarbandSummary(Database.HELIOTROPE_ITEM_ID)
+    heliotropeCounter.text:SetText(Utils.FormatNumber(total))
+    heliotropeCounter.icon:SetTexture(GetHeliotropeIcon())
+end
+
+local function CreateHeliotropeCounter(settingsBtn)
+    if heliotropeCounter then return end
+
+    heliotropeCounter = CreateFrame("Frame", "WarbandRatingsHeliotropeCounter", mainFrame)
+    heliotropeCounter:SetSize(74, 20)
+    heliotropeCounter:SetPoint("RIGHT", settingsBtn, "LEFT", -6, 0)
+    heliotropeCounter:EnableMouse(true)
+    heliotropeCounter:SetScript("OnEnter", ShowHeliotropeTooltip)
+    heliotropeCounter:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    heliotropeCounter.icon = heliotropeCounter:CreateTexture(nil, "ARTWORK")
+    heliotropeCounter.icon:SetSize(16, 16)
+    heliotropeCounter.icon:SetPoint("RIGHT", heliotropeCounter, "RIGHT", 0, 0)
+    heliotropeCounter.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    heliotropeCounter.text = heliotropeCounter:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    heliotropeCounter.text:SetPoint("RIGHT", heliotropeCounter.icon, "LEFT", -4, 0)
+    heliotropeCounter.text:SetWidth(54)
+    heliotropeCounter.text:SetJustifyH("RIGHT")
+
+    UI.RefreshHeliotropeCounter()
+end
+
 function UI.CreateMainFrame()
     if mainFrame then return mainFrame end
 
     local settings = WarbandRatingsDB and WarbandRatingsDB.settings
+    UI.TableSort.LoadSettings()
     mainWindowNeedsInitialCenter = true
     mainDockFrame = CreateFrame("Frame", "WarbandRatingsDockFrame", UIParent)
     mainDockFrame:SetSize(WINDOW_WIDTH, ClampWindowHeight(settings and settings.windowHeight))
@@ -1093,6 +1184,7 @@ function UI.CreateMainFrame()
     settingsBtn:SetScript("OnClick", function()
         UI.ToggleSettings()
     end)
+    CreateHeliotropeCounter(settingsBtn)
 
     UI.CreateScrollArea()
     UI.CreateSettingsPanel()
@@ -1594,6 +1686,21 @@ function UI.TableSort.IsActive(sortKey)
     return UI.TableSort.key == sortKey
 end
 
+function UI.TableSort.LoadSettings()
+    local settings = Database.GetSettings()
+    local sortKey = settings.sortKey
+    if type(sortKey) ~= "string" or sortKey == "" then
+        sortKey = "character"
+    end
+    UI.TableSort.key = sortKey
+    UI.TableSort.direction = settings.sortDirection == "desc" and "desc" or "asc"
+end
+
+function UI.TableSort.SaveSettings()
+    Database.SetSetting("sortKey", UI.TableSort.key or "character")
+    Database.SetSetting("sortDirection", UI.TableSort.direction == "desc" and "desc" or "asc")
+end
+
 function UI.TableSort.AddArrow(owner, x, direction, theme)
     local arrow = AcquirePooledCell(owner, "sortArrow", function()
         return owner:CreateTexture(nil, "OVERLAY")
@@ -1721,6 +1828,7 @@ function UI.TableSort.SortGroups(groups, columns)
     if UI.TableSort.key ~= "character" and not sortCol then
         UI.TableSort.key = "character"
         UI.TableSort.direction = "asc"
+        UI.TableSort.SaveSettings()
     end
 
     if UI.TableSort.key == "character" then
@@ -1741,6 +1849,7 @@ function UI.TableSort.Set(sortKey)
         UI.TableSort.key = sortKey
         UI.TableSort.direction = sortKey == "character" and "asc" or "desc"
     end
+    UI.TableSort.SaveSettings()
     UI.RefreshTable()
 end
 
@@ -3149,6 +3258,7 @@ end
 function UI.RefreshTable()
     if not mainFrame or not mainFrame:IsShown() then return end
     ClearRows()
+    UI.RefreshHeliotropeCounter()
 
     local groups = Database.GetFilteredCharacterGroups()
     local columns = Database.GetVisibleColumns(groups)
@@ -3418,7 +3528,7 @@ function UI.RefreshTable()
                     fs:SetWidth(w)
                     fs:SetJustifyH("CENTER")
                     fs:SetText(formatFn(val))
-                    SetFontColor(fs, Utils.IsEmptyRating(val) and theme.muted or theme.text)
+                    SetFontColor(fs, GetGlobalColumnTextColor(col, val, theme))
                     fs:Show()
                     if Database.IsPVPColumn(col) then
                         AddHistoryClickOverlay(row, colX, 0, w, rowHeight, charData, 0, col)

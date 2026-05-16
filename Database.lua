@@ -3,6 +3,10 @@ ns.Database = {}
 local Database = ns.Database
 local Utils = ns.Utils
 
+Database.HELIOTROPE_ITEM_ID = 253307
+Database.HELIOTROPE_NAME = "Infused Heliotrope"
+Database.HELIOTROPE_FALLBACK_HONOR_COST = 2500
+
 -- Rating column definitions.
 -- bracketIndex: index passed to GetPersonalRatedInfo().
 -- Known retail bracket indices (as of TWW / 12.x):
@@ -144,6 +148,8 @@ function Database.Init()
             themeKey = "obsidian",
             graphVisiblePointCount = 50,
             windowHeight = 450,
+            sortKey = "character",
+            sortDirection = "asc",
         }
     end
     if WarbandRatingsDB.settings.themeKey == nil then
@@ -163,6 +169,12 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.hiddenColumns == nil then
         WarbandRatingsDB.settings.hiddenColumns = {}
+    end
+    if WarbandRatingsDB.settings.sortKey == nil then
+        WarbandRatingsDB.settings.sortKey = "character"
+    end
+    if WarbandRatingsDB.settings.sortDirection ~= "asc" and WarbandRatingsDB.settings.sortDirection ~= "desc" then
+        WarbandRatingsDB.settings.sortDirection = "asc"
     end
     Database.Migrate()
 end
@@ -202,6 +214,9 @@ function Database.Migrate()
         end
         if not charData.specLastMMR then
             charData.specLastMMR = {}
+        end
+        if not charData.itemCounts then
+            charData.itemCounts = {}
         end
         NormalizeCharacterSpecData(charData)
     end
@@ -246,6 +261,7 @@ function Database.SaveCharacter(data)
             end
         end
         existing.ratings = data.ratings
+        existing.itemCounts = data.itemCounts or existing.itemCounts or {}
         existing.pvpStats = data.pvpStats or existing.pvpStats or {}
         existing.lastMMR = existing.lastMMR or {}
         if data.lastMMR then
@@ -270,6 +286,58 @@ function Database.SaveCharacter(data)
     else
         WarbandRatingsDB.characters[key] = data
     end
+end
+
+function Database.SaveWarbandItemCount(itemID, quantity)
+    if not WarbandRatingsDB then return end
+
+    WarbandRatingsDB.warbandItemCounts = WarbandRatingsDB.warbandItemCounts or {}
+    WarbandRatingsDB.warbandItemCounts[itemID] = {
+        quantity = tonumber(quantity) or 0,
+        lastUpdated = time(),
+    }
+end
+
+function Database.GetWarbandItemCount(itemID)
+    local item = WarbandRatingsDB
+        and WarbandRatingsDB.warbandItemCounts
+        and WarbandRatingsDB.warbandItemCounts[itemID]
+    return tonumber(item and item.quantity) or 0
+end
+
+function Database.GetItemWarbandSummary(itemID)
+    local total = Database.GetWarbandItemCount(itemID)
+    local entries = {}
+
+    local warbankQuantity = total
+    if warbankQuantity > 0 then
+        entries[#entries + 1] = {
+            label = "Warband Bank",
+            quantity = warbankQuantity,
+            isWarbank = true,
+        }
+    end
+
+    for _, charData in pairs(WarbandRatingsDB and WarbandRatingsDB.characters or {}) do
+        local quantity = tonumber(charData.itemCounts and charData.itemCounts[itemID]) or 0
+        if quantity > 0 then
+            total = total + quantity
+            entries[#entries + 1] = {
+                label = (charData.name or "?") .. "-" .. (charData.realm or "?"),
+                quantity = quantity,
+                classFilename = charData.classFilename,
+            }
+        end
+    end
+
+    table.sort(entries, function(a, b)
+        if a.isWarbank ~= b.isWarbank then
+            return a.isWarbank
+        end
+        return (a.label or "") < (b.label or "")
+    end)
+
+    return total, entries
 end
 
 function Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
