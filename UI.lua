@@ -2549,13 +2549,16 @@ local function UpdateGraphHover()
     GameTooltip:SetOwner(graphPanel.canvas, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine(FormatGraphTimestamp(point), 1, 1, 1)
+    local tooltipRows = {}
     if data.showRating then
-        GameTooltip:AddDoubleLine(
-            "Rating",
-            FormatGraphValue(GetHistoryPointRating(point)) .. FormatGraphDelta(GetHistoryPointRatingDelta(point)),
-            data.ratingColor[1], data.ratingColor[2], data.ratingColor[3],
-            1, 1, 1
-        )
+        local rating = GetHistoryPointRating(point)
+        tooltipRows[#tooltipRows + 1] = {
+            label = "Rating",
+            value = rating,
+            text = FormatGraphValue(rating) .. FormatGraphDelta(GetHistoryPointRatingDelta(point)),
+            color = data.ratingColor,
+            order = 1,
+        }
     end
 
     if data.showMMR then
@@ -2567,10 +2570,31 @@ local function UpdateGraphHover()
                 mmrValue = mmrValue .. FormatGraphDelta(mmr - previousMMR)
             end
         end
+        tooltipRows[#tooltipRows + 1] = {
+            label = "MMR",
+            value = mmr,
+            text = mmrValue,
+            color = data.mmrColor,
+            order = 2,
+        }
+    end
+
+    table.sort(tooltipRows, function(a, b)
+        local valueA = tonumber(a.value)
+        local valueB = tonumber(b.value)
+        if valueA and valueB and valueA ~= valueB then
+            return valueA > valueB
+        end
+        if valueA and not valueB then return true end
+        if valueB and not valueA then return false end
+        return a.order < b.order
+    end)
+
+    for _, row in ipairs(tooltipRows) do
         GameTooltip:AddDoubleLine(
-            "MMR",
-            mmrValue,
-            data.mmrColor[1], data.mmrColor[2], data.mmrColor[3],
+            row.label,
+            row.text,
+            row.color[1], row.color[2], row.color[3],
             1, 1, 1
         )
     end
