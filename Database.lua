@@ -6,6 +6,9 @@ local Utils = ns.Utils
 Database.HELIOTROPE_ITEM_ID = 253307
 Database.HELIOTROPE_NAME = "Infused Heliotrope"
 Database.HELIOTROPE_FALLBACK_HONOR_COST = 2500
+Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID = 256553
+Database.GALACTIC_EQUIPMENT_CHEST_NAME = "Galactic Equipment Chest"
+Database.GALACTIC_EQUIPMENT_CHEST_FALLBACK_CONQUEST_COST = 375
 
 -- Rating column definitions.
 -- bracketIndex: index passed to GetPersonalRatedInfo().

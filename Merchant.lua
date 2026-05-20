@@ -5,12 +5,26 @@ local Database = ns.Database
 local DataCollection = ns.DataCollection
 
 local HONOR_CURRENCY_ID = 1792
-local HELIOTROPE_ITEM_ID = Database.HELIOTROPE_ITEM_ID
-local HELIOTROPE_NAME = Database.HELIOTROPE_NAME
-local HELIOTROPE_FALLBACK_HONOR_COST = Database.HELIOTROPE_FALLBACK_HONOR_COST
+local CONQUEST_CURRENCY_ID = 1602
 local PANEL_WIDTH = 220
 local PANEL_HEIGHT = 114
 local ICON_SIZE = 28
+
+local CURRENCY_DUMP_ITEMS = {
+    {
+        itemID = Database.HELIOTROPE_ITEM_ID,
+        name = Database.HELIOTROPE_NAME,
+        currencyID = HONOR_CURRENCY_ID,
+        fallbackCost = Database.HELIOTROPE_FALLBACK_HONOR_COST,
+    },
+    {
+        itemID = Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID,
+        name = Database.GALACTIC_EQUIPMENT_CHEST_NAME,
+        currencyID = CONQUEST_CURRENCY_ID,
+        fallbackCost = Database.GALACTIC_EQUIPMENT_CHEST_FALLBACK_CONQUEST_COST,
+        confirmEachPurchase = true,
+    },
+}
 
 local fallbackTheme = {
     surface = { 0.055, 0.064, 0.078, 0.96 },
@@ -90,14 +104,20 @@ end
 
 Merchant.ApplyTheme = ApplyPanelTheme
 
-local function GetHonorQuantity()
-    local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(HONOR_CURRENCY_ID)
+local function GetCurrencyInfo(currencyID)
+    if C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo then
+        return C_CurrencyInfo.GetCurrencyInfo(currencyID)
+    end
+end
+
+local function GetCurrencyQuantity(currencyID)
+    local info = GetCurrencyInfo(currencyID)
     return tonumber(info and info.quantity) or 0
 end
 
-local function GetHonorName()
-    local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(HONOR_CURRENCY_ID)
-    return info and info.name or "Honor"
+local function GetCurrencyName(currencyID)
+    local info = GetCurrencyInfo(currencyID)
+    return info and info.name or "Currency"
 end
 
 local function GetItemInfo(index)
@@ -134,16 +154,16 @@ local function GetItemID(index)
     return link and tonumber(link:match("item:(%d+)"))
 end
 
-local function GetHonorCost(index, itemInfo)
-    if itemInfo and itemInfo.currencyID == HONOR_CURRENCY_ID then
+local function GetCurrencyCost(index, itemInfo, currencyID)
+    if itemInfo and tonumber(itemInfo.currencyID) == currencyID then
         return tonumber(itemInfo.price) or 0
     end
 
-    local honorName = GetHonorName()
+    local currencyName = GetCurrencyName(currencyID)
     local costCount = GetMerchantItemCostInfo and GetMerchantItemCostItem and GetMerchantItemCostInfo(index) or 0
     for costIndex = 1, costCount do
-        local _, amount, itemLink, currencyName = GetMerchantItemCostItem(index, costIndex)
-        if not itemLink and currencyName == honorName then
+        local _, amount, itemLink, costCurrencyName = GetMerchantItemCostItem(index, costIndex)
+        if not itemLink and costCurrencyName == currencyName then
             return tonumber(amount) or 0
         end
     end
@@ -151,21 +171,27 @@ local function GetHonorCost(index, itemInfo)
     return 0
 end
 
-local function FindHeliotrope()
+local function FindCurrencyDumpItem()
     local numItems = GetMerchantNumItems and GetMerchantNumItems() or 0
     for index = 1, numItems do
         local itemInfo = GetItemInfo(index)
-        if itemInfo and (GetItemID(index) == HELIOTROPE_ITEM_ID or itemInfo.name == HELIOTROPE_NAME) then
-            local honorCost = GetHonorCost(index, itemInfo)
-            return {
-                index = index,
-                name = itemInfo.name or HELIOTROPE_NAME,
-                cost = honorCost > 0 and honorCost or HELIOTROPE_FALLBACK_HONOR_COST,
-                costDetected = honorCost > 0,
-                texture = itemInfo.texture,
-                available = tonumber(itemInfo.numAvailable) or -1,
-                purchasable = itemInfo.isPurchasable ~= false,
-            }
+        local itemID = itemInfo and GetItemID(index)
+        for _, dumpItem in ipairs(CURRENCY_DUMP_ITEMS) do
+            if itemInfo and (itemID == dumpItem.itemID or itemInfo.name == dumpItem.name) then
+                local currencyCost = GetCurrencyCost(index, itemInfo, dumpItem.currencyID)
+                return {
+                    index = index,
+                    itemID = dumpItem.itemID,
+                    name = itemInfo.name or dumpItem.name,
+                    currencyID = dumpItem.currencyID,
+                    cost = currencyCost > 0 and currencyCost or dumpItem.fallbackCost,
+                    costDetected = currencyCost > 0,
+                    confirmEachPurchase = dumpItem.confirmEachPurchase,
+                    texture = itemInfo.texture,
+                    available = tonumber(itemInfo.numAvailable) or -1,
+                    purchasable = itemInfo.isPurchasable ~= false,
+                }
+            end
         end
     end
 end
@@ -173,18 +199,25 @@ end
 local function GetPurchaseState()
     if not MerchantFrame or not MerchantFrame:IsShown() then return nil end
 
-    local item = FindHeliotrope()
-    if not item then return nil end
+    local item = FindCurrencyDumpItem()
+    if not item or not item.cost or item.cost <= 0 then return nil end
 
-    local honor = GetHonorQuantity()
-    local quantity = math.floor(honor / item.cost)
+    local currencyAmount = GetCurrencyQuantity(item.currencyID)
+    local quantity = math.floor(currencyAmount / item.cost)
     if item.available >= 0 then
         quantity = math.min(quantity, item.available)
     end
 
-    item.honor = honor
+    item.affordableQuantity = math.max(quantity, 0)
+    if item.confirmEachPurchase then
+        quantity = math.min(quantity, 1)
+    end
+
+    item.currencyAmount = currencyAmount
+    item.currencyName = GetCurrencyName(item.currencyID)
     item.quantity = math.max(quantity, 0)
     item.spend = item.quantity * item.cost
+    item.totalSpend = item.affordableQuantity * item.cost
     return item
 end
 
@@ -208,11 +241,15 @@ local function RefreshCharacterData()
     UpdatePanel()
 end
 
-local function BuyMaxHeliotrope()
+local function BuyMaxCurrencyDumpItem()
     local state = GetPurchaseState()
     if not state or state.quantity <= 0 or not BuyMerchantItem then return end
 
-    BuyMerchantItem(state.index, state.quantity)
+    if state.confirmEachPurchase then
+        BuyMerchantItem(state.index)
+    else
+        BuyMerchantItem(state.index, state.quantity)
+    end
     RefreshSoon()
     if C_Timer and C_Timer.After then
         C_Timer.After(0.3, RefreshCharacterData)
@@ -228,10 +265,19 @@ local function ShowTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine("Warband Ratings")
-    GameTooltip:AddLine("Buys as many Infused Heliotrope as your Honor allows.", 1, 1, 1, true)
-    GameTooltip:AddDoubleLine("Honor:", FormatNumber(state.honor), 1, 0.82, 0, 1, 1, 1)
+    if state.confirmEachPurchase then
+        GameTooltip:AddLine("Requests one copy of " .. state.name .. " per click.", 1, 1, 1, true)
+    else
+        GameTooltip:AddLine("Buys as many copies of " .. state.name .. " as your " .. state.currencyName .. " allows.", 1, 1, 1, true)
+    end
+    GameTooltip:AddDoubleLine(state.currencyName .. ":", FormatNumber(state.currencyAmount), 1, 0.82, 0, 1, 1, 1)
     GameTooltip:AddDoubleLine("Cost each:", FormatNumber(state.cost), 1, 0.82, 0, 1, 1, 1)
-    GameTooltip:AddDoubleLine("Will buy:", FormatNumber(state.quantity), 1, 0.82, 0, 1, 1, 1)
+    if state.confirmEachPurchase then
+        GameTooltip:AddDoubleLine("Can spend:", FormatNumber(state.totalSpend), 1, 0.82, 0, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Remaining:", FormatNumber(state.affordableQuantity), 1, 0.82, 0, 1, 1, 1)
+    else
+        GameTooltip:AddDoubleLine("Will buy:", FormatNumber(state.quantity), 1, 0.82, 0, 1, 1, 1)
+    end
     if not state.costDetected then
         GameTooltip:AddLine("Using the current vendor price fallback.", 0.8, 0.8, 0.8, true)
     end
@@ -313,7 +359,7 @@ local function EnsurePanel()
     panel.button:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 10, 7)
     panel.button:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 7)
     panel.button:SetHeight(22)
-    panel.button:SetScript("OnClick", BuyMaxHeliotrope)
+    panel.button:SetScript("OnClick", BuyMaxCurrencyDumpItem)
     panel.button:SetScript("OnEnter", ShowTooltip)
     panel.button:SetScript("OnLeave", function()
         GameTooltip:Hide()
@@ -344,9 +390,15 @@ UpdatePanel = function()
 
     panel:Show()
     ApplyPanelTheme()
-    panel.body:SetText("Dump " .. FormatNumber(state.spend) .. " Honor into " .. HELIOTROPE_NAME .. ".")
-    panel.detail:SetText("Buys " .. FormatNumber(state.quantity) .. " at " .. FormatNumber(state.cost) .. " Honor each.")
-    panel.button:SetText("Buy " .. FormatNumber(state.quantity))
+    if state.confirmEachPurchase then
+        panel.body:SetText("Can spend " .. FormatNumber(state.totalSpend) .. " " .. state.currencyName .. " on " .. state.name .. ".")
+        panel.detail:SetText(FormatNumber(state.cost) .. " " .. state.currencyName .. " each. Confirms one purchase at a time.")
+        panel.button:SetText(FormatNumber(state.affordableQuantity) .. " remaining")
+    else
+        panel.body:SetText("Dump " .. FormatNumber(state.spend) .. " " .. state.currencyName .. " into " .. state.name .. ".")
+        panel.detail:SetText("Buys " .. FormatNumber(state.quantity) .. " at " .. FormatNumber(state.cost) .. " " .. state.currencyName .. " each.")
+        panel.button:SetText("Buy " .. FormatNumber(state.quantity))
+    end
     panel.button:Enable()
 end
 
