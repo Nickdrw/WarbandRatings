@@ -3,12 +3,14 @@ ns.Merchant = {}
 local Merchant = ns.Merchant
 local Database = ns.Database
 local DataCollection = ns.DataCollection
+local HelperPanel = ns.HelperPanel
 
 local HONOR_CURRENCY_ID = 1792
 local CONQUEST_CURRENCY_ID = 1602
 local PANEL_WIDTH = 220
 local PANEL_HEIGHT = 114
 local ICON_SIZE = 28
+local PANEL_BELOW_OFFSET_Y = -42
 
 local CURRENCY_DUMP_ITEMS = {
     {
@@ -16,6 +18,7 @@ local CURRENCY_DUMP_ITEMS = {
         name = Database.HELIOTROPE_NAME,
         currencyID = HONOR_CURRENCY_ID,
         fallbackCost = Database.HELIOTROPE_FALLBACK_HONOR_COST,
+        hideSettingKey = "hideHeliotropeHelper",
     },
     {
         itemID = Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID,
@@ -23,17 +26,8 @@ local CURRENCY_DUMP_ITEMS = {
         currencyID = CONQUEST_CURRENCY_ID,
         fallbackCost = Database.GALACTIC_EQUIPMENT_CHEST_FALLBACK_CONQUEST_COST,
         confirmEachPurchase = true,
+        hideSettingKey = "hideGalacticConquestChestHelper",
     },
-}
-
-local fallbackTheme = {
-    surface = { 0.055, 0.064, 0.078, 0.96 },
-    surfaceRaised = { 0.080, 0.092, 0.110, 0.98 },
-    border = { 0.250, 0.285, 0.330, 0.88 },
-    text = { 0.900, 0.930, 0.960, 1 },
-    title = { 0.970, 0.820, 0.450, 1 },
-    muted = { 0.560, 0.600, 0.650, 1 },
-    accent = { 0.960, 0.720, 0.320, 1 },
 }
 
 local eventFrame
@@ -48,58 +42,17 @@ local function FormatNumber(value)
     return sign .. left .. (num:reverse():gsub("(%d%d%d)", "%1,"):reverse()) .. right
 end
 
-local function GetTheme()
-    if ns.UI and ns.UI.GetActiveTheme then
-        return ns.UI.GetActiveTheme()
-    end
-    return fallbackTheme
-end
-
-local function SetTextureColor(texture, color, alpha)
-    if texture and texture.SetColorTexture and color then
-        texture:SetColorTexture(color[1], color[2], color[3], alpha or color[4] or 1)
-    end
-end
-
-local function SetFontColor(fontString, color, alpha)
-    if fontString and fontString.SetTextColor and color then
-        fontString:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
-    end
-end
-
-local function CreateBorder(parent, key, point, relativePoint, x, y, width, height)
-    local border = parent[key]
-    if not border then
-        border = parent:CreateTexture(nil, "BORDER")
-        parent[key] = border
-    end
-
-    border:ClearAllPoints()
-    border:SetPoint(point, parent, relativePoint, x, y)
-    border:SetSize(width, height)
-    return border
-end
-
 local function ApplyPanelTheme()
     if not panel then return end
 
-    local theme = GetTheme()
-    SetTextureColor(panel.bg, theme.surface)
-    SetTextureColor(panel.headerBg, theme.surfaceRaised)
-    SetTextureColor(panel.accentLine, theme.accent, 0.75)
-    SetTextureColor(panel.iconBg, theme.surfaceRaised)
-    SetTextureColor(panel.iconBorderTop, theme.accent, 0.85)
-    SetTextureColor(panel.iconBorderBottom, theme.accent, 0.85)
-    SetTextureColor(panel.iconBorderLeft, theme.accent, 0.85)
-    SetTextureColor(panel.iconBorderRight, theme.accent, 0.85)
-    SetFontColor(panel.title, theme.title)
-    SetFontColor(panel.body, theme.text)
-    SetFontColor(panel.detail, theme.muted)
-
-    SetTextureColor(CreateBorder(panel, "borderTop", "TOPLEFT", "TOPLEFT", 0, 0, PANEL_WIDTH, 1), theme.border)
-    SetTextureColor(CreateBorder(panel, "borderBottom", "BOTTOMLEFT", "BOTTOMLEFT", 0, 0, PANEL_WIDTH, 1), theme.border)
-    SetTextureColor(CreateBorder(panel, "borderLeft", "TOPLEFT", "TOPLEFT", 0, 0, 1, PANEL_HEIGHT), theme.border)
-    SetTextureColor(CreateBorder(panel, "borderRight", "TOPRIGHT", "TOPRIGHT", 0, 0, 1, PANEL_HEIGHT), theme.border)
+    local theme = HelperPanel.ApplyShellTheme(panel)
+    HelperPanel.SetTextureColor(panel.iconBg, theme.surfaceRaised)
+    HelperPanel.SetTextureColor(panel.iconBorderTop, theme.accent, 0.85)
+    HelperPanel.SetTextureColor(panel.iconBorderBottom, theme.accent, 0.85)
+    HelperPanel.SetTextureColor(panel.iconBorderLeft, theme.accent, 0.85)
+    HelperPanel.SetTextureColor(panel.iconBorderRight, theme.accent, 0.85)
+    HelperPanel.SetFontColor(panel.body, theme.text)
+    HelperPanel.SetFontColor(panel.detail, theme.muted)
 end
 
 Merchant.ApplyTheme = ApplyPanelTheme
@@ -172,12 +125,15 @@ local function GetCurrencyCost(index, itemInfo, currencyID)
 end
 
 local function FindCurrencyDumpItem()
+    local settings = Database.GetSettings() or {}
     local numItems = GetMerchantNumItems and GetMerchantNumItems() or 0
     for index = 1, numItems do
         local itemInfo = GetItemInfo(index)
         local itemID = itemInfo and GetItemID(index)
         for _, dumpItem in ipairs(CURRENCY_DUMP_ITEMS) do
-            if itemInfo and (itemID == dumpItem.itemID or itemInfo.name == dumpItem.name) then
+            if not settings[dumpItem.hideSettingKey]
+                and itemInfo
+                and (itemID == dumpItem.itemID or itemInfo.name == dumpItem.name) then
                 local currencyCost = GetCurrencyCost(index, itemInfo, dumpItem.currencyID)
                 return {
                     index = index,
@@ -287,33 +243,12 @@ end
 local function EnsurePanel()
     if panel or not MerchantFrame then return end
 
-    panel = CreateFrame("Frame", "WarbandRatingsMerchantDumpFrame", UIParent)
-    panel:SetSize(PANEL_WIDTH, PANEL_HEIGHT)
-    panel:SetFrameStrata("HIGH")
+    panel = HelperPanel.CreateShell("WarbandRatingsMerchantDumpFrame", PANEL_WIDTH, PANEL_HEIGHT, "Warband Ratings")
     panel:SetFrameLevel((MerchantFrame:GetFrameLevel() or 0) + 10)
-    panel:EnableMouse(true)
     panel:SetScript("OnEnter", ShowTooltip)
     panel:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
-    panel:Hide()
-
-    panel.bg = panel:CreateTexture(nil, "BACKGROUND")
-    panel.bg:SetAllPoints()
-
-    panel.headerBg = panel:CreateTexture(nil, "BORDER")
-    panel.headerBg:SetPoint("TOPLEFT", panel, "TOPLEFT", 1, -1)
-    panel.headerBg:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1)
-    panel.headerBg:SetHeight(22)
-
-    panel.accentLine = panel:CreateTexture(nil, "BORDER")
-    panel.accentLine:SetPoint("TOPLEFT", panel.headerBg, "BOTTOMLEFT", 0, 0)
-    panel.accentLine:SetPoint("TOPRIGHT", panel.headerBg, "BOTTOMRIGHT", 0, 0)
-    panel.accentLine:SetHeight(1)
-
-    panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    panel.title:SetPoint("LEFT", panel.headerBg, "LEFT", 8, 0)
-    panel.title:SetText("Warband Ratings")
 
     panel.icon = panel:CreateTexture(nil, "ARTWORK")
     panel.icon:SetSize(ICON_SIZE, ICON_SIZE)
@@ -368,6 +303,15 @@ local function EnsurePanel()
     ApplyPanelTheme()
 end
 
+local function PositionPanel()
+    if not panel or not MerchantFrame then return end
+
+    panel:ClearAllPoints()
+    panel:SetPoint("TOP", MerchantFrame, "BOTTOM", 0, PANEL_BELOW_OFFSET_Y)
+    HelperPanel.SnapFrameToPixelGrid(panel)
+    panel:SetFrameLevel((MerchantFrame:GetFrameLevel() or 0) + 10)
+end
+
 UpdatePanel = function()
     if not panel then return end
 
@@ -378,9 +322,7 @@ UpdatePanel = function()
         return
     end
 
-    panel:ClearAllPoints()
-    panel:SetPoint("TOPLEFT", MerchantFrame, "TOPRIGHT", 8, -28)
-    panel:SetFrameLevel((MerchantFrame:GetFrameLevel() or 0) + 10)
+    PositionPanel()
     panel.icon:SetTexture(state.texture)
 
     if state.quantity <= 0 or not state.purchasable then
@@ -400,6 +342,13 @@ UpdatePanel = function()
         panel.button:SetText("Buy " .. FormatNumber(state.quantity))
     end
     panel.button:Enable()
+end
+
+function Merchant.Refresh()
+    if MerchantFrame and MerchantFrame:IsShown() then
+        EnsurePanel()
+    end
+    RefreshSoon()
 end
 
 function Merchant.Attach()

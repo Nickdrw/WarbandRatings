@@ -14,6 +14,8 @@ Database.lua
 History.lua
 DataProvider.lua
 DataCollection.lua
+HelperPanel.lua
 Merchant.lua
+BagOpener.lua
 UI.lua
 Core.lua

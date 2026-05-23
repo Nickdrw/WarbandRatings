@@ -9,6 +9,11 @@ Database.HELIOTROPE_FALLBACK_HONOR_COST = 2500
 Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID = 256553
 Database.GALACTIC_EQUIPMENT_CHEST_NAME = "Galactic Equipment Chest"
 Database.GALACTIC_EQUIPMENT_CHEST_FALLBACK_CONQUEST_COST = 375
+Database.FIELD_MEDIC_HAZARD_PAYOUT_ITEM_ID = 258620
+Database.FIELD_MEDIC_HAZARD_PAYOUT_ITEM_IDS = { 258620, 224557, 203724 }
+Database.FIELD_MEDIC_HAZARD_PAYOUT_NAME = "Field Medic's Hazard Payout"
+Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_ITEM_ID = 258534
+Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_NAME = "Illustrious Contender's Strongbox"
 
 -- Rating column definitions.
 -- bracketIndex: index passed to GetPersonalRatedInfo().
@@ -148,6 +153,9 @@ function Database.Init()
             hideNoRating = false,
             hideEmptyColumns = false,
             hideNonMaxLevel = false,
+            hideBoxesHelper = false,
+            hideHeliotropeHelper = false,
+            hideGalacticConquestChestHelper = false,
             themeKey = "obsidian",
             graphVisiblePointCount = 50,
             windowHeight = 450,
@@ -160,6 +168,15 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.hideNonMaxLevel == nil then
         WarbandRatingsDB.settings.hideNonMaxLevel = false
+    end
+    if WarbandRatingsDB.settings.hideBoxesHelper == nil then
+        WarbandRatingsDB.settings.hideBoxesHelper = false
+    end
+    if WarbandRatingsDB.settings.hideHeliotropeHelper == nil then
+        WarbandRatingsDB.settings.hideHeliotropeHelper = false
+    end
+    if WarbandRatingsDB.settings.hideGalacticConquestChestHelper == nil then
+        WarbandRatingsDB.settings.hideGalacticConquestChestHelper = false
     end
     if WarbandRatingsDB.settings.graphVisiblePointCount == nil then
         WarbandRatingsDB.settings.graphVisiblePointCount = 50

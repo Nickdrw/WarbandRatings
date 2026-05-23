@@ -970,6 +970,11 @@ function UI.ApplyTheme()
         if settingsPanel.filterPresetLabel then
             SetFontColor(settingsPanel.filterPresetLabel, theme.headerText)
         end
+        if settingsPanel.sectionLabels then
+            for _, label in ipairs(settingsPanel.sectionLabels) do
+                SetFontColor(label, theme.headerText)
+            end
+        end
         if UpdateSettingsTabs then
             UpdateSettingsTabs()
         end
@@ -1020,6 +1025,9 @@ function UI.ApplyTheme()
     RefreshHistoryCellAffordances()
     if ns.Merchant and ns.Merchant.ApplyTheme then
         ns.Merchant.ApplyTheme()
+    end
+    if ns.BagOpener and ns.BagOpener.ApplyTheme then
+        ns.BagOpener.ApplyTheme()
     end
 end
 
@@ -1388,6 +1396,27 @@ local function CreateFilterPresetButton(parent, key, label, index)
     return button
 end
 
+function UI.RefreshFeatureHelpers()
+    if ns.BagOpener and ns.BagOpener.Refresh then
+        ns.BagOpener.Refresh()
+    end
+    if ns.Merchant and ns.Merchant.Refresh then
+        ns.Merchant.Refresh()
+    end
+end
+
+function UI.CreateSettingsSectionLabel(parent, label, yOffset)
+    local owner = parent.settingsWindow or parent
+    owner.sectionLabels = owner.sectionLabels or {}
+
+    local fontString = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fontString:SetPoint("TOPLEFT", 14, yOffset)
+    fontString:SetText(label)
+    SetFontColor(fontString, GetActiveTheme().headerText)
+    owner.sectionLabels[#owner.sectionLabels + 1] = fontString
+    return fontString
+end
+
 function UI.CreateSettingsPanel()
     if settingsPanel then return settingsPanel end
 
@@ -1422,6 +1451,7 @@ function UI.CreateSettingsPanel()
     settingsPanel.checkboxes = {}
     settingsPanel.filterCheckboxes = {}
     settingsPanel.filterPresetButtons = {}
+    settingsPanel.sectionLabels = {}
 
     local settingsPage = CreateFrame("Frame", nil, settingsPanel)
     settingsPage:SetAllPoints(settingsPanel)
@@ -1435,11 +1465,21 @@ function UI.CreateSettingsPanel()
     settingsPanel.filtersPage = filtersPage
 
     local yOffset = -38
+    UI.CreateSettingsSectionLabel(settingsPage, "Table settings", yOffset)
+    yOffset = yOffset - 26
     UI.CreateCheckbox(settingsPage, "Max level only", "hideNonMaxLevel", yOffset)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide characters with no rating", "hideNoRating", yOffset)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide brackets with no rating", "hideEmptyColumns", yOffset)
+    yOffset = yOffset - 42
+    UI.CreateSettingsSectionLabel(settingsPage, "Features settings", yOffset)
+    yOffset = yOffset - 26
+    UI.CreateCheckbox(settingsPage, "Hide boxes helper", "hideBoxesHelper", yOffset, UI.RefreshFeatureHelpers)
+    yOffset = yOffset - 30
+    UI.CreateCheckbox(settingsPage, "Hide Heliotrope helper", "hideHeliotropeHelper", yOffset, UI.RefreshFeatureHelpers)
+    yOffset = yOffset - 30
+    UI.CreateCheckbox(settingsPage, "Hide Conquest Chest helper", "hideGalacticConquestChestHelper", yOffset, UI.RefreshFeatureHelpers)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
         UI.UpdateMinimapVisibility()
