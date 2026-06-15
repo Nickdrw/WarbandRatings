@@ -45,13 +45,16 @@ local GRAPH_DETACHED_WIDTH = 980
 local GRAPH_DETACHED_HEIGHT = 420
 local GRAPH_POINT_SIZE = 5
 local GRAPH_HOVER_POINT_SIZE = 7
-local GRAPH_DEFAULT_VISIBLE_POINT_COUNT = 50
 local GRAPH_MIN_VISIBLE_POINT_COUNT = 20
 local GRAPH_MAX_VISIBLE_POINT_COUNT = 200
 local GRAPH_VISIBLE_POINT_STEP = 5
 local GRAPH_SCROLL_STEP = 5
-local GRAPH_Y_AXIS_STEP = 500
-local GRAPH_Y_AXIS_MINOR_STEP = GRAPH_Y_AXIS_STEP / 2
+local GRAPH_Y_AXIS = {
+    tickStep = 500,
+    upperStep = 50,
+    paddingRatio = 0.015,
+    minPadding = 25,
+}
 local HISTORY_GRAPH_ICON_SIZE = 14
 local HISTORY_GRAPH_ICON_PADDING = 4
 local HISTORY_SELECTED_ALPHA = 0.16
@@ -2420,9 +2423,11 @@ local function IncludeGraphScaleValue(value, scale)
 end
 
 local function RoundGraphScale(_, maxValue)
-    local tickStep = GRAPH_Y_AXIS_STEP
-    local upperValue = math.max(tickStep, tonumber(maxValue) or 0)
-    upperValue = math.ceil(upperValue / tickStep) * tickStep
+    maxValue = tonumber(maxValue) or 0
+    local tickStep = GRAPH_Y_AXIS.tickStep
+    local padding = math.max(maxValue * GRAPH_Y_AXIS.paddingRatio, GRAPH_Y_AXIS.minPadding)
+    local upperValue = math.max(tickStep, maxValue + padding)
+    upperValue = math.ceil(upperValue / GRAPH_Y_AXIS.upperStep) * GRAPH_Y_AXIS.upperStep
 
     return 0, upperValue, tickStep
 end
@@ -2451,11 +2456,25 @@ local function GetFullSeriesGraphScale(points, showRating, showMMR)
 end
 
 local function GetGraphVisiblePointLimit(pointCount)
-    local settings = Database.GetSettings()
-    local requested = tonumber(settings.graphVisiblePointCount) or GRAPH_DEFAULT_VISIBLE_POINT_COUNT
-    requested = math.floor((requested / GRAPH_VISIBLE_POINT_STEP) + 0.5) * GRAPH_VISIBLE_POINT_STEP
-    requested = math.max(GRAPH_MIN_VISIBLE_POINT_COUNT, math.min(requested, GRAPH_MAX_VISIBLE_POINT_COUNT))
-    return math.min(requested, pointCount)
+    pointCount = tonumber(pointCount) or 0
+    local zoomMax = math.min(pointCount, GRAPH_MAX_VISIBLE_POINT_COUNT)
+    local zoomMin = pointCount < GRAPH_MIN_VISIBLE_POINT_COUNT
+        and zoomMax
+        or math.min(GRAPH_MIN_VISIBLE_POINT_COUNT, zoomMax)
+    local visiblePointCount = tonumber(graphPanel and graphPanel.visiblePointCount) or zoomMax
+
+    visiblePointCount = math.max(zoomMin, math.min(visiblePointCount, zoomMax))
+    return visiblePointCount, zoomMin, zoomMax
+end
+
+local function RoundGraphVisiblePointCount(value, zoomMin, zoomMax)
+    value = tonumber(value) or zoomMax
+    if value >= zoomMax then
+        return zoomMax
+    end
+
+    value = math.floor((value / GRAPH_VISIBLE_POINT_STEP) + 0.5) * GRAPH_VISIBLE_POINT_STEP
+    return math.max(zoomMin, math.min(value, zoomMax))
 end
 
 local function GetSpecLabel(specID)
@@ -2811,7 +2830,7 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.zoomSlider = CreateFrame("Slider", nil, graphPanel, "OptionsSliderTemplate")
     graphPanel.zoomSlider:SetWidth(108)
     graphPanel.zoomSlider:SetHeight(14)
-    graphPanel.zoomSlider:SetMinMaxValues(GRAPH_MIN_VISIBLE_POINT_COUNT, GRAPH_MAX_VISIBLE_POINT_COUNT)
+    graphPanel.zoomSlider:SetMinMaxValues(1, GRAPH_MAX_VISIBLE_POINT_COUNT)
     graphPanel.zoomSlider:SetValueStep(GRAPH_VISIBLE_POINT_STEP)
     if graphPanel.zoomSlider.SetObeyStepOnDrag then
         graphPanel.zoomSlider:SetObeyStepOnDrag(true)
@@ -2828,11 +2847,13 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.zoomSlider:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Visible games")
-        if graphPanel.zoomDisabled then
-            GameTooltip:AddLine("Available from " .. GRAPH_MIN_VISIBLE_POINT_COUNT .. " recorded games.", 1, 1, 1)
-            GameTooltip:AddLine("Current history: " .. (graphPanel.zoomPointCount or 0) .. " games.", 0.7, 0.7, 0.7)
+        local pointCount = graphPanel.zoomPointCount or 0
+        local maxVisible = graphPanel.zoomMax or pointCount
+        if pointCount > maxVisible then
+            GameTooltip:AddLine("Showing " .. maxVisible .. " games at a time.", 1, 1, 1)
+            GameTooltip:AddLine("Drag to zoom; use the lower range slider or mouse wheel to browse older games.", 0.7, 0.7, 0.7)
         else
-            GameTooltip:AddLine("Drag to show fewer or more games in the graph window.", 1, 1, 1)
+            GameTooltip:AddLine("Drag to show fewer or more games; the maximum shows all recorded games.", 1, 1, 1)
         end
         GameTooltip:Show()
     end)
@@ -2841,9 +2862,12 @@ function UI.CreateHistoryGraphPanel()
     end)
     graphPanel.zoomSlider:SetScript("OnValueChanged", function(_, value)
         if graphPanel.updatingZoomSlider then return end
-        if graphPanel.zoomDisabled then return end
-        value = math.floor((value / GRAPH_VISIBLE_POINT_STEP) + 0.5) * GRAPH_VISIBLE_POINT_STEP
-        Database.SetSetting("graphVisiblePointCount", value)
+        if not graphPanel.zoomMin or not graphPanel.zoomMax then return end
+
+        value = RoundGraphVisiblePointCount(value, graphPanel.zoomMin, graphPanel.zoomMax)
+        if graphPanel.visiblePointCount == value then return end
+
+        graphPanel.visiblePointCount = value
         if graphPanel.viewportAtLatest then
             graphPanel.viewportStart = nil
         end
@@ -2981,19 +3005,18 @@ function UI.RefreshHistoryGraph()
 
     graphPanel.emptyText:Hide()
 
-    local visiblePointCount = GetGraphVisiblePointLimit(pointCount)
-    local zoomDisabled = pointCount < GRAPH_MIN_VISIBLE_POINT_COUNT
-    local zoomMax = zoomDisabled and pointCount or math.min(pointCount, GRAPH_MAX_VISIBLE_POINT_COUNT)
-    local zoomMin = zoomDisabled and pointCount or math.min(GRAPH_MIN_VISIBLE_POINT_COUNT, zoomMax)
-    graphPanel.zoomDisabled = zoomDisabled
+    local visiblePointCount, zoomMin, zoomMax = GetGraphVisiblePointLimit(pointCount)
+    graphPanel.visiblePointCount = visiblePointCount
     graphPanel.zoomPointCount = pointCount
+    graphPanel.zoomMin = zoomMin
+    graphPanel.zoomMax = zoomMax
     graphPanel.zoomLabel:Show()
     graphPanel.zoomSlider:Show()
     graphPanel.zoomValueLabel:Show()
     graphPanel.zoomValueLabel:SetText(tostring(visiblePointCount))
-    graphPanel.zoomLabel:SetAlpha(zoomDisabled and 0.55 or 1)
-    graphPanel.zoomSlider:SetAlpha(zoomDisabled and 0.45 or 1)
-    graphPanel.zoomValueLabel:SetAlpha(zoomDisabled and 0.55 or 1)
+    graphPanel.zoomLabel:SetAlpha(1)
+    graphPanel.zoomSlider:SetAlpha(zoomMin == zoomMax and 0.45 or 1)
+    graphPanel.zoomValueLabel:SetAlpha(1)
     graphPanel.zoomSlider:SetMinMaxValues(zoomMin, zoomMax)
     graphPanel.zoomSlider:SetValueStep(GRAPH_VISIBLE_POINT_STEP)
     graphPanel.updatingZoomSlider = true
@@ -3026,7 +3049,7 @@ function UI.RefreshHistoryGraph()
         graphPanel.rangeSlider:Hide()
     end
 
-    local minValue, maxValue, tickStep = GetFullSeriesGraphScale(points, true, true)
+    local minValue, maxValue, tickStep = GetFullSeriesGraphScale(points, showRating, showMMR)
     if not minValue then
         if not showRating and not showMMR then
             graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
@@ -3102,9 +3125,11 @@ function UI.RefreshHistoryGraph()
 
     DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotWidth, plotHeight, theme)
 
-    local minorTickValue = minValue + GRAPH_Y_AXIS_MINOR_STEP
+    local minorTickStep = tickStep / 2
+    local minorTickValue = minValue + minorTickStep
+    local minorTickIndex = 1
     while minorTickValue < maxValue - 0.5 do
-        if minorTickValue % tickStep ~= 0 then
+        if minorTickIndex % 2 == 1 then
             local y = GetGraphPointY(minorTickValue, minValue, maxValue, plotHeight)
             AddGraphLine(
                 GRAPH_MARGIN_LEFT,
@@ -3118,7 +3143,8 @@ function UI.RefreshHistoryGraph()
                 1
             )
         end
-        minorTickValue = minorTickValue + GRAPH_Y_AXIS_MINOR_STEP
+        minorTickValue = minorTickValue + minorTickStep
+        minorTickIndex = minorTickIndex + 1
     end
 
     local tickValue = minValue
@@ -3221,6 +3247,7 @@ function UI.ShowHistoryGraph(charData, specID, col)
     UI.CreateHistoryGraphPanel()
     graphPanel.showRating = true
     graphPanel.showMMR = col.key ~= "soloShuffle"
+    graphPanel.visiblePointCount = nil
     graphPanel.viewportStart = nil
     graphPanel.viewportAtLatest = true
     graphPanel:Show()

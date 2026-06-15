@@ -55,7 +55,7 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
   - Verdant
   - Ember
 - Per-column visibility filter window.
-- Graph visible-game count is persisted as `settings.graphVisiblePointCount`.
+- History graph `Games` slider defaults to the maximum visible game count, capped at 200 points.
 
 ### PvP MMR Display
 
@@ -87,11 +87,11 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
 - Y-axis uses a fixed scale computed from the full selected series, not only the visible window.
 - Y-axis labels show max, midpoint, and min.
 - Bottom chronological slider moves through the series.
-- Top `Games` slider controls how many points are visible:
-  - default 50
-  - min 20
-  - max 200
-  - disabled/dimmed below 20 recorded games with explanatory tooltip
+- Top `Games` slider defaults to the maximum visible point count:
+  - starts by showing all recorded games up to 200 points
+  - starts by showing the latest 200 points when history is longer
+  - can be moved lower to zoom into fewer games during the open graph session
+  - bottom range slider or mouse wheel can browse older windows when capped
 - Hovering a point shows:
   - date first
   - rating plus delta
@@ -212,7 +212,6 @@ WarbandRatingsDB.settings = {
     minimapPos = 220,
     hiddenColumns = {},
     themeKey = "obsidian",
-    graphVisiblePointCount = 50,
 }
 ```
 

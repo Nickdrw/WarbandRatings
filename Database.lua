@@ -157,7 +157,6 @@ function Database.Init()
             hideHeliotropeHelper = false,
             hideGalacticConquestChestHelper = false,
             themeKey = "obsidian",
-            graphVisiblePointCount = 50,
             windowHeight = 450,
             sortKey = "character",
             sortDirection = "asc",
@@ -177,9 +176,6 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.hideGalacticConquestChestHelper == nil then
         WarbandRatingsDB.settings.hideGalacticConquestChestHelper = false
-    end
-    if WarbandRatingsDB.settings.graphVisiblePointCount == nil then
-        WarbandRatingsDB.settings.graphVisiblePointCount = 50
     end
     if WarbandRatingsDB.settings.windowHeight == nil then
         WarbandRatingsDB.settings.windowHeight = 450
