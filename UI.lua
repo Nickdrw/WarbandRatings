@@ -3448,6 +3448,28 @@ function UI.RefreshTable()
                 end
             end
         end
+        table.sort(ratedSpecs, function(a, b)
+            local bestA = 0
+            local bestB = 0
+            for _, col in ipairs(columns) do
+                if Database.IsSpecColumn(col) then
+                    local specRatingsA = charData.specRatings and charData.specRatings[a]
+                    local specRatingsB = charData.specRatings and charData.specRatings[b]
+                    local valueA = specRatingsA and tonumber(specRatingsA[col.key])
+                    local valueB = specRatingsB and tonumber(specRatingsB[col.key])
+                    if valueA and valueA > bestA and not Utils.IsEmptyRating(valueA) then
+                        bestA = valueA
+                    end
+                    if valueB and valueB > bestB and not Utils.IsEmptyRating(valueB) then
+                        bestB = valueB
+                    end
+                end
+            end
+            if bestA ~= bestB then
+                return bestA > bestB
+            end
+            return a < b
+        end)
 
         local numSpecs = math.max(#ratedSpecs, 1)
         local rowHeight = numSpecs * SUBROW_HEIGHT
