@@ -9,7 +9,7 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
 ## Environment
 
 - WoW Lua 5.1: no `goto`, no `continue`, no `//` integer division.
-- Retail client: Interface `120005`.
+- Retail client: Interface `120007`.
 - SavedVariables: `WarbandRatingsDB`.
 - Linting: `wsl luacheck .` using `.luacheckrc`.
 - Load order is defined by `WarbandRatings.toc`.
