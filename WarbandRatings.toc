@@ -17,5 +17,6 @@ DataCollection.lua
 HelperPanel.lua
 Merchant.lua
 BagOpener.lua
+Mailbox.lua
 UI.lua
 Core.lua

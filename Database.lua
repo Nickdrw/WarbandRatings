@@ -156,6 +156,8 @@ function Database.Init()
             hideBoxesHelper = false,
             hideHeliotropeHelper = false,
             hideGalacticConquestChestHelper = false,
+            hideGalacticEquipmentMailHelper = false,
+            galacticEquipmentMailRecipient = "",
             themeKey = "obsidian",
             windowHeight = 450,
             sortKey = "character",
@@ -176,6 +178,12 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.hideGalacticConquestChestHelper == nil then
         WarbandRatingsDB.settings.hideGalacticConquestChestHelper = false
+    end
+    if WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper == nil then
+        WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper = false
+    end
+    if WarbandRatingsDB.settings.galacticEquipmentMailRecipient == nil then
+        WarbandRatingsDB.settings.galacticEquipmentMailRecipient = ""
     end
     if WarbandRatingsDB.settings.windowHeight == nil then
         WarbandRatingsDB.settings.windowHeight = 450

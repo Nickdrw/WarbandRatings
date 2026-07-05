@@ -1032,6 +1032,9 @@ function UI.ApplyTheme()
     if ns.BagOpener and ns.BagOpener.ApplyTheme then
         ns.BagOpener.ApplyTheme()
     end
+    if ns.Mailbox and ns.Mailbox.ApplyTheme then
+        ns.Mailbox.ApplyTheme()
+    end
 end
 
 ------------------------------------------------------------
@@ -1406,6 +1409,9 @@ function UI.RefreshFeatureHelpers()
     if ns.Merchant and ns.Merchant.Refresh then
         ns.Merchant.Refresh()
     end
+    if ns.Mailbox and ns.Mailbox.Refresh then
+        ns.Mailbox.Refresh()
+    end
 end
 
 function UI.CreateSettingsSectionLabel(parent, label, yOffset)
@@ -1483,6 +1489,8 @@ function UI.CreateSettingsPanel()
     UI.CreateCheckbox(settingsPage, "Hide Heliotrope helper", "hideHeliotropeHelper", yOffset, UI.RefreshFeatureHelpers)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide Conquest Chest helper", "hideGalacticConquestChestHelper", yOffset, UI.RefreshFeatureHelpers)
+    yOffset = yOffset - 30
+    UI.CreateCheckbox(settingsPage, "Hide Equipment Chest mail helper", "hideGalacticEquipmentMailHelper", yOffset, UI.RefreshFeatureHelpers)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
         UI.UpdateMinimapVisibility()
