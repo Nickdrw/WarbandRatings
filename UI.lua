@@ -28,7 +28,7 @@ local COL_RATING_WIDTH = 80
 local SETTINGS_WIDTH = 220
 local SETTINGS_HEIGHT = WINDOW_HEIGHT
 local SETTINGS_WINDOW_OFFSET = 8
-local SETTINGS_TAB_WIDTH = 92
+local SETTINGS_TAB_WIDTH = 64
 local SETTINGS_TAB_HEIGHT = 24
 local FILTER_PRESET_BUTTON_WIDTH = 60
 local FILTER_PRESET_BUTTON_HEIGHT = 22
@@ -877,6 +877,9 @@ local function SetSettingsTab(tabKey)
     if settingsPanel.filtersPage then
         settingsPanel.filtersPage:SetShown(tabKey == "filters")
     end
+    if settingsPanel.helpersPage then
+        settingsPanel.helpersPage:SetShown(tabKey == "helpers")
+    end
     if tabKey == "filters" then
         RefreshSettingsFilterCheckboxes()
     end
@@ -1034,6 +1037,9 @@ function UI.ApplyTheme()
     end
     if ns.Mailbox and ns.Mailbox.ApplyTheme then
         ns.Mailbox.ApplyTheme()
+    end
+    if ns.ArenaQueue and ns.ArenaQueue.ApplyTheme then
+        ns.ArenaQueue.ApplyTheme()
     end
 end
 
@@ -1412,6 +1418,12 @@ function UI.RefreshFeatureHelpers()
     if ns.Mailbox and ns.Mailbox.Refresh then
         ns.Mailbox.Refresh()
     end
+    if ns.ArenaQueue and ns.ArenaQueue.Refresh then
+        ns.ArenaQueue.Refresh()
+    end
+    if UI.UpdateQueueHelperPvPButton then
+        UI.UpdateQueueHelperPvPButton()
+    end
 end
 
 function UI.CreateSettingsSectionLabel(parent, label, yOffset)
@@ -1444,6 +1456,9 @@ function UI.CreateSettingsPanel()
             self.themeDropdown.menu:Hide()
         end
     end)
+    settingsPanel:SetScript("OnShow", function()
+        UI.RefreshSettingsCheckboxes()
+    end)
     settingsPanel:SetFrameStrata("DIALOG")
     settingsPanel:SetClampedToScreen(true)
     HideTemplateArtwork(settingsPanel)
@@ -1473,6 +1488,12 @@ function UI.CreateSettingsPanel()
     filtersPage:Hide()
     settingsPanel.filtersPage = filtersPage
 
+    local helpersPage = CreateFrame("Frame", nil, settingsPanel)
+    helpersPage:SetAllPoints(settingsPanel)
+    helpersPage.settingsWindow = settingsPanel
+    helpersPage:Hide()
+    settingsPanel.helpersPage = helpersPage
+
     local yOffset = -38
     UI.CreateSettingsSectionLabel(settingsPage, "Table settings", yOffset)
     yOffset = yOffset - 26
@@ -1482,25 +1503,30 @@ function UI.CreateSettingsPanel()
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide brackets with no rating", "hideEmptyColumns", yOffset)
     yOffset = yOffset - 42
-    UI.CreateSettingsSectionLabel(settingsPage, "Features settings", yOffset)
+    UI.CreateSettingsSectionLabel(settingsPage, "Interface settings", yOffset)
     yOffset = yOffset - 26
-    UI.CreateCheckbox(settingsPage, "Hide boxes helper", "hideBoxesHelper", yOffset, UI.RefreshFeatureHelpers)
-    yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPage, "Hide Heliotrope helper", "hideHeliotropeHelper", yOffset, UI.RefreshFeatureHelpers)
-    yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPage, "Hide Conquest Chest helper", "hideGalacticConquestChestHelper", yOffset, UI.RefreshFeatureHelpers)
-    yOffset = yOffset - 30
-    UI.CreateCheckbox(settingsPage, "Hide Equipment Chest mail helper", "hideGalacticEquipmentMailHelper", yOffset, UI.RefreshFeatureHelpers)
-    yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
         UI.UpdateMinimapVisibility()
     end)
-    yOffset = yOffset - 30
+    yOffset = yOffset - 26
     UI.CreateCheckbox(settingsPage, "Hide compartment icon", "hideCompartmentIcon", yOffset, function()
         UI.UpdateCompartmentVisibility()
     end)
     yOffset = yOffset - 42
     UI.CreateThemeSelector(settingsPage, yOffset)
+
+    local helperYOffset = -38
+    UI.CreateSettingsSectionLabel(helpersPage, "Helper windows", helperYOffset)
+    helperYOffset = helperYOffset - 26
+    UI.CreateCheckbox(helpersPage, "Hide boxes helper", "hideBoxesHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    helperYOffset = helperYOffset - 26
+    UI.CreateCheckbox(helpersPage, "Hide Heliotrope helper", "hideHeliotropeHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    helperYOffset = helperYOffset - 26
+    UI.CreateCheckbox(helpersPage, "Hide Conquest Chest helper", "hideGalacticConquestChestHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    helperYOffset = helperYOffset - 26
+    UI.CreateCheckbox(helpersPage, "Hide Equipment Chest mail helper", "hideGalacticEquipmentMailHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    helperYOffset = helperYOffset - 26
+    UI.CreateCheckbox(helpersPage, "Hide the queue helper", "hideArenaQueueHelper", helperYOffset, UI.RefreshFeatureHelpers)
 
     local presetLabel = filtersPage:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     presetLabel:SetPoint("TOPLEFT", 14, -38)
@@ -1544,7 +1570,8 @@ function UI.CreateSettingsPanel()
 
     settingsPanel.tabs = {
         CreateSettingsTabButton(settingsPanel, "settings", "Settings", 1),
-        CreateSettingsTabButton(settingsPanel, "filters", "Filters", 2),
+        CreateSettingsTabButton(settingsPanel, "helpers", "Helpers", 2),
+        CreateSettingsTabButton(settingsPanel, "filters", "Filters", 3),
     }
     settingsPanel.activeTab = "settings"
     SetSettingsTab("settings")
@@ -1562,12 +1589,24 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
     owner.checkboxes = owner.checkboxes or {}
     owner.checkboxes[#owner.checkboxes + 1] = cb
 
+    cb.settingKey = settingKey
     cb:SetChecked(Database.GetSettings()[settingKey])
     cb:SetScript("OnClick", function(self)
         Database.SetSetting(settingKey, self:GetChecked())
         UI.RefreshTable()
         if onChange then onChange() end
     end)
+end
+
+function UI.RefreshSettingsCheckboxes()
+    if not settingsPanel or not settingsPanel.checkboxes then return end
+
+    local settings = Database.GetSettings()
+    for _, cb in ipairs(settingsPanel.checkboxes) do
+        if cb.settingKey then
+            cb:SetChecked(settings[cb.settingKey])
+        end
+    end
 end
 
 function UI.ToggleSettings()
@@ -3765,6 +3804,19 @@ end
 -- PVP Tab Button
 ------------------------------------------------------------
 local pvpButtonCreated = false
+local pvpQueueHelperButton
+
+function UI.UpdateQueueHelperPvPButton()
+    if not pvpQueueHelperButton then return end
+
+    local settings = Database.GetSettings()
+    local available = not ns.ArenaQueue
+        or not ns.ArenaQueue.IsAvailable
+        or ns.ArenaQueue.IsAvailable()
+    pvpQueueHelperButton:SetShown(
+        settings.hideArenaQueueHelper == true and available
+    )
+end
 
 local function CreatePvPButton()
     if pvpButtonCreated then return end
@@ -3779,6 +3831,23 @@ local function CreatePvPButton()
     btn:SetScript("OnClick", function()
         UI.Toggle()
     end)
+
+    pvpQueueHelperButton = CreateFrame(
+        "Button",
+        "WarbandRatingsQueueHelperPvPButton",
+        ConquestFrame,
+        "UIPanelButtonTemplate"
+    )
+    pvpQueueHelperButton:SetSize(140, 22)
+    pvpQueueHelperButton:SetFrameStrata("HIGH")
+    pvpQueueHelperButton:SetPoint("TOP", PVPUIFrame, "TOP", 120, -65)
+    pvpQueueHelperButton:SetText("Show Queue Helper")
+    pvpQueueHelperButton:SetScript("OnClick", function()
+        if ns.ArenaQueue and ns.ArenaQueue.Show then
+            ns.ArenaQueue.Show()
+        end
+    end)
+    UI.UpdateQueueHelperPvPButton()
 end
 
 ------------------------------------------------------------

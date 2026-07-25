@@ -157,6 +157,8 @@ function Database.Init()
             hideHeliotropeHelper = false,
             hideGalacticConquestChestHelper = false,
             hideGalacticEquipmentMailHelper = false,
+            hideArenaQueueHelper = false,
+            arenaQueueRatingSessions = {},
             galacticEquipmentMailRecipient = "",
             themeKey = "obsidian",
             windowHeight = 450,
@@ -181,6 +183,12 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper == nil then
         WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper = false
+    end
+    if WarbandRatingsDB.settings.hideArenaQueueHelper == nil then
+        WarbandRatingsDB.settings.hideArenaQueueHelper = false
+    end
+    if type(WarbandRatingsDB.settings.arenaQueueRatingSessions) ~= "table" then
+        WarbandRatingsDB.settings.arenaQueueRatingSessions = {}
     end
     if WarbandRatingsDB.settings.galacticEquipmentMailRecipient == nil then
         WarbandRatingsDB.settings.galacticEquipmentMailRecipient = ""

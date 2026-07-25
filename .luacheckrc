@@ -16,10 +16,12 @@ read_globals = {
     "GameTooltip",
     "GetCursorPosition",
     "IsMouseButtonDown",
+    "InCombatLockdown",
 
     -- Tables & constants
     "RAID_CLASS_COLORS",
     "CLASS_ICON_TCOORDS",
+    "MAX_PARTY_MEMBERS",
 
     -- Unit info
     "UnitName",
@@ -29,16 +31,29 @@ read_globals = {
     "GetRealmName",
     "GetNormalizedRealmName",
     "GetMaxLevelForPlayerExpansion",
+    "GetMaxLevelForLatestExpansion",
+    "GetNumGroupMembers",
+    "UnitIsConnected",
+    "UnitIsGroupLeader",
 
     -- Spec
+    "C_SpecializationInfo",
     "GetSpecialization",
     "GetSpecializationInfo",
     "GetSpecializationInfoByID",
 
     -- PvP
     "C_PvP",
+    "C_LobbyMatchmakerInfo",
     "MAX_BATTLEFIELD_QUEUES",
+    "GetAverageItemLevel",
+    "GetBattlefieldEstimatedWaitTime",
+    "GetBattlefieldPortExpiration",
     "GetBattlefieldStatus",
+    "GetBattlefieldTimeWaited",
+    "GetMaxBattlefieldID",
+    "GetLFGRoleUpdate",
+    "GetLFGRoleUpdateBattlegroundInfo",
     "GetBattlefieldArenaFaction",
     "GetBattlefieldTeamInfo",
     "GetBattlefieldWinner",
@@ -54,6 +69,8 @@ read_globals = {
 
     -- M+
     "C_ChallengeMode",
+    "C_LFGList",
+    "C_PartyInfo",
 
     -- Currency
     "C_CurrencyInfo",
@@ -74,15 +91,18 @@ read_globals = {
 
     -- Misc
     "C_Timer",
+    "C_AddOns",
     "C_SeasonInfo",
     "DEFAULT_CHAT_FRAME",
     "date",
+    "GetTime",
     "tinsert",
     "time",
     "AddonCompartmentFrame",
     "Settings",
     "InterfaceOptions_AddCategory",
     "SettingsPanel",
+    "LoadAddOn",
     "HideUIPanel",
     "InterfaceOptionsFrame",
 }

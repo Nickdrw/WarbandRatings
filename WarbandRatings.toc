@@ -18,5 +18,6 @@ HelperPanel.lua
 Merchant.lua
 BagOpener.lua
 Mailbox.lua
+ArenaQueue.lua
 UI.lua
 Core.lua
