@@ -375,7 +375,7 @@ function DataProvider.GetTableData()
     else
         groups = Database.GetFilteredCharacterGroups()
     end
-    return groups, Database.GetVisibleColumns(groups), not Database.GetSettings().hideMMR
+    return groups, Database.GetVisibleColumns(groups)
 end
 
 function DataProvider.GetHistorySeries(charKey, colKey, specID)

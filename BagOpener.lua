@@ -6,7 +6,7 @@ local Utils = ns.Utils
 local HelperPanel = ns.HelperPanel
 
 local PANEL_WIDTH = 252
-local PANEL_HEIGHT = 122
+local PANEL_HEIGHT = 156
 local PANEL_TOP_OFFSET = 72
 local BUTTON_HEIGHT = 28
 local BUTTON_GAP = 6
@@ -14,6 +14,14 @@ local CONTENT_TOP_OFFSET = 34
 local FIRST_BUTTON_TOP_OFFSET = 54
 local BUTTON_ICON_SIZE = 20
 local BUTTON_ICON_SLOT_WIDTH = 32
+local OPENING_BAR_FALLBACK_DURATION = 5
+local OPENING_BAR_HEIGHT = 3
+local OPENING_CAST_START_TIMEOUT = 1.25
+local OPENING_CAST_MIN_DURATION = 1.5
+local OPENING_CAST_SYNC_DELAYS = { 0.05, 0.15, 0.30 }
+local OPENING_REBIND_DELAY = 0.375
+local OPENING_REBIND_MAX_DELAY = 0.875
+local CAST_TIME_EPSILON = 0.02
 
 local OPENABLE_BOXES = {
     {
@@ -28,14 +36,27 @@ local OPENABLE_BOXES = {
         name = Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_NAME,
         buttonLabel = "Contender Strongbox",
     },
+    {
+        key = "galacticEquipmentChest",
+        itemIDs = { Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID },
+        name = Database.GALACTIC_EQUIPMENT_CHEST_NAME,
+        buttonLabel = "Galactic Equipment Chest",
+        hasOpeningCast = true,
+    },
 }
 
 local eventFrame
 local panel
 local boxByItemID = {}
+local pendingOpeningButton
+local pendingPanelHide = false
+local bagUpdateSerial = 0
 local isPanelMoving = false
 local UpdatePanel
+local UpdateOpeningBar
 local RefreshSoon
+local SyncOpeningButtonToPlayerCast
+local ScheduleOpeningCastSync
 
 for _, box in ipairs(OPENABLE_BOXES) do
     for _, itemID in ipairs(box.itemIDs or {}) do
@@ -79,6 +100,8 @@ local function ApplyButtonTheme(button)
     HelperPanel.SetTextureColor(button.bg, enabled and theme.surfaceRaised or theme.surface, enabled and 0.94 or 0.55)
     HelperPanel.SetTextureColor(button.hover, theme.rowHover, enabled and 0.90 or 0)
     HelperPanel.SetTextureColor(button.pushed, theme.accent, enabled and 0.18 or 0)
+    HelperPanel.SetTextureColor(button.openingBarBg, theme.surface, 0.95)
+    HelperPanel.SetTextureColor(button.openingBar, theme.accent, 0.95)
     HelperPanel.SetTextureColor(button.iconBg, theme.surface, enabled and 0.92 or 0.52)
     HelperPanel.SetTextureColor(button.iconBorderTop, enabled and theme.accent or theme.border, enabled and 0.72 or 0.38)
     HelperPanel.SetTextureColor(button.iconBorderBottom, enabled and theme.accent or theme.border, enabled and 0.72 or 0.38)
@@ -168,6 +191,10 @@ local function GetBoxForContainerItem(itemInfo)
             return candidate
         end
     end
+end
+
+local function GetTimeNow()
+    return _G.GetTime and _G.GetTime() or 0
 end
 
 local function AddBagID(bagIDs, used, bagID)
@@ -269,6 +296,12 @@ end
 local function HidePanel()
     if not panel then return end
 
+    if _G.InCombatLockdown and _G.InCombatLockdown() then
+        pendingPanelHide = true
+        return
+    end
+
+    pendingPanelHide = false
     if isPanelMoving then
         panel:StopMovingOrSizing()
         isPanelMoving = false
@@ -389,103 +422,394 @@ function BagOpener.Refresh()
     RefreshSoon()
 end
 
-local function UseItemByGUID(location)
-    if not location or not _G.ItemLocation or not C_Item or not C_Item.GetItemGUID or not C_Item.UseItemByGUID then
-        return false
-    end
-
-    local itemLocation = _G.ItemLocation:CreateFromBagAndSlot(location.bagID, location.slot)
-    if not itemLocation then
-        return false
-    end
-    if itemLocation.IsValid and not itemLocation:IsValid() then
-        return false
-    end
-
-    local itemGUID = C_Item.GetItemGUID(itemLocation)
-    if not itemGUID then
-        return false
-    end
-
-    C_Item.UseItemByGUID(itemGUID)
-    return true
+local function GetStaticPopupText(dialogName)
+    local dialog = _G[dialogName]
+    local text = dialog and dialog.text
+    return text and text.GetText and text:GetText()
 end
 
-local function UseItemByName(location, box)
-    local itemInfo = location and (location.itemID or location.itemName)
-        or (box and (box.itemIDs and box.itemIDs[1] or box.name))
-    if not itemInfo then
+local function GetStaticPopupItemName(dialogName)
+    local itemName = _G[dialogName .. "ItemFrameName"]
+    if itemName and itemName.GetText then
+        return itemName:GetText()
+    end
+
+    local itemFrame = _G[dialogName .. "ItemFrame"]
+    itemName = itemFrame and itemFrame.Name
+    return itemName and itemName.GetText and itemName:GetText()
+end
+
+local function IsOpenableBoxRefundPopup(dialogName, box)
+    local text = GetStaticPopupText(dialogName)
+    text = text and string.lower(text) or ""
+    if not text:find("non-refundable", 1, true) then
         return false
     end
 
-    if C_Item and C_Item.UseItemByName then
-        C_Item.UseItemByName(itemInfo)
+    local itemName = GetStaticPopupItemName(dialogName)
+    if not itemName or itemName == "" then
+        return box ~= nil
+    end
+
+    if box and itemName == box.name then
         return true
-    elseif _G.UseItemByName then
-        _G.UseItemByName(itemInfo)
+    end
+
+    for _, candidate in ipairs(OPENABLE_BOXES) do
+        if itemName == candidate.name then
+            return true
+        end
+    end
+    return false
+end
+
+local function ConfirmOpenableBoxRefundPopup(box)
+    local dialogCount = tonumber(_G.STATICPOPUP_NUMDIALOGS) or 4
+    for index = 1, dialogCount do
+        local dialogName = "StaticPopup" .. index
+        local dialog = _G[dialogName]
+        if dialog and dialog:IsShown() and IsOpenableBoxRefundPopup(dialogName, box) then
+            local button = _G[dialogName .. "Button1"]
+            if button and (not button.IsEnabled or button:IsEnabled()) then
+                button:Click()
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function GetUseMacroText(location, box)
+    if not location then return nil end
+
+    if IsMerchantShown() and box and box.name then
+        return "/stopcasting\n/use " .. box.name
+    end
+
+    return "/stopcasting\n/use " .. tostring(location.bagID) .. " " .. tostring(location.slot)
+end
+
+local function SetButtonUseAction(button, location, box)
+    if not button or (_G.InCombatLockdown and _G.InCombatLockdown()) then return end
+
+    local macroText = GetUseMacroText(location, box)
+    if macroText then
+        button:SetAttribute("type", "macro")
+        button:SetAttribute("macrotext", macroText)
+        button:SetAttribute("type1", "macro")
+        button:SetAttribute("macrotext1", macroText)
+    else
+        button:SetAttribute("type", nil)
+        button:SetAttribute("macrotext", nil)
+        button:SetAttribute("type1", nil)
+        button:SetAttribute("macrotext1", nil)
+    end
+end
+
+local function SetOpeningBarProgress(button, progress)
+    if not button or not button.openingBar or not button.openingBarBg then return end
+
+    progress = math.max(0, math.min(tonumber(progress) or 0, 1))
+    local width = (button:GetWidth() or (PANEL_WIDTH - 20)) - 4
+    button.openingBar:SetWidth(math.max(1, math.floor(width * progress + 0.5)))
+    button.openingBarBg:Show()
+    button.openingBar:Show()
+end
+
+local function BuildCastInfo(source, name, startTimeMS, endTimeMS, castID, spellID)
+    if not startTimeMS or not endTimeMS or endTimeMS <= startTimeMS then
+        return nil
+    end
+
+    local startTime = startTimeMS / 1000
+    local endTime = endTimeMS / 1000
+    return {
+        source = source,
+        name = name,
+        startTime = startTime,
+        endTime = endTime,
+        duration = endTime - startTime,
+        castID = castID,
+        spellID = spellID,
+    }
+end
+
+local function GetActivePlayerCastInfo()
+    if _G.UnitCastingInfo then
+        local name, _, _, startTimeMS, endTimeMS, _, castID, _, spellID = _G.UnitCastingInfo("player")
+        local info = BuildCastInfo("cast", name, startTimeMS, endTimeMS, castID, spellID)
+        if info then return info end
+    end
+
+    if _G.UnitChannelInfo then
+        local name, _, _, startTimeMS, endTimeMS, _, _, spellID = _G.UnitChannelInfo("player")
+        local info = BuildCastInfo("channel", name, startTimeMS, endTimeMS, nil, spellID)
+        if info then return info end
+    end
+end
+
+local function AreCastTimesEqual(leftStart, leftEnd, rightStart, rightEnd)
+    return leftStart
+        and leftEnd
+        and rightStart
+        and rightEnd
+        and math.abs(leftStart - rightStart) <= CAST_TIME_EPSILON
+        and math.abs(leftEnd - rightEnd) <= CAST_TIME_EPSILON
+end
+
+local function IsPreClickCast(button, info)
+    if not info then return false end
+    if info.castID and button.openingIgnoredCastID and info.castID == button.openingIgnoredCastID then
+        return true
+    end
+    return AreCastTimesEqual(info.startTime, info.endTime, button.openingIgnoredCastStart, button.openingIgnoredCastEnd)
+end
+
+local function IsOpeningCastCandidate(info)
+    return info and (info.duration or 0) >= OPENING_CAST_MIN_DURATION
+end
+
+local function IsAcceptedOpeningCast(button, info, castGUID, spellID)
+    if not button or not info or not button.openingCastAccepted then return false end
+    if button.openingCastGUID and castGUID then
+        return button.openingCastGUID == castGUID
+    end
+    if button.openingCastID and info.castID then
+        return button.openingCastID == info.castID
+    end
+    if button.openingCastSpellID and spellID and button.openingCastSpellID ~= spellID then
+        return false
+    end
+    return AreCastTimesEqual(info.startTime, info.endTime, button.openingStartedAt, button.openingUntil)
+end
+
+local function GetButtonOpeningCastInfo(button, castGUID, spellID)
+    if not button then return nil end
+
+    local info = GetActivePlayerCastInfo()
+    if not info then return nil end
+
+    if button.openingCastAccepted then
+        if IsAcceptedOpeningCast(button, info, castGUID, spellID) then
+            return info
+        end
+        return nil
+    end
+
+    if IsPreClickCast(button, info) then return nil end
+    if not IsOpeningCastCandidate(info) then return nil end
+
+    local clickTime = button.openingClickTime or button.openingStartedAt
+    if clickTime and info.startTime < (clickTime - CAST_TIME_EPSILON) then
+        return nil
+    end
+
+    return info
+end
+
+local function CapturePreClickCast(button)
+    if not button then return end
+
+    local info = GetActivePlayerCastInfo()
+    button.openingClickTime = GetTimeNow()
+    button.openingIgnoredCastStart = info and info.startTime
+    button.openingIgnoredCastEnd = info and info.endTime
+    button.openingIgnoredCastID = info and info.castID
+end
+
+local function IsAcceptedOpeningCastActive(button)
+    if not button or not button.openingCastAccepted then return false end
+
+    local info = GetActivePlayerCastInfo()
+    return IsAcceptedOpeningCast(button, info)
+end
+
+local function IsAcceptedOpeningCastEvent(button, castGUID, spellID)
+    if not button or not button.openingCastAccepted then return false end
+    if button.openingCastGUID and castGUID then
+        return button.openingCastGUID == castGUID
+    end
+    if button.openingCastID and castGUID then
+        return button.openingCastID == castGUID
+    end
+    if button.openingCastSpellID and spellID then
+        if button.openingCastSpellID ~= spellID then
+            return false
+        end
+        return not IsAcceptedOpeningCastActive(button)
+    end
+    return not castGUID and not spellID and not IsAcceptedOpeningCastActive(button)
+end
+
+local function ClearButtonOpening(button, refresh)
+    if not button then return end
+
+    if pendingOpeningButton == button then
+        pendingOpeningButton = nil
+    end
+    button.openingStartedAt = nil
+    button.openingUntil = nil
+    button.openingCastAccepted = nil
+    button.openingCastDeadline = nil
+    button.openingClickTime = nil
+    button.openingIgnoredCastStart = nil
+    button.openingIgnoredCastEnd = nil
+    button.openingIgnoredCastID = nil
+    button.openingCastID = nil
+    button.openingCastGUID = nil
+    button.openingCastSpellID = nil
+    button:SetScript("OnUpdate", nil)
+    if button.openingBarBg then button.openingBarBg:Hide() end
+    if button.openingBar then button.openingBar:Hide() end
+
+    if refresh then
+        RefreshSoon()
+    end
+end
+
+local function LockButtonAfterOpening(button)
+    if not button then return end
+
+    local now = GetTimeNow()
+    button.openingRebindAfter = now + OPENING_REBIND_DELAY
+    button.openingRebindFallbackAfter = now + OPENING_REBIND_MAX_DELAY
+    button.openingRebindBagUpdateSerial = button.openingBagUpdateSerial or bagUpdateSerial
+    button.openingBagUpdateSerial = nil
+    SetButtonUseAction(button, nil, button.box)
+    button:Disable()
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(OPENING_REBIND_DELAY, UpdatePanel)
+        C_Timer.After(OPENING_REBIND_MAX_DELAY, UpdatePanel)
+    end
+end
+
+local function ClearButtonRebindLock(button)
+    if not button then return end
+
+    button.openingRebindAfter = nil
+    button.openingRebindFallbackAfter = nil
+    button.openingRebindBagUpdateSerial = nil
+end
+
+local function SetButtonOpeningCast(button, info, castGUID, spellID)
+    if not button or not info or not info.startTime or not info.endTime or info.endTime <= info.startTime then return end
+
+    button.openingCastAccepted = true
+    button.openingCastDeadline = nil
+    button.openingCastID = info.castID
+    button.openingCastGUID = castGUID
+    button.openingCastSpellID = spellID or info.spellID
+    button.openingStartedAt = info.startTime
+    button.openingUntil = info.endTime
+    button:SetScript("OnUpdate", UpdateOpeningBar)
+    UpdateOpeningBar(button)
+end
+
+local function IsButtonTemporarilyLocked(button)
+    if not button then return false end
+
+    local now = GetTimeNow()
+    if button.openingUntil then
+        if not button.openingCastAccepted and button.openingCastDeadline and now >= button.openingCastDeadline then
+            ClearButtonOpening(button, false)
+            return false
+        end
+
+        if now < button.openingUntil then
+            return true
+        end
+
+        local wasOpeningCast = button.openingCastAccepted
+        ClearButtonOpening(button, false)
+        if wasOpeningCast then
+            LockButtonAfterOpening(button)
+        end
+    end
+
+    if button.openingRebindAfter then
+        local gotBagUpdate = bagUpdateSerial > (button.openingRebindBagUpdateSerial or bagUpdateSerial)
+        local minimumPassed = now >= button.openingRebindAfter
+        local fallbackPassed = now >= (button.openingRebindFallbackAfter or button.openingRebindAfter)
+        if fallbackPassed or (minimumPassed and gotBagUpdate) then
+            ClearButtonRebindLock(button)
+            return false
+        end
+
         return true
     end
 
     return false
 end
 
-local function CanOpenBoxAtMerchant()
-    return (C_Item and C_Item.UseItemByGUID and C_Item.GetItemGUID and _G.ItemLocation)
-        or (C_Item and C_Item.UseItemByName)
-        or _G.UseItemByName
-end
+UpdateOpeningBar = function(button)
+    if not button or not button.openingUntil or not button.openingStartedAt then return end
 
-local function UseBoxItem(location, box)
-    if IsMerchantShown() then
-        return UseItemByGUID(location) or UseItemByName(location, box)
-    end
-
-    if C_Container and C_Container.UseContainerItem then
-        C_Container.UseContainerItem(location.bagID, location.slot)
-        return true
-    elseif _G.UseContainerItem then
-        _G.UseContainerItem(location.bagID, location.slot)
-        return true
-    end
-
-    return UseItemByGUID(location) or UseItemByName(location, box)
-end
-
-local function OpenBox(boxKey)
-    local state = ScanOpenableBoxes()
-    local itemState = state[boxKey]
-    local location = itemState and itemState.location
-    if not location then
-        RefreshSoon()
+    local now = GetTimeNow()
+    if not button.openingCastAccepted and button.openingCastDeadline and now >= button.openingCastDeadline then
+        ClearButtonOpening(button, true)
         return
     end
 
-    UseBoxItem(location, itemState.box)
+    local elapsed = now - button.openingStartedAt
+    local duration = button.openingUntil - button.openingStartedAt
+    local progress = duration > 0 and (elapsed / duration) or 1
+    SetOpeningBarProgress(button, progress)
 
-    RefreshSoon()
-    if C_Timer and C_Timer.After then
-        C_Timer.After(0.3, UpdatePanel)
-        C_Timer.After(0.8, UpdatePanel)
+    if progress >= 1 then
+        local wasOpeningCast = button.openingCastAccepted
+        ClearButtonOpening(button, true)
+        if wasOpeningCast then
+            LockButtonAfterOpening(button)
+        end
     end
 end
 
-local function ShowButtonTooltip(button)
-    local itemState = panel and panel.state and panel.state[button.boxKey]
-    if not itemState then return end
+SyncOpeningButtonToPlayerCast = function(castGUID, spellID)
+    if not pendingOpeningButton then return end
 
-    GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
-    GameTooltip:ClearLines()
-    GameTooltip:AddLine("Warband Ratings")
-    GameTooltip:AddLine("Opens one " .. itemState.box.name .. " from your bags.", 1, 1, 1, true)
-    GameTooltip:AddDoubleLine("Remaining:", FormatCount(itemState.count), 1, 0.82, 0, 1, 1, 1)
-    GameTooltip:Show()
+    local info = GetButtonOpeningCastInfo(pendingOpeningButton, castGUID, spellID)
+    if info then
+        SetButtonOpeningCast(pendingOpeningButton, info, castGUID, spellID)
+    end
+end
+
+ScheduleOpeningCastSync = function()
+    SyncOpeningButtonToPlayerCast()
+    if not (C_Timer and C_Timer.After) then return end
+
+    for _, delay in ipairs(OPENING_CAST_SYNC_DELAYS) do
+        C_Timer.After(delay, SyncOpeningButtonToPlayerCast)
+    end
+end
+
+local function StartButtonOpening(button)
+    if not button then return end
+
+    local now = GetTimeNow()
+    SetButtonUseAction(button, nil, button.box)
+    pendingOpeningButton = button
+    button.openingBagUpdateSerial = bagUpdateSerial
+    button.openingClickTime = button.openingClickTime or now
+    button.openingCastAccepted = false
+    button.openingCastDeadline = now + OPENING_CAST_START_TIMEOUT
+    ClearButtonRebindLock(button)
+    button.openingStartedAt = now
+    button.openingUntil = button.openingStartedAt + OPENING_BAR_FALLBACK_DURATION
+    SetOpeningBarProgress(button, 0)
+    button:Disable()
+    button:SetScript("OnUpdate", UpdateOpeningBar)
+    ScheduleOpeningCastSync()
 end
 
 local function CreateBoxButton(parent, box, index)
-    local button = CreateFrame("Button", nil, parent)
+    local button = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")
     button:SetPoint("TOPLEFT", parent, "TOPLEFT", 10, -FIRST_BUTTON_TOP_OFFSET - ((index - 1) * (BUTTON_HEIGHT + BUTTON_GAP)))
     button:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -10, -FIRST_BUTTON_TOP_OFFSET - ((index - 1) * (BUTTON_HEIGHT + BUTTON_GAP)))
     button:SetHeight(BUTTON_HEIGHT)
+    if button.RegisterForClicks then
+        button:RegisterForClicks((_G.GetCVarBool and _G.GetCVarBool("ActionButtonUseKeyDown")) and "AnyDown" or "AnyUp")
+    end
     button.boxKey = box.key
     button.box = box
 
@@ -499,6 +823,17 @@ local function CreateBoxButton(parent, box, index)
     button.pushed = button:CreateTexture(nil, "ARTWORK")
     button.pushed:SetAllPoints()
     button.pushed:Hide()
+
+    button.openingBarBg = button:CreateTexture(nil, "ARTWORK")
+    button.openingBarBg:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 2, 2)
+    button.openingBarBg:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    button.openingBarBg:SetHeight(OPENING_BAR_HEIGHT)
+    button.openingBarBg:Hide()
+
+    button.openingBar = button:CreateTexture(nil, "OVERLAY")
+    button.openingBar:SetPoint("LEFT", button.openingBarBg, "LEFT", 0, 0)
+    button.openingBar:SetHeight(OPENING_BAR_HEIGHT)
+    button.openingBar:Hide()
 
     button.iconBg = button:CreateTexture(nil, "BORDER")
     button.iconBg:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
@@ -536,19 +871,44 @@ local function CreateBoxButton(parent, box, index)
     button.label:SetJustifyH("LEFT")
     button.label:SetJustifyV("MIDDLE")
 
-    button:SetScript("OnClick", function(self)
-        OpenBox(self.boxKey)
+    button:SetScript("PreClick", function(self, mouseButton)
+        if mouseButton and mouseButton ~= "LeftButton" then return end
+
+        if self.box and self.box.hasOpeningCast then
+            CapturePreClickCast(self)
+        end
+    end)
+    button:SetScript("PostClick", function(self, mouseButton)
+        if mouseButton and mouseButton ~= "LeftButton" then return end
+
+        local hasOpeningCast = self.box and self.box.hasOpeningCast
+        if hasOpeningCast then
+            StartButtonOpening(self)
+        else
+            ClearButtonOpening(self, false)
+            ClearButtonRebindLock(self)
+        end
+        ConfirmOpenableBoxRefundPopup(self.box)
+        RefreshSoon()
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0.1, function()
+                ConfirmOpenableBoxRefundPopup(self.box)
+            end)
+            C_Timer.After(0.3, UpdatePanel)
+            C_Timer.After(0.8, UpdatePanel)
+            if hasOpeningCast then
+                C_Timer.After(OPENING_BAR_FALLBACK_DURATION, UpdatePanel)
+            end
+        end
     end)
     button:SetScript("OnEnter", function(self)
         if not self.IsEnabled or self:IsEnabled() then
             self.hover:Show()
         end
-        ShowButtonTooltip(self)
     end)
     button:SetScript("OnLeave", function()
         button.hover:Hide()
         button.pushed:Hide()
-        GameTooltip:Hide()
     end)
     button:SetScript("OnMouseDown", function(self, mouseButton)
         if mouseButton == "LeftButton" and (not self.IsEnabled or self:IsEnabled()) then
@@ -618,6 +978,7 @@ UpdatePanel = function()
         return
     end
 
+    pendingPanelHide = false
     panel:SetFrameLevel(1000)
     panel:Show()
     ApplyPanelTheme()
@@ -628,9 +989,14 @@ UpdatePanel = function()
         local count = itemState and itemState.count or 0
         button.icon:SetTexture(GetBoxIcon(box))
         button.label:SetText(box.buttonLabel .. " (" .. FormatCount(count) .. ")")
-        if count > 0 and itemState and itemState.location and (not IsMerchantShown() or CanOpenBoxAtMerchant()) then
+        if IsButtonTemporarilyLocked(button) then
+            SetButtonUseAction(button, nil, box)
+            button:Disable()
+        elseif count > 0 and itemState and itemState.location then
+            SetButtonUseAction(button, itemState.location, box)
             button:Enable()
         else
+            SetButtonUseAction(button, nil, box)
             button:Disable()
         end
     end
@@ -648,12 +1014,51 @@ function BagOpener.Attach()
     eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
     eventFrame:RegisterEvent("MERCHANT_SHOW")
     eventFrame:RegisterEvent("MERCHANT_CLOSED")
-    eventFrame:SetScript("OnEvent", function(_, event)
-        if event == "MERCHANT_SHOW" then
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_DELAYED")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_UPDATE")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_FAILED")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+    eventFrame:SetScript("OnEvent", function(_, event, unit, castGUID, spellID)
+        if event == "PLAYER_REGEN_ENABLED" then
+            if pendingPanelHide then
+                pendingPanelHide = false
+            end
+            RefreshSoon()
+            return
+        elseif event == "MERCHANT_SHOW" then
             RefreshSoon()
             return
         elseif event == "MERCHANT_CLOSED" then
             RefreshSoon()
+            return
+        elseif event == "BAG_UPDATE_DELAYED" then
+            bagUpdateSerial = bagUpdateSerial + 1
+            RefreshSoon()
+            return
+        elseif unit == "player" and (
+            event == "UNIT_SPELLCAST_START"
+            or event == "UNIT_SPELLCAST_DELAYED"
+            or event == "UNIT_SPELLCAST_CHANNEL_START"
+            or event == "UNIT_SPELLCAST_CHANNEL_UPDATE"
+        ) then
+            SyncOpeningButtonToPlayerCast(castGUID, spellID)
+            return
+        elseif unit == "player" and (
+            event == "UNIT_SPELLCAST_STOP"
+            or event == "UNIT_SPELLCAST_CHANNEL_STOP"
+            or event == "UNIT_SPELLCAST_FAILED"
+            or event == "UNIT_SPELLCAST_INTERRUPTED"
+        ) then
+            if pendingOpeningButton and IsAcceptedOpeningCastEvent(pendingOpeningButton, castGUID, spellID) then
+                local button = pendingOpeningButton
+                SetOpeningBarProgress(button, 1)
+                ClearButtonOpening(button, true)
+                LockButtonAfterOpening(button)
+            end
             return
         end
         RefreshSoon()

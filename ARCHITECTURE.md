@@ -46,9 +46,9 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
 - Max level only.
 - Hide characters with no rating.
 - Hide brackets with no rating.
-- Hide MMR for PvP ratings. Default: enabled for fresh installs.
 - Hide minimap icon.
 - Hide addon compartment icon.
+- Hide helper panels for box opening, Heliotrope purchases, Galactic Equipment Chest purchases, and Galactic Equipment Chest mailing.
 - Theme selector:
   - Obsidian
   - Stormglass
@@ -59,8 +59,8 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
 
 ### PvP MMR Display
 
-- Table MMR display is controlled by `settings.hideMMR`.
-- MMR is shown inline as `rating (MMR)` when enabled.
+- PvP rating tooltips show current/last MMR when available.
+- The history graph has session-local Rating/MMR toggles.
 - Saved as:
   - `charData.lastMMR[colKey]` for global PvP brackets.
   - `charData.specLastMMR[specID][colKey]` for spec PvP brackets.
@@ -77,6 +77,19 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
   - title and description from the current client currency metadata
   - total from the row character
   - season earned/cap from the row character
+
+### Helper Panels
+
+- `HelperPanel.lua` provides the shared shell, borders, theme application helpers, and pixel snapping for small floating helper panels.
+- `Merchant.lua` shows a vendor-adjacent helper for currency dump purchases:
+  - Infused Heliotrope with Honor
+  - Galactic Equipment Chest with Conquest
+- `BagOpener.lua` scans player bags for openable boxes and shows secure click buttons for:
+  - Field Medic's Hazard Payout
+  - Illustrious Contender's Strongbox
+  - Galactic Equipment Chest
+- Bag opener buttons are `SecureActionButtonTemplate` buttons with `/stopcasting` + `/use` macro actions assigned outside combat. Instant boxes click through normally; Galactic Equipment Chest tracks the real opening cast and uses a short post-cast rebind lock for its in-button cast bar. The panel is hidden in combat and instances.
+- `Mailbox.lua` shows a mailbox-adjacent helper for attaching and sending Galactic Equipment Chests, with the recipient saved in settings.
 
 ### PvP History Graph
 
@@ -130,6 +143,10 @@ Files load in `.toc` order. Each file receives the addon namespace via `local _,
 | `History.lua` | `ns.History` | PvP history storage, season detection, archived summaries, duplicate-window handling, SavedVariables size trimming. |
 | `DataProvider.lua` | `ns.DataProvider` | Development-only fake data generator retained in source. `USE_FAKE_DATA` is false and normal UI/Core paths do not depend on it. |
 | `DataCollection.lua` | `ns.DataCollection` | Reads WoW APIs for current character ratings, currencies, stats, active PvP context, last-match MMR, and history recording. |
+| `HelperPanel.lua` | `ns.HelperPanel` | Shared themed shell, border, color, and pixel-snapping helpers for floating helper panels. |
+| `Merchant.lua` | `ns.Merchant` | Vendor helper for buying currency dump items such as Infused Heliotrope and Galactic Equipment Chest. |
+| `BagOpener.lua` | `ns.BagOpener` | Bag scanner and secure helper buttons for opening Field Medic payouts, Contender strongboxes, and Galactic Equipment Chests. |
+| `Mailbox.lua` | `ns.Mailbox` | Mail helper for attaching and sending Galactic Equipment Chests. |
 | `UI.lua` | `ns.UI` | Main table, settings panel, filters, themes, graph panel, tooltips, minimap button, Group Finder buttons, addon settings panel. |
 | `Core.lua` | entry point | Event registration, initialization orchestration, slash commands, addon compartment callbacks. |
 
@@ -206,12 +223,20 @@ WarbandRatingsDB.settings = {
     hideNoRating = false,
     hideEmptyColumns = false,
     hideNonMaxLevel = false,
-    hideMMR = true,
+    hideBoxesHelper = false,
+    hideHeliotropeHelper = false,
+    hideGalacticConquestChestHelper = false,
+    hideGalacticEquipmentMailHelper = false,
+    galacticEquipmentMailRecipient = "",
     hideMinimapIcon = false,
     hideCompartmentIcon = false,
     minimapPos = 220,
     hiddenColumns = {},
     themeKey = "obsidian",
+    windowHeight = 450,
+    sortKey = "character",
+    sortDirection = "asc",
+    bagOpenerPosition = { x = 0, y = -72 }, -- saved after the helper is moved
 }
 ```
 
