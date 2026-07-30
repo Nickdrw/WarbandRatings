@@ -17,7 +17,9 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CRITERIA_UPDATE")
 eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
 eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+eventFrame:RegisterEvent("PVP_MATCH_ACTIVE")
 eventFrame:RegisterEvent("PVP_MATCH_COMPLETE")
+eventFrame:RegisterEvent("PVP_MATCH_INACTIVE")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
@@ -27,10 +29,29 @@ eventFrame:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED")
 eventFrame:RegisterEvent("SAVED_VARIABLES_TOO_LARGE")
 
 local function TryCollectLastMatchMMRWithRetries(recordHistory)
-    local delays = { 0, 0.5, 1.5, 3, 6, 10 }
+    if DataCollection.CollectLastMatchMMR(recordHistory) then
+        CallUI("RefreshTable")
+    end
+
+    local delays = { 0.25, 0.75, 1.5, 3, 6, 10 }
     for _, delay in ipairs(delays) do
         C_Timer.After(delay, function()
             if DataCollection.CollectLastMatchMMR(recordHistory) then
+                CallUI("RefreshTable")
+            end
+        end)
+    end
+end
+
+local function TryCaptureActiveMatchMMRWithRetries()
+    if DataCollection.CaptureActiveMatchMMR() then
+        CallUI("RefreshTable")
+    end
+
+    local delays = { 0.25, 0.75, 1.5, 3 }
+    for _, delay in ipairs(delays) do
+        C_Timer.After(delay, function()
+            if DataCollection.CaptureActiveMatchMMR() then
                 CallUI("RefreshTable")
             end
         end)
@@ -43,7 +64,15 @@ local function RefreshHeliotropeCounts()
     CallUI("RefreshHeliotropeCounter")
 end
 
-eventFrame:SetScript("OnEvent", function(_, event, addOnName)
+local function IsPVPMatchActive()
+    if not C_PvP or not C_PvP.GetActiveMatchState then return false end
+
+    local ok, state = pcall(C_PvP.GetActiveMatchState)
+    local activeState = Enum and Enum.PvPMatchState and Enum.PvPMatchState.Active or 1
+    return ok and state == activeState
+end
+
+eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         Database.Init()
         History.Init()
@@ -71,9 +100,14 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
         end
 
         DataCollection.UpdateActivePVPContext()
-        C_Timer.After(1, function()
-            TryCollectLastMatchMMRWithRetries(true)
-        end)
+        if IsPVPMatchActive() then
+            DataCollection.BeginRatedMatch()
+            TryCaptureActiveMatchMMRWithRetries()
+        else
+            C_Timer.After(1, function()
+                TryCollectLastMatchMMRWithRetries(true)
+            end)
+        end
 
     elseif event == "CRITERIA_UPDATE" then
         -- Statistics are now available from the server; update HK and other stat columns.
@@ -113,16 +147,33 @@ eventFrame:SetScript("OnEvent", function(_, event, addOnName)
             C_Timer.After(0.5, RefreshHeliotropeCounts)
         end
 
+    elseif event == "PVP_MATCH_ACTIVE" then
+        DataCollection.UpdateActivePVPContext()
+        DataCollection.BeginRatedMatch(true)
+        TryCaptureActiveMatchMMRWithRetries()
+
     elseif event == "UPDATE_BATTLEFIELD_SCORE" then
         DataCollection.UpdateActivePVPContext()
-        TryCollectLastMatchMMRWithRetries(false)
+        if DataCollection.CaptureActiveMatchMMR() then
+            CallUI("RefreshTable")
+        end
 
-    elseif event == "PVP_MATCH_COMPLETE" or event == "ZONE_CHANGED_NEW_AREA" then
+    elseif event == "PVP_MATCH_COMPLETE" then
+        DataCollection.UpdateActivePVPContext()
+        DataCollection.MarkRatedMatchComplete(arg1, arg2)
+        TryCaptureActiveMatchMMRWithRetries()
+
+    elseif event == "PVP_MATCH_INACTIVE" then
+        DataCollection.UpdateActivePVPContext()
+        DataCollection.MarkRatedMatchInactive()
+        TryCollectLastMatchMMRWithRetries(true)
+
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
         DataCollection.UpdateActivePVPContext()
         TryCollectLastMatchMMRWithRetries(true)
 
     elseif event == "SAVED_VARIABLES_TOO_LARGE" then
-        if not addOnName or addOnName == "WarbandRatings" or addOnName == "WarbandRatingsDB" then
+        if not arg1 or arg1 == "WarbandRatings" or arg1 == "WarbandRatingsDB" then
             History.HandleSavedVariablesTooLarge()
             if DEFAULT_CHAT_FRAME then
                 DEFAULT_CHAT_FRAME:AddMessage("Warband Ratings: archived raw history points were trimmed; season summaries were kept.")

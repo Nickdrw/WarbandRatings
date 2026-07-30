@@ -2230,6 +2230,79 @@ UI.PVPTooltip = UI.PVPTooltip or {
     },
 }
 
+function UI.PVPTooltip.FormatWinRate(won, played)
+    won = tonumber(won) or 0
+    played = tonumber(played) or 0
+    if played <= 0 then
+        return "-"
+    end
+
+    local text = string.format("%.1f%%", won / played * 100)
+    return (text:gsub("%.0%%$", "%%"))
+end
+
+function UI.PVPTooltip.ApplyStyle(theme)
+    if not UI.PVPTooltip.opaqueBackground then
+        UI.PVPTooltip.opaqueBackground = GameTooltip:CreateTexture(nil, "BACKGROUND", nil, -8)
+        UI.PVPTooltip.opaqueBackground:SetPoint("TOPLEFT", GameTooltip, "TOPLEFT", 3, -3)
+        UI.PVPTooltip.opaqueBackground:SetPoint("BOTTOMRIGHT", GameTooltip, "BOTTOMRIGHT", -3, 3)
+    end
+    UI.PVPTooltip.opaqueBackground:SetColorTexture(theme.bg[1], theme.bg[2], theme.bg[3], 0.92)
+    UI.PVPTooltip.opaqueBackground:Show()
+
+    if GameTooltip.GetBackdropColor and GameTooltip.SetBackdropColor then
+        UI.PVPTooltip.backdropR,
+        UI.PVPTooltip.backdropG,
+        UI.PVPTooltip.backdropB,
+        UI.PVPTooltip.backdropA = GameTooltip:GetBackdropColor()
+        GameTooltip:SetBackdropColor(theme.bg[1], theme.bg[2], theme.bg[3], 0.92)
+    end
+
+    UI.PVPTooltip.tooltipAlpha = GameTooltip:GetAlpha()
+    GameTooltip:SetAlpha(1)
+
+    if GameTooltip.NineSlice then
+        UI.PVPTooltip.nineSliceAlpha = GameTooltip.NineSlice:GetAlpha()
+        GameTooltip.NineSlice:SetAlpha(1)
+        if GameTooltip.NineSlice.Center then
+            UI.PVPTooltip.nineSliceCenterAlpha = GameTooltip.NineSlice.Center:GetAlpha()
+            GameTooltip.NineSlice.Center:SetAlpha(0.92)
+        end
+    end
+end
+
+function UI.PVPTooltip.RestoreStyle()
+    if UI.PVPTooltip.opaqueBackground then
+        UI.PVPTooltip.opaqueBackground:Hide()
+    end
+
+    if UI.PVPTooltip.backdropR and GameTooltip.SetBackdropColor then
+        GameTooltip:SetBackdropColor(
+            UI.PVPTooltip.backdropR,
+            UI.PVPTooltip.backdropG,
+            UI.PVPTooltip.backdropB,
+            UI.PVPTooltip.backdropA
+        )
+    end
+    if UI.PVPTooltip.tooltipAlpha then
+        GameTooltip:SetAlpha(UI.PVPTooltip.tooltipAlpha)
+    end
+    if GameTooltip.NineSlice and UI.PVPTooltip.nineSliceAlpha then
+        GameTooltip.NineSlice:SetAlpha(UI.PVPTooltip.nineSliceAlpha)
+        if GameTooltip.NineSlice.Center and UI.PVPTooltip.nineSliceCenterAlpha then
+            GameTooltip.NineSlice.Center:SetAlpha(UI.PVPTooltip.nineSliceCenterAlpha)
+        end
+    end
+
+    UI.PVPTooltip.backdropR = nil
+    UI.PVPTooltip.backdropG = nil
+    UI.PVPTooltip.backdropB = nil
+    UI.PVPTooltip.backdropA = nil
+    UI.PVPTooltip.tooltipAlpha = nil
+    UI.PVPTooltip.nineSliceAlpha = nil
+    UI.PVPTooltip.nineSliceCenterAlpha = nil
+end
+
 function UI.PVPTooltip.GetStats(charData, specID, col)
     if Database.IsSpecColumn(col) then
         local specStats = charData.specPVPStats and charData.specPVPStats[specID]
@@ -2289,16 +2362,62 @@ function UI.PVPTooltip.GetTitle(charData, specID, col)
 end
 
 function UI.PVPTooltip.AddStatsBlock(title, best, won, played, unitLabel, mostPlayedSpecID, mostPlayedCount)
+    local theme = GetActiveTheme()
     unitLabel = unitLabel or "Games"
-    GameTooltip:AddLine(title, 1, 0.82, 0)
-    GameTooltip:AddDoubleLine("Best Rating:", FormatTooltipNumber(best), 1, 1, 1, 1, 1, 1)
-    GameTooltip:AddDoubleLine(unitLabel .. " Won:", FormatTooltipNumber(won), 1, 1, 1, 1, 1, 1)
-    GameTooltip:AddDoubleLine(unitLabel .. " Played:", FormatTooltipNumber(played), 1, 1, 1, 1, 1, 1)
+    won = tonumber(won) or 0
+    played = tonumber(played) or 0
+    local lost = math.max(played - won, 0)
+    local bestR, bestG, bestB = theme.muted[1], theme.muted[2], theme.muted[3]
+    if not Utils.IsEmptyRating(best) then
+        bestR, bestG, bestB = 1, 1, 1
+    end
+
+    GameTooltip:AddLine(title, theme.accent[1], theme.accent[2], theme.accent[3])
+    GameTooltip:AddDoubleLine(
+        "Best Rating:",
+        FormatTooltipNumber(best),
+        theme.muted[1], theme.muted[2], theme.muted[3],
+        bestR, bestG, bestB
+    )
+    GameTooltip:AddDoubleLine(
+        unitLabel .. " Played:",
+        FormatTooltipNumber(played),
+        theme.muted[1], theme.muted[2], theme.muted[3],
+        theme.text[1], theme.text[2], theme.text[3]
+    )
+    GameTooltip:AddDoubleLine(
+        unitLabel .. " Won / Lost:",
+        "|cff59e673" .. FormatTooltipNumber(won) .. " won|r  /  "
+            .. "|cfff26659" .. FormatTooltipNumber(lost) .. " lost|r",
+        theme.muted[1], theme.muted[2], theme.muted[3],
+        theme.text[1], theme.text[2], theme.text[3]
+    )
+
+    local winRate = played > 0 and won / played or nil
+    local winRateR, winRateG, winRateB = theme.muted[1], theme.muted[2], theme.muted[3]
+    if winRate and winRate >= 0.6 then
+        winRateR, winRateG, winRateB = 0.35, 0.90, 0.45
+    elseif winRate and winRate >= 0.5 then
+        winRateR, winRateG, winRateB = 1.00, 0.82, 0.25
+    elseif winRate then
+        winRateR, winRateG, winRateB = 0.95, 0.40, 0.35
+    end
+    GameTooltip:AddDoubleLine(
+        "Win Rate:",
+        UI.PVPTooltip.FormatWinRate(won, played),
+        theme.muted[1], theme.muted[2], theme.muted[3],
+        winRateR, winRateG, winRateB
+    )
 
     local mostPlayedSpecName = UI.PVPTooltip.GetSpecName(mostPlayedSpecID)
     mostPlayedCount = tonumber(mostPlayedCount) or 0
     if mostPlayedSpecName and mostPlayedCount > 0 then
-        GameTooltip:AddDoubleLine("Most Played:", mostPlayedSpecName .. " (" .. FormatTooltipNumber(mostPlayedCount) .. ")", 1, 1, 1, 1, 1, 1)
+        GameTooltip:AddDoubleLine(
+            "Most Played:",
+            mostPlayedSpecName .. " (" .. FormatTooltipNumber(mostPlayedCount) .. ")",
+            theme.muted[1], theme.muted[2], theme.muted[3],
+            theme.text[1], theme.text[2], theme.text[3]
+        )
     end
 end
 
@@ -2311,14 +2430,27 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
     local mmr = UI.PVPTooltip.GetMMR(charData, specID, col)
     GameTooltip:SetOwner(owner, "ANCHOR_TOP")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine(UI.PVPTooltip.GetTitle(charData, specID, col), 1, 0.82, 0)
+    GameTooltip:AddLine(
+        UI.PVPTooltip.GetTitle(charData, specID, col),
+        theme.title[1], theme.title[2], theme.title[3]
+    )
 
     if not Utils.IsEmptyRating(rating) then
-        GameTooltip:AddDoubleLine("Current Rating:", FormatTooltipNumber(rating), 1, 1, 1, 1, 1, 1)
+        GameTooltip:AddDoubleLine(
+            "Current Rating:",
+            FormatTooltipNumber(rating),
+            theme.muted[1], theme.muted[2], theme.muted[3],
+            1, 1, 1
+        )
     end
     if not Utils.IsEmptyRating(mmr) then
         local mmrLabel = Database.IsSpecColumn(col) and "Current MMR:" or "Last MMR:"
-        GameTooltip:AddDoubleLine(mmrLabel, FormatTooltipNumber(mmr), 1, 1, 1, 1, 1, 1)
+        GameTooltip:AddDoubleLine(
+            mmrLabel,
+            FormatTooltipNumber(mmr),
+            theme.muted[1], theme.muted[2], theme.muted[3],
+            theme.mmr[1], theme.mmr[2], theme.mmr[3]
+        )
     end
 
     if stats then
@@ -2335,7 +2467,7 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
 
         GameTooltip:AddLine(" ")
         UI.PVPTooltip.AddStatsBlock(
-            "Weekly Stats",
+            "Weekly",
             stats.weeklyBest,
             weeklyWon,
             weeklyPlayed,
@@ -2345,7 +2477,7 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
         )
         GameTooltip:AddLine(" ")
         UI.PVPTooltip.AddStatsBlock(
-            "Season Stats",
+            "Season",
             stats.seasonBest,
             seasonWon,
             seasonPlayed,
@@ -2359,6 +2491,7 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
     end
 
     GameTooltip:Show()
+    UI.PVPTooltip.ApplyStyle(theme)
     return true
 end
 
@@ -2379,7 +2512,11 @@ local function GetHistoryPointRating(point)
 end
 
 local function GetHistoryPointMMR(point)
-    return tonumber(point and point[HISTORY_FIELD_MMR]) or 0
+    local mmr = tonumber(point and point[HISTORY_FIELD_MMR])
+    if mmr and mmr > 0 then
+        return mmr
+    end
+    return nil
 end
 
 local function GetHistoryPointRatingDelta(point)
@@ -2707,13 +2844,18 @@ local function UpdateGraphHover()
     end
 
     if data.showMMR then
-        local mmrValue = "Pending next game"
+        local mmrValue = "Unavailable"
         if mmr then
             mmrValue = FormatGraphValue(mmr)
             local previousMMR = data.mmrValues[index - 1]
             if previousMMR then
                 mmrValue = mmrValue .. FormatGraphDelta(mmr - previousMMR)
             end
+            if point[9] == "nextPrematch" then
+                mmrValue = mmrValue .. " (from next lobby)"
+            end
+        elseif index == #data.points and point[9] == "pending" then
+            mmrValue = "Pending next game"
         end
         tooltipRows[#tooltipRows + 1] = {
             label = "MMR",
@@ -3146,7 +3288,7 @@ function UI.RefreshHistoryGraph()
         if not showRating and not showMMR then
             graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
         elseif showMMR and not showRating then
-            graphPanel.emptyText:SetText("MMR is pending until the next game.")
+            graphPanel.emptyText:SetText("No readable MMR values recorded yet.")
         else
             graphPanel.emptyText:SetText("No visible graph data yet.")
         end
@@ -3177,7 +3319,7 @@ function UI.RefreshHistoryGraph()
         if not showRating and not showMMR then
             graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
         elseif showMMR and not showRating then
-            graphPanel.emptyText:SetText("MMR is pending until the next game.")
+            graphPanel.emptyText:SetText("No readable MMR values recorded yet.")
         else
             graphPanel.emptyText:SetText("No visible graph data yet.")
         end
@@ -3377,6 +3519,7 @@ local function AddHistoryClickOverlay(row, x, y, w, h, charData, specID, col)
         UpdateHistoryCellAffordance(overlay, false)
         if GameTooltip:IsOwned(overlay) then
             GameTooltip:Hide()
+            UI.PVPTooltip.RestoreStyle()
         end
     end)
     overlay:SetScript("OnMouseUp", function(_, button)

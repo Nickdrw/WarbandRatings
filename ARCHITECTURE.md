@@ -248,7 +248,7 @@ History lives under `WarbandRatingsDB.history` and is organized by season, chara
 
 ```lua
 WarbandRatingsDB.history = {
-    version = 1,
+    version = 2,
     currentSeasonKey = "pvp-39",
     seasons = {
         ["pvp-39"] = {
@@ -258,8 +258,9 @@ WarbandRatingsDB.history = {
                     global = {
                         arena2v2 = {
                             points = {
-                                -- { time, rating, mmr, ratingDelta, mmrDelta, result, mmrIsPostMatch }
-                                { 1713400000, 1500, 1530, 12, 0, 1, false },
+                                -- { time, rating, mmr, ratingDelta, mmrDelta, result,
+                                --   mmrIsPostMatch, matchSequence, mmrSource }
+                                { 1713400000, 1500, 1530, 12, 0, 1, true, 42, "postmatch" },
                             },
                             archived = false,
                         },
@@ -290,8 +291,10 @@ History point fields are compact numeric indexes to reduce SavedVariables size:
 | `5` | MMR delta |
 | `6` | result: `1` win, `0` loss, `-1` unknown |
 | `7` | whether MMR is post-match |
+| `8` | season game counter used as the stable match sequence |
+| `9` | MMR source: `postmatch`, `prematch`, `nextPrematch`, or `pending` |
 
-For non-solo brackets, the MMR displayed after a match may actually be the next match's starting MMR. The graph aligns this with the previous rating result, and the last game can show `Pending next game` when the next MMR is not known yet.
+MMR is optional. A point with `mmr = 0` and `mmrSource = "pending"` still preserves the rating result. When the next lobby exposes the player's exact prematch MMR, the preceding pending point is enriched and marked `nextPrematch`. Team-average scoreboard fallbacks are never used for this enrichment. Older history that stores prematch MMR on the following point remains supported by the graph alignment logic.
 
 ## Column System
 
@@ -332,6 +335,7 @@ PvP bracket ratings are zeroed for sub-max-level characters before saving, becau
 
 The addon tries to infer the active rated bracket from:
 
+- `C_PvP.GetActiveMatchBracket`
 - `C_PvP.IsRatedSoloShuffle`
 - `C_PvP.IsSoloRBG`
 - `C_PvP.IsRatedBattleground`
@@ -351,15 +355,16 @@ PvP score APIs can expose secret/tainted placeholder values. Numeric MMR extract
 
 ### History Recording
 
-`DataCollection.CollectLastMatchMMR(recordHistory)`:
+Rated-match collection is stateful:
 
-1. resolves bracket and current spec
-2. finds MMR
-3. recollects current character ratings
-4. saves last MMR to the character record
-5. records a history point when match result is known
+1. `PVP_MATCH_ACTIVE` snapshots character, spec, bracket, rating, and season game counter
+2. scoreboard updates capture prematch MMR when it is readable and use it to enrich the preceding pending point
+3. `PVP_MATCH_COMPLETE` captures its payload and any synchronously readable score data without treating each Solo Shuffle round as a completed lobby
+4. `PVP_RATED_STATS_UPDATE` provides the fresh post-lobby rating and season game counter
+5. the rating point is recorded even when post-match MMR and result are unavailable
+6. `PVP_MATCH_INACTIVE` and bounded retries provide additional post-match retrieval windows
 
-`History.RecordMatch()` deduplicates retries in a short window so delayed PvP API updates do not create repeated points for the same game.
+`History.RecordMatch()` deduplicates by the season game counter when available, falling back to the legacy short retry window for old/API-limited points. Recording diagnostics are retained under `history.diagnostics`.
 
 ## UI Architecture
 

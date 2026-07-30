@@ -7,6 +7,7 @@ local Utils = ns.Utils
 local UNKNOWN_SEASON = "unknown"
 local DUPLICATE_WINDOW_SECONDS = 30
 local ARCHIVED_RAW_SEASONS_TO_KEEP = 1
+local HISTORY_VERSION = 2
 
 local FIELD_TIME = 1
 local FIELD_RATING = 2
@@ -15,6 +16,13 @@ local FIELD_RATING_DELTA = 4
 local FIELD_MMR_DELTA = 5
 local FIELD_RESULT = 6
 local FIELD_MMR_IS_POSTMATCH = 7
+local FIELD_MATCH_SEQUENCE = 8
+local FIELD_MMR_SOURCE = 9
+
+local MMR_SOURCE_PENDING = "pending"
+local MMR_SOURCE_POSTMATCH = "postmatch"
+local MMR_SOURCE_PREMATCH = "prematch"
+local MMR_SOURCE_NEXT_PREMATCH = "nextPrematch"
 
 local function NormalizeSeasonID(value)
     value = tonumber(value)
@@ -50,9 +58,20 @@ end
 local function EnsureRoot()
     WarbandRatingsDB.history = WarbandRatingsDB.history or {}
     local history = WarbandRatingsDB.history
-    history.version = history.version or 1
+    history.version = math.max(tonumber(history.version) or 1, HISTORY_VERSION)
     history.seasons = history.seasons or {}
+    history.diagnostics = history.diagnostics or {}
     return history
+end
+
+function History.RecordDiagnostic(reason)
+    if type(reason) ~= "string" or reason == "" then return end
+
+    local history = EnsureRoot()
+    local diagnostic = history.diagnostics[reason] or {}
+    diagnostic.count = (tonumber(diagnostic.count) or 0) + 1
+    diagnostic.lastAt = time()
+    history.diagnostics[reason] = diagnostic
 end
 
 local function EnsureSeason(history, seasonKey)
@@ -96,12 +115,16 @@ local function BuildSummary(points)
         finalRating = tonumber(last[FIELD_RATING]) or 0,
         peakRating = tonumber(first[FIELD_RATING]) or 0,
         lowestRating = tonumber(first[FIELD_RATING]) or 0,
-        peakMMR = tonumber(first[FIELD_MMR]) or 0,
-        finalMMR = tonumber(last[FIELD_MMR]) or 0,
+        peakMMR = 0,
+        finalMMR = 0,
     }
 
     for _, point in ipairs(points) do
         UpdateSummaryPeak(summary, point[FIELD_RATING], point[FIELD_MMR])
+        local mmr = tonumber(point[FIELD_MMR]) or 0
+        if mmr > 0 then
+            summary.finalMMR = mmr
+        end
         if point[FIELD_RESULT] == 1 then
             summary.wins = summary.wins + 1
         elseif point[FIELD_RESULT] == 0 then
@@ -258,28 +281,131 @@ local function GetSeries(charHistory, colKey, specID)
     return charHistory.global and charHistory.global[colKey]
 end
 
+local function GetPositiveNumber(value)
+    value = tonumber(value)
+    if value and value > 0 then
+        return value
+    end
+    return nil
+end
+
 local function GetMMRDelta(previousPoint, mmr, mmrIsPostMatch)
-    if not previousPoint or not mmrIsPostMatch or previousPoint[FIELD_MMR_IS_POSTMATCH] ~= true then
+    mmr = GetPositiveNumber(mmr)
+    local previousMMR = GetPositiveNumber(previousPoint and previousPoint[FIELD_MMR])
+    if not previousMMR or not mmr or not mmrIsPostMatch or previousPoint[FIELD_MMR_IS_POSTMATCH] ~= true then
         return 0
     end
 
-    return mmr - (tonumber(previousPoint[FIELD_MMR]) or 0)
+    return mmr - previousMMR
 end
 
-function History.RecordMatch(name, realm, specID, bracketIndex, rating, mmr, result, timestamp, mmrIsPostMatch)
+local function RecalculatePointDeltas(points)
+    for index, point in ipairs(points or {}) do
+        local previousPoint = points[index - 1]
+        point[FIELD_RATING_DELTA] = previousPoint
+            and ((tonumber(point[FIELD_RATING]) or 0) - (tonumber(previousPoint[FIELD_RATING]) or 0))
+            or 0
+        point[FIELD_MMR_DELTA] = GetMMRDelta(
+            previousPoint,
+            point[FIELD_MMR],
+            point[FIELD_MMR_IS_POSTMATCH] == true
+        )
+    end
+end
+
+local function NormalizeResult(result)
+    result = tonumber(result)
+    if result == 0 or result == 1 then
+        return result
+    end
+    return -1
+end
+
+local function NormalizeMatchSequence(matchSequence)
+    matchSequence = tonumber(matchSequence)
+    if matchSequence and matchSequence > 0 then
+        return math.floor(matchSequence)
+    end
+    return 0
+end
+
+local function FindPointByMatchSequence(points, matchSequence)
+    if matchSequence <= 0 then return nil end
+
+    for index = #points, 1, -1 do
+        if tonumber(points[index][FIELD_MATCH_SEQUENCE]) == matchSequence then
+            return index
+        end
+    end
+    return nil
+end
+
+local function FindInsertionIndex(points, timestamp)
+    for index, point in ipairs(points) do
+        if timestamp < (tonumber(point[FIELD_TIME]) or 0) then
+            return index
+        end
+    end
+    return #points + 1
+end
+
+local function GetMMRSource(mmr, mmrIsPostMatch, explicitSource)
+    if explicitSource then return explicitSource end
+    if not GetPositiveNumber(mmr) then return MMR_SOURCE_PENDING end
+    return mmrIsPostMatch and MMR_SOURCE_POSTMATCH or MMR_SOURCE_PREMATCH
+end
+
+local function UpdatePoint(point, timestamp, rating, mmr, result, mmrIsPostMatch, matchSequence, mmrSource)
+    point[FIELD_TIME] = math.min(tonumber(point[FIELD_TIME]) or timestamp, timestamp)
+    point[FIELD_RATING] = rating
+
+    local positiveMMR = GetPositiveNumber(mmr)
+    if positiveMMR then
+        point[FIELD_MMR] = positiveMMR
+        point[FIELD_MMR_IS_POSTMATCH] = mmrIsPostMatch and true or false
+        point[FIELD_MMR_SOURCE] = GetMMRSource(positiveMMR, mmrIsPostMatch, mmrSource)
+    elseif not GetPositiveNumber(point[FIELD_MMR]) then
+        point[FIELD_MMR] = 0
+        point[FIELD_MMR_IS_POSTMATCH] = false
+        point[FIELD_MMR_SOURCE] = MMR_SOURCE_PENDING
+    end
+
+    local normalizedResult = NormalizeResult(result)
+    if normalizedResult ~= -1 or point[FIELD_RESULT] == nil then
+        point[FIELD_RESULT] = normalizedResult
+    end
+    if matchSequence > 0 then
+        point[FIELD_MATCH_SEQUENCE] = matchSequence
+    elseif point[FIELD_MATCH_SEQUENCE] == nil then
+        point[FIELD_MATCH_SEQUENCE] = 0
+    end
+end
+
+function History.RecordMatch(
+    name,
+    realm,
+    specID,
+    bracketIndex,
+    rating,
+    mmr,
+    result,
+    timestamp,
+    mmrIsPostMatch,
+    matchSequence,
+    mmrSource
+)
     local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
     if not col then return false end
 
-    rating = tonumber(rating) or 0
-    mmr = tonumber(mmr)
-    if not mmr or mmr <= 0 then return false end
+    rating = tonumber(rating)
+    if not rating or rating < 0 then return false end
+    mmr = GetPositiveNumber(mmr) or 0
 
     timestamp = tonumber(timestamp) or time()
-    result = tonumber(result)
-    if result ~= 0 and result ~= 1 then
-        result = -1
-    end
+    result = NormalizeResult(result)
     mmrIsPostMatch = mmrIsPostMatch and true or false
+    matchSequence = NormalizeMatchSequence(matchSequence)
+    mmrSource = GetMMRSource(mmr, mmrIsPostMatch, mmrSource)
 
     local history = EnsureRoot()
     local seasonKey = History.EnsureCurrentSeason()
@@ -294,21 +420,73 @@ function History.RecordMatch(name, realm, specID, bracketIndex, rating, mmr, res
 
     local points = series.points
     local lastPoint = points[#points]
-    if lastPoint and (timestamp - (lastPoint[FIELD_TIME] or 0)) <= DUPLICATE_WINDOW_SECONDS then
-        local previousPoint = points[#points - 1]
-        lastPoint[FIELD_TIME] = timestamp
-        lastPoint[FIELD_RATING] = rating
-        lastPoint[FIELD_MMR] = mmr
-        lastPoint[FIELD_RATING_DELTA] = previousPoint and (rating - (tonumber(previousPoint[FIELD_RATING]) or 0)) or 0
-        lastPoint[FIELD_MMR_DELTA] = GetMMRDelta(previousPoint, mmr, mmrIsPostMatch)
-        lastPoint[FIELD_RESULT] = result
-        lastPoint[FIELD_MMR_IS_POSTMATCH] = mmrIsPostMatch
+    local existingIndex = FindPointByMatchSequence(points, matchSequence)
+    if not existingIndex
+        and lastPoint
+        and matchSequence == 0
+        and (tonumber(lastPoint[FIELD_MATCH_SEQUENCE]) or 0) == 0
+        and timestamp >= (tonumber(lastPoint[FIELD_TIME]) or 0)
+        and (timestamp - (tonumber(lastPoint[FIELD_TIME]) or 0)) <= DUPLICATE_WINDOW_SECONDS
+    then
+        existingIndex = #points
+    end
+
+    if existingIndex then
+        UpdatePoint(
+            points[existingIndex],
+            timestamp,
+            rating,
+            mmr,
+            result,
+            mmrIsPostMatch,
+            matchSequence,
+            mmrSource
+        )
+        RecalculatePointDeltas(points)
         return true
     end
 
-    local ratingDelta = lastPoint and (rating - (tonumber(lastPoint[FIELD_RATING]) or 0)) or 0
-    local mmrDelta = GetMMRDelta(lastPoint, mmr, mmrIsPostMatch)
-    points[#points + 1] = { timestamp, rating, mmr, ratingDelta, mmrDelta, result, mmrIsPostMatch }
+    local point = {
+        timestamp,
+        rating,
+        mmr,
+        0,
+        0,
+        result,
+        mmrIsPostMatch,
+        matchSequence,
+        mmrSource,
+    }
+    table.insert(points, FindInsertionIndex(points, timestamp), point)
+    RecalculatePointDeltas(points)
+    return true
+end
+
+function History.EnrichPendingMMR(name, realm, specID, bracketIndex, mmr, matchSequence)
+    mmr = GetPositiveNumber(mmr)
+    matchSequence = NormalizeMatchSequence(matchSequence)
+    if not mmr or matchSequence <= 0 then return false end
+
+    local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
+    if not col then return false end
+
+    local history = EnsureRoot()
+    local seasonKey = History.EnsureCurrentSeason()
+    local season = history.seasons[seasonKey]
+    local charHistory = season and season.characters and season.characters[Utils.CharKey(name, realm)]
+    local series = charHistory and GetSeries(charHistory, col.key, specID)
+    local points = series and series.points
+    if not points then return false end
+
+    local pointIndex = FindPointByMatchSequence(points, matchSequence)
+    local point = pointIndex and points[pointIndex]
+    if not point or GetPositiveNumber(point[FIELD_MMR]) then return false end
+
+    point[FIELD_MMR] = mmr
+    point[FIELD_MMR_IS_POSTMATCH] = true
+    point[FIELD_MMR_SOURCE] = MMR_SOURCE_NEXT_PREMATCH
+    RecalculatePointDeltas(points)
+    History.RecordDiagnostic("mmrEnrichedFromNextLobby")
     return true
 end
 

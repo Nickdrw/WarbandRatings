@@ -3,11 +3,11 @@ ns.DataCollection = {}
 local DataCollection = ns.DataCollection
 local Database = ns.Database
 local History = ns.History
-local Utils = ns.Utils
 local lastKnownRatedBracketIndex
 local lastKnownRatedBracketTime
 local ratedStatsSpecID
 local ratedStatsRequestedSpecID
+local activeRatedMatch
 
 local ACCOUNT_BANK_BAG_IDS = {
     12,
@@ -324,21 +324,38 @@ end
 local function GetActiveRatedBracketIndex()
     if not C_PvP then return nil end
 
-    if C_PvP.IsRatedSoloShuffle and C_PvP.IsRatedSoloShuffle() then
+    local isSoloShuffle = C_PvP.IsRatedSoloShuffle and C_PvP.IsRatedSoloShuffle()
+    local isSoloRBG = C_PvP.IsSoloRBG and C_PvP.IsSoloRBG()
+    local isRatedBattleground = C_PvP.IsRatedBattleground and C_PvP.IsRatedBattleground()
+    local isRatedArena = C_PvP.IsRatedArena and C_PvP.IsRatedArena()
+    if isRatedArena and IsArenaSkirmish and IsArenaSkirmish() then
+        isRatedArena = false
+    end
+    if not isSoloShuffle and not isSoloRBG and not isRatedBattleground and not isRatedArena then
+        return nil
+    end
+
+    if C_PvP.GetActiveMatchBracket then
+        local ok, activeBracketIndex = pcall(C_PvP.GetActiveMatchBracket)
+        activeBracketIndex = ok and tonumber(activeBracketIndex)
+        if activeBracketIndex and Database.GetPVPColumnByBracketIndex(activeBracketIndex) then
+            return activeBracketIndex
+        end
+    end
+
+    if isSoloShuffle then
         return 7
     end
 
-    if C_PvP.IsSoloRBG and C_PvP.IsSoloRBG() then
+    if isSoloRBG then
         return 9
     end
 
-    if C_PvP.IsRatedBattleground and C_PvP.IsRatedBattleground() then
+    if isRatedBattleground then
         return 4
     end
 
-    if C_PvP.IsRatedArena and C_PvP.IsRatedArena() then
-        if IsArenaSkirmish and IsArenaSkirmish() then return nil end
-
+    if isRatedArena then
         local teamSize = GetActiveArenaTeamSize()
         if teamSize == 2 then
             return 1
@@ -369,49 +386,6 @@ local function GetRememberedRatedBracketIndex()
     end
 
     return lastKnownRatedBracketIndex
-end
-
-local function GetCurrentPersonalRating(bracketIndex)
-    local rating = GetPersonalRatedInfo(bracketIndex)
-    return tonumber(rating) or 0
-end
-
-local function InferBracketIndexFromRatingChange(name, realm, specID)
-    if not WarbandRatingsDB or not WarbandRatingsDB.characters then return nil end
-    if not GetPersonalRatedInfo then return nil end
-
-    local existing = WarbandRatingsDB.characters[Utils.CharKey(name, realm)]
-    if not existing then return nil end
-
-    local changedBracketIndex
-    for _, col in ipairs(Database.GLOBAL_COLUMNS) do
-        if col.bracketIndex then
-            local currentRating = GetCurrentPersonalRating(col.bracketIndex)
-            local storedRating = tonumber(existing.ratings and existing.ratings[col.key]) or 0
-            if currentRating > 0 and currentRating ~= storedRating then
-                if changedBracketIndex and changedBracketIndex ~= col.bracketIndex then
-                    return nil
-                end
-                changedBracketIndex = col.bracketIndex
-            end
-        end
-    end
-
-    local specRatings = existing.specRatings and existing.specRatings[specID]
-    for _, col in ipairs(Database.SPEC_COLUMNS) do
-        if col.bracketIndex then
-            local currentRating = GetCurrentPersonalRating(col.bracketIndex)
-            local storedRating = tonumber(specRatings and specRatings[col.key]) or 0
-            if currentRating > 0 and currentRating ~= storedRating then
-                if changedBracketIndex and changedBracketIndex ~= col.bracketIndex then
-                    return nil
-                end
-                changedBracketIndex = col.bracketIndex
-            end
-        end
-    end
-
-    return changedBracketIndex
 end
 
 function DataCollection.UpdateActivePVPContext()
@@ -524,39 +498,44 @@ local function GetFallbackBattlefieldMMR(info)
 end
 
 local function GetMMRFromInfo(info)
-    if type(info) ~= "table" then return nil end
+    if type(info) ~= "table" then return nil, nil end
 
     local postMatchMMR = GetPositiveNumber(info.postmatchMMR or info.postMatchMMR)
-    if postMatchMMR then
-        return postMatchMMR, true
-    end
-
     local prematchMMR = GetPositiveNumber(info.prematchMMR or info.preMatchMMR or info.matchMakingRating)
     local mmrChange = GetSafeNumber(info.mmrChange or info.matchMakingRatingChange)
-    if prematchMMR and mmrChange then
+    if not postMatchMMR and prematchMMR and mmrChange then
         local adjustedMMR = GetPositiveNumber(AddSafeNumbers(prematchMMR, mmrChange))
         if adjustedMMR then
-            return adjustedMMR, true
+            postMatchMMR = adjustedMMR
         end
     end
 
-    if prematchMMR then
-        return prematchMMR, false
-    end
-
-    local fallbackMMR = GetFallbackBattlefieldMMR(info)
-    if fallbackMMR then
-        return fallbackMMR, false
-    end
-
-    return nil
+    return prematchMMR, postMatchMMR
 end
 
-local function GetMatchResult(scoreInfo)
-    if not GetBattlefieldWinner then return nil end
+local function GetAvailableMMR(scoreInfo)
+    local prematchMMR, postMatchMMR = GetMMRFromInfo(scoreInfo)
+    local enrichmentMMR = prematchMMR
+    if not prematchMMR or not postMatchMMR then
+        local activePrematchMMR, activePostMatchMMR = GetMMRFromInfo(GetActiveMatchPersonalRatedInfo())
+        prematchMMR = prematchMMR or activePrematchMMR
+        postMatchMMR = postMatchMMR or activePostMatchMMR
+        enrichmentMMR = enrichmentMMR or activePrematchMMR
+    end
+    if not prematchMMR then
+        prematchMMR = GetFallbackBattlefieldMMR(scoreInfo)
+    end
+    return prematchMMR, postMatchMMR, enrichmentMMR
+end
 
-    local winner = GetBattlefieldWinner()
-    if winner == nil then return nil end
+local function GetMatchResult(scoreInfo, eventWinner)
+    local winner = tonumber(eventWinner)
+    if winner == nil then
+        if not GetBattlefieldWinner then return nil end
+        winner = GetBattlefieldWinner()
+    end
+    winner = tonumber(winner)
+    if winner ~= 0 and winner ~= 1 then return nil end
 
     if type(scoreInfo) == "table" and scoreInfo.faction ~= nil then
         local faction = tonumber(scoreInfo.faction)
@@ -584,47 +563,255 @@ local function GetCollectedRating(data, col, specID)
     return data.ratings and data.ratings[col.key] or 0
 end
 
-function DataCollection.CollectLastMatchMMR(recordHistory)
+local function GetCollectedStats(data, col, specID)
+    if Database.IsSpecColumn(col) then
+        local specStats = data.specPVPStats and data.specPVPStats[specID]
+        return specStats and specStats[col.key]
+    end
+
+    return data.pvpStats and data.pvpStats[col.key]
+end
+
+local function GetRatedSnapshot(bracketIndex)
+    if not GetPersonalRatedInfo then return nil end
+
+    local rating, _, _, seasonPlayed, _, _, _, _, _, _, _, roundsSeasonPlayed =
+        GetPersonalRatedInfo(bracketIndex)
+    return {
+        rating = GetSafeNumber(rating) or 0,
+        seasonPlayed = GetSafeNumber(seasonPlayed) or 0,
+        roundsSeasonPlayed = GetSafeNumber(roundsSeasonPlayed) or 0,
+    }
+end
+
+local function GetMatchSequence(stats)
+    local seasonPlayed = GetSafeNumber(stats and stats.seasonPlayed)
+    if seasonPlayed and seasonPlayed > 0 then
+        return math.floor(seasonPlayed)
+    end
+    return nil
+end
+
+local function MatchesActiveContext(context, name, realm, specID, bracketIndex)
+    return context
+        and context.name == name
+        and context.realm == realm
+        and context.specID == specID
+        and context.bracketIndex == bracketIndex
+end
+
+function DataCollection.BeginRatedMatch(forceNew)
+    local name, realm = GetCurrentCharacterIdentity()
+    local specID = GetCurrentSpecID()
+    local bracketIndex = GetActiveRatedBracketIndex() or GetRememberedRatedBracketIndex()
+    if not bracketIndex then
+        if History then History.RecordDiagnostic("matchStartNoBracket") end
+        return false
+    end
+    RememberRatedBracketIndex(bracketIndex)
+
+    if not forceNew
+        and MatchesActiveContext(activeRatedMatch, name, realm, specID, bracketIndex)
+        and not activeRatedMatch.finalized
+    then
+        return true
+    end
+
+    local snapshot = GetRatedSnapshot(bracketIndex) or {}
+    activeRatedMatch = {
+        name = name,
+        realm = realm,
+        specID = specID,
+        bracketIndex = bracketIndex,
+        startedAt = time(),
+        preRating = tonumber(snapshot.rating) or 0,
+        preSeasonPlayed = tonumber(snapshot.seasonPlayed) or 0,
+        preRoundsSeasonPlayed = tonumber(snapshot.roundsSeasonPlayed) or 0,
+    }
+    if History then History.RecordDiagnostic("matchStarted") end
+    return true
+end
+
+function DataCollection.CaptureActiveMatchMMR()
+    if not activeRatedMatch then return false end
+
+    local context = activeRatedMatch
+    local scoreInfo = GetPlayerScoreInfo()
+    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo)
+    if prematchMMR then
+        context.preMMR = prematchMMR
+    end
+    if enrichmentMMR then
+        context.enrichmentMMR = enrichmentMMR
+        if History then
+            History.EnrichPendingMMR(
+                context.name,
+                context.realm,
+                context.specID,
+                context.bracketIndex,
+                enrichmentMMR,
+                context.preSeasonPlayed
+            )
+        end
+    end
+    if postMatchMMR then
+        context.postMMR = postMatchMMR
+    end
+
+    local currentMMR = postMatchMMR or prematchMMR
+    if currentMMR then
+        Database.SaveLastMMR(
+            context.name,
+            context.realm,
+            context.specID,
+            context.bracketIndex,
+            currentMMR
+        )
+        return true
+    end
+    return false
+end
+
+function DataCollection.MarkRatedMatchComplete(winner, duration)
+    if not activeRatedMatch then
+        DataCollection.BeginRatedMatch()
+    end
+    if not activeRatedMatch then return false end
+
+    activeRatedMatch.completedAt = time()
+    activeRatedMatch.eventWinner = GetSafeNumber(winner)
+    activeRatedMatch.duration = GetSafeNumber(duration)
+    DataCollection.CaptureActiveMatchMMR()
+    return true
+end
+
+function DataCollection.MarkRatedMatchInactive()
+    if not activeRatedMatch then
+        DataCollection.RequestRatedInfo(GetCurrentSpecID())
+        return false
+    end
+
+    activeRatedMatch.inactiveAt = time()
+    DataCollection.CaptureActiveMatchMMR()
+    DataCollection.RequestRatedInfo(activeRatedMatch.specID)
+    return true
+end
+
+local function GetResultFromContext(context, scoreInfo, bracketIndex)
+    if bracketIndex == 7 then
+        -- PVP_MATCH_COMPLETE is round-scoped in Solo Shuffle. A binary
+        -- lobby result cannot be inferred reliably from one round winner
+        -- or from rating direction (a 3-3 lobby can still change rating).
+        return nil
+    end
+
+    return GetMatchResult(scoreInfo, context and context.eventWinner)
+end
+
+local function HasFreshMatch(context, matchSequence)
+    if not context or not matchSequence then return false end
+
+    local preSeasonPlayed = tonumber(context.preSeasonPlayed)
+    if not preSeasonPlayed then return false end
+    return matchSequence > preSeasonPlayed
+end
+
+local function FinalizeRatedMatch(recordHistory)
     if not WarbandRatingsDB or not WarbandRatingsDB.characters then
         return false
     end
 
     local name, realm = GetCurrentCharacterIdentity()
     local specID = GetCurrentSpecID()
-    local bracketIndex = GetActiveRatedBracketIndex() or GetRememberedRatedBracketIndex()
-    if not bracketIndex then
-        bracketIndex = InferBracketIndexFromRatingChange(name, realm, specID)
-        RememberRatedBracketIndex(bracketIndex)
+    local context = activeRatedMatch
+    if not context then
+        if History then History.RecordDiagnostic("finalizeNoTrackedMatch") end
+        return false
     end
-    if not bracketIndex then
+    local bracketIndex = context.bracketIndex
+
+    if not MatchesActiveContext(context, name, realm, specID, bracketIndex) then
+        if History then History.RecordDiagnostic("finalizeContextMismatch") end
         return false
     end
 
     local scoreInfo = GetPlayerScoreInfo()
-    local mmr, mmrIsPostMatch = GetMMRFromInfo(scoreInfo)
-    if not mmr then
-        mmr, mmrIsPostMatch = GetMMRFromInfo(GetActiveMatchPersonalRatedInfo())
-    end
-    if not mmr then
-        mmr = GetFallbackBattlefieldMMR(scoreInfo)
-        mmrIsPostMatch = false
-    end
-    if not mmr then
-        return false
-    end
+    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo)
+    prematchMMR = prematchMMR or (context and context.preMMR)
+    postMatchMMR = postMatchMMR or (context and context.postMMR)
+    enrichmentMMR = enrichmentMMR or (context and context.enrichmentMMR)
 
     local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
     if not col then
+        if History then History.RecordDiagnostic("finalizeUnknownBracket") end
         return false
     end
 
     local data = DataCollection.CollectCurrentCharacter()
-    local saved = Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
-    local result = GetMatchResult(scoreInfo)
-    if saved and recordHistory and result ~= nil and History then
-        if not Database.IsSpecColumn(col) or data.currentSpecRatings then
-            History.RecordMatch(name, realm, specID, bracketIndex, GetCollectedRating(data, col, specID), mmr, result, time(), mmrIsPostMatch)
+    local stats = GetCollectedStats(data, col, specID)
+    local matchSequence = GetMatchSequence(stats)
+    local rating = tonumber(GetCollectedRating(data, col, specID))
+    local hasCurrentSpecRating = not Database.IsSpecColumn(col) or data.currentSpecRatings
+
+    if enrichmentMMR and History then
+        History.EnrichPendingMMR(
+            name,
+            realm,
+            specID,
+            bracketIndex,
+            enrichmentMMR,
+            context.preSeasonPlayed
+        )
+    end
+
+    local currentMMR = postMatchMMR or prematchMMR
+    local savedMMR = currentMMR
+        and Database.SaveLastMMR(name, realm, specID, bracketIndex, currentMMR)
+        or false
+
+    if not recordHistory then
+        return savedMMR
+    end
+    if not hasCurrentSpecRating or rating == nil or rating < 0 then
+        if History then History.RecordDiagnostic("finalizeNoFreshRating") end
+        return savedMMR
+    end
+    if not HasFreshMatch(context, matchSequence) then
+        if History then History.RecordDiagnostic("finalizeStatsNotAdvanced") end
+        return savedMMR
+    end
+
+    local result = GetResultFromContext(context, scoreInfo, bracketIndex)
+    local recorded = History and History.RecordMatch(
+        name,
+        realm,
+        specID,
+        bracketIndex,
+        rating,
+        postMatchMMR,
+        result,
+        time(),
+        postMatchMMR ~= nil,
+        matchSequence,
+        postMatchMMR and "postmatch" or "pending"
+    )
+    if recorded then
+        if not postMatchMMR and History then
+            History.RecordDiagnostic("ratingRecordedWithoutMMR")
+        elseif History then
+            History.RecordDiagnostic("ratingRecordedWithMMR")
+        end
+        if activeRatedMatch == context then
+            activeRatedMatch.finalized = true
+            activeRatedMatch = nil
         end
     end
-    return saved
+    return recorded or savedMMR
+end
+
+function DataCollection.CollectLastMatchMMR(recordHistory)
+    if not recordHistory then
+        return DataCollection.CaptureActiveMatchMMR()
+    end
+    return FinalizeRatedMatch(true)
 end
