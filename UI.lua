@@ -50,9 +50,9 @@ local GRAPH_MAX_VISIBLE_POINT_COUNT = 200
 local GRAPH_VISIBLE_POINT_STEP = 5
 local GRAPH_SCROLL_STEP = 5
 local GRAPH_Y_AXIS = {
-    tickStep = 500,
-    upperStep = 50,
-    paddingRatio = 0.015,
+    targetTickCount = 5,
+    minimumSpan = 100,
+    paddingRatio = 0.08,
     minPadding = 25,
 }
 local HISTORY_GRAPH_ICON_SIZE = 14
@@ -2469,24 +2469,63 @@ local function IncludeGraphScaleValue(value, scale)
     scale.hasValue = true
 end
 
-local function RoundGraphScale(_, maxValue)
+local function RoundGraphScale(minValue, maxValue)
+    minValue = tonumber(minValue) or 0
     maxValue = tonumber(maxValue) or 0
-    local tickStep = GRAPH_Y_AXIS.tickStep
-    local padding = math.max(maxValue * GRAPH_Y_AXIS.paddingRatio, GRAPH_Y_AXIS.minPadding)
-    local upperValue = math.max(tickStep, maxValue + padding)
-    upperValue = math.ceil(upperValue / GRAPH_Y_AXIS.upperStep) * GRAPH_Y_AXIS.upperStep
+    local valueSpan = math.max(maxValue - minValue, 0)
+    local padding
 
-    return 0, upperValue, tickStep
+    if valueSpan == 0 then
+        padding = GRAPH_Y_AXIS.minimumSpan / 2
+    else
+        padding = math.max(valueSpan * GRAPH_Y_AXIS.paddingRatio, GRAPH_Y_AXIS.minPadding)
+    end
+
+    local lowerValue = math.max(0, minValue - padding)
+    local upperValue = maxValue + padding
+    local rawStep = math.max(upperValue - lowerValue, 1) / GRAPH_Y_AXIS.targetTickCount
+    local magnitude = 1
+
+    while rawStep >= 10 do
+        rawStep = rawStep / 10
+        magnitude = magnitude * 10
+    end
+    while rawStep < 1 do
+        rawStep = rawStep * 10
+        magnitude = magnitude / 10
+    end
+
+    local normalizedStep
+    if rawStep <= 1 then
+        normalizedStep = 1
+    elseif rawStep <= 2 then
+        normalizedStep = 2
+    elseif rawStep <= 2.5 then
+        normalizedStep = 2.5
+    elseif rawStep <= 5 then
+        normalizedStep = 5
+    else
+        normalizedStep = 10
+    end
+    local tickStep = normalizedStep * magnitude
+
+    lowerValue = math.max(0, math.floor(lowerValue / tickStep) * tickStep)
+    upperValue = math.ceil(upperValue / tickStep) * tickStep
+    if upperValue <= lowerValue then
+        upperValue = lowerValue + tickStep
+    end
+
+    return lowerValue, upperValue, tickStep
 end
 
-local function GetFullSeriesGraphScale(points, showRating, showMMR)
+local function GetVisibleGraphScale(points, visibleStart, visibleEnd, showRating, showMMR)
     local scale = {
         minValue = math.huge,
         maxValue = 0,
         hasValue = false,
     }
 
-    for i = 1, points and #points or 0 do
+    for i = visibleStart, visibleEnd do
         if showRating then
             IncludeGraphScaleValue(GetHistoryPointRating(points[i]), scale)
         end
@@ -3096,10 +3135,18 @@ function UI.RefreshHistoryGraph()
         graphPanel.rangeSlider:Hide()
     end
 
-    local minValue, maxValue, tickStep = GetFullSeriesGraphScale(points, showRating, showMMR)
+    local minValue, maxValue, tickStep = GetVisibleGraphScale(
+        points,
+        visibleStart,
+        visibleEnd,
+        showRating,
+        showMMR
+    )
     if not minValue then
         if not showRating and not showMMR then
             graphPanel.emptyText:SetText("Select Rating or MMR to show the graph.")
+        elseif showMMR and not showRating then
+            graphPanel.emptyText:SetText("MMR is pending until the next game.")
         else
             graphPanel.emptyText:SetText("No visible graph data yet.")
         end

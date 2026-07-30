@@ -97,7 +97,7 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
 - The selected cell gets a subtle class-colored highlight and graph affordance icon.
 - Graph title uses class color for `Character-Realm`, independent of theme.
 - Rating and MMR can be toggled independently.
-- Y-axis uses a fixed scale computed from the full selected series, not only the visible window.
+- Y-axis dynamically scales to the selected Rating/MMR values in the visible window.
 - Y-axis labels show max, midpoint, and min.
 - Bottom chronological slider moves through the series.
 - Top `Games` slider defaults to the maximum visible point count:
@@ -390,7 +390,7 @@ Rows and cells are pooled. `ResetCells()` hides/reuses existing font strings, te
 `UI.RefreshHistoryGraph()`:
 
 - reads the current selected history series via `History.GetCurrentSeries`
-- computes a fixed full-series Y scale for selected Rating/MMR lines
+- computes a padded, rounded Y scale from the selected Rating/MMR lines in the visible window
 - renders grid, axes, lines, and dots with pooled line/texture objects
 - handles empty states and toggle states
 - stores hover lookup data in `graphPanel.graphData`
@@ -476,5 +476,5 @@ To use fake data again, intentionally rewire the UI/Core paths or add a controll
 - SavedVariables merging must explicitly copy new fields in both create and update paths.
 - PvP data is asynchronous. Ratings and stats may require delayed collection and event retries.
 - PvP MMR APIs can return secret/tainted values. Never compare or add raw MMR API values without guarded conversion.
-- The graph Y scale is intentionally fixed across the selected full series. This makes slider navigation readable even when local point ranges are small.
+- The graph Y scale updates with the visible window and selected Rating/MMR lines so local changes remain readable while navigating with the slider.
 - Detached graph Escape handling depends on `WarbandRatingsHistoryGraphPanel` being in `UISpecialFrames`.
