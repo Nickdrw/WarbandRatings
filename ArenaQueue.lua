@@ -10,6 +10,9 @@ local PANEL_TOP_INSET = 30
 local PANEL_BOTTOM_INSET = 8
 local CARD_HEIGHT = 100
 local CARD_GAP = 7
+local MINIMIZED_CARD_HEIGHT = 44
+local MINIMIZED_CARD_GAP = 4
+local MINIMIZED_PANEL_BOTTOM_INSET = 6
 local CARD_SIDE_INSET = 8
 local CARD_WIDTH = PANEL_WIDTH - CARD_SIDE_INSET * 2
 local CARD_PROGRESS_WIDTH = CARD_WIDTH - 20
@@ -147,6 +150,23 @@ local function GetSettings()
     return WarbandRatingsDB and WarbandRatingsDB.settings
 end
 
+local function IsPanelMinimized()
+    local settings = GetSettings()
+    return settings and settings.arenaQueueMinimized == true
+end
+
+local function SetPanelMinimized(minimized)
+    local settings = GetSettings()
+    if not settings then return end
+
+    minimized = minimized == true
+    if Database and Database.SetSetting then
+        Database.SetSetting("arenaQueueMinimized", minimized)
+    else
+        settings.arenaQueueMinimized = minimized
+    end
+end
+
 local function GetSavedPanelPosition()
     local settings = GetSettings()
     local position = settings and settings.arenaQueuePosition
@@ -277,6 +297,12 @@ local function ConfigureSecureBracket(cardIndex, bracket)
     local card = panel and panel.cards and panel.cards[cardIndex]
     local button = card and card.actionButton
     if not bracket or not button then return false end
+    if configuredBracketKeys[cardIndex] == bracket.key
+        and bracketProxies[cardIndex]
+        and button:GetAttribute("type") == "macro"
+        and button:GetAttribute("macrotext") == QUEUE_MACROS[cardIndex] then
+        return true
+    end
     if not IsPVPUISettingUpAllowed() then return false end
     if not LoadPVPUI() or not EnsureBracketProxy(cardIndex) then return false end
 
@@ -765,9 +791,7 @@ local function GetPanelState()
 
     local groupSize = GetGroupSize()
     local commonFailure
-    if InCombatLockdown and InCombatLockdown() then
-        commonFailure = "Leave combat before queueing."
-    elseif not IsPVPUIReady() then
+    if not IsPVPUIReady() then
         commonFailure = "Rated PvP UI is not ready."
     else
         commonFailure = GetRatedAccessFailure()
@@ -914,14 +938,16 @@ local function ApplyCardTheme(card, theme)
     HelperPanel.SetFontColor(card.rankText, theme.muted)
     HelperPanel.SetFontColor(card.ratingValue, accent)
     HelperPanel.SetFontColor(card.ratingLabel, theme.muted)
+    HelperPanel.SetFontColor(card.compactRating, accent)
     local sessionDelta = state.rating.sessionDelta
+    local sessionDeltaColor = theme.muted
     if sessionDelta and sessionDelta > 0 then
-        HelperPanel.SetFontColor(card.sessionDelta, STATUS_COLORS.ready)
+        sessionDeltaColor = STATUS_COLORS.ready
     elseif sessionDelta and sessionDelta < 0 then
-        HelperPanel.SetFontColor(card.sessionDelta, SESSION_LOSS_COLOR)
-    else
-        HelperPanel.SetFontColor(card.sessionDelta, theme.muted)
+        sessionDeltaColor = SESSION_LOSS_COLOR
     end
+    HelperPanel.SetFontColor(card.sessionDelta, sessionDeltaColor)
+    HelperPanel.SetFontColor(card.compactDelta, sessionDeltaColor)
     HelperPanel.SetFontColor(card.statusText, accent)
     HelperPanel.SetFontColor(card.queueText, theme.muted)
 end
@@ -943,6 +969,11 @@ end
 local function ApplyPanelTheme()
     if not panel then return end
     local theme = HelperPanel.ApplyShellTheme(panel)
+    if panel.minimizeButton then
+        HelperPanel.SetTextureColor(panel.minimizeButton.highlight, theme.rowHover)
+        HelperPanel.SetTextureColor(panel.minimizeButton.horizontalLine, theme.text)
+        HelperPanel.SetTextureColor(panel.minimizeButton.verticalLine, theme.text)
+    end
     for _, card in ipairs(panel.cards) do
         if card:IsShown() then
             ApplyCardTheme(card, theme)
@@ -1137,6 +1168,58 @@ local function RelocateQueueStatusButton()
     return true
 end
 
+local function UpdateMinimizeButton()
+    local button = panel and panel.minimizeButton
+    if not button then return end
+
+    local minimized = IsPanelMinimized()
+    button.verticalLine:SetShown(minimized)
+    button.tooltipText = minimized and "Expand queue helper" or "Minimize queue helper"
+end
+
+local function ApplyCardLayout(card, minimized)
+    if card.minimizedLayout == minimized then return end
+    card.minimizedLayout = minimized
+
+    local cardHeight = minimized and MINIMIZED_CARD_HEIGHT or CARD_HEIGHT
+    card:SetSize(CARD_WIDTH, cardHeight)
+    card.borderLeft:SetHeight(cardHeight)
+    card.borderRight:SetHeight(cardHeight)
+
+    card.modeName:ClearAllPoints()
+    card.progressBg:ClearAllPoints()
+    card.actionButton:ClearAllPoints()
+
+    if minimized then
+        card.badgeBg:Hide()
+        card.badge:Hide()
+        card.ratingValue:Hide()
+        card.ratingLabel:Hide()
+        card.sessionDelta:Hide()
+        card.rankText:Hide()
+        card.statusDot:Hide()
+        card.statusText:Hide()
+
+        card.modeName:SetPoint("TOPLEFT", card, "TOPLEFT", 10, -6)
+        card.modeName:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
+        card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 2)
+        card.actionButton:SetPoint("RIGHT", card, "RIGHT", -9, 0)
+    else
+        card.badgeBg:Show()
+        card.badge:Show()
+        card.ratingValue:Show()
+        card.ratingLabel:Show()
+        card.rankText:Show()
+        card.statusDot:Show()
+        card.statusText:Show()
+
+        card.modeName:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -10)
+        card.modeName:SetPoint("RIGHT", card.ratingValue, "LEFT", -8, 0)
+        card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 34)
+        card.actionButton:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -9, 7)
+    end
+end
+
 local function CreateCard(cardIndex)
     local card = CreateFrame("Frame", nil, panel)
     card:SetSize(CARD_WIDTH, CARD_HEIGHT)
@@ -1255,6 +1338,16 @@ local function CreateCard(cardIndex)
     card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
     card.queueText:SetJustifyH("LEFT")
 
+    card.compactRating = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    card.compactRating:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 7)
+    card.compactRating:SetJustifyH("LEFT")
+    card.compactRating:Hide()
+
+    card.compactDelta = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    card.compactDelta:SetPoint("LEFT", card.compactRating, "RIGHT", 8, 0)
+    card.compactDelta:SetJustifyH("LEFT")
+    card.compactDelta:Hide()
+
     EnsureBracketProxy(cardIndex)
     card:Hide()
     return card
@@ -1288,7 +1381,40 @@ local function EnsurePanel()
         ArenaQueue.Hide()
     end)
 
-    panel.title:SetPoint("RIGHT", panel.closeButton, "LEFT", -2, 0)
+    panel.minimizeButton = CreateFrame("Button", nil, panel)
+    panel.minimizeButton:SetSize(18, 18)
+    panel.minimizeButton:SetPoint("RIGHT", panel.closeButton, "LEFT", -1, 0)
+    panel.minimizeButton:SetFrameLevel(panel:GetFrameLevel() + 5)
+
+    panel.minimizeButton.highlight = panel.minimizeButton:CreateTexture(nil, "HIGHLIGHT")
+    panel.minimizeButton.highlight:SetAllPoints()
+    panel.minimizeButton:SetHighlightTexture(panel.minimizeButton.highlight)
+
+    panel.minimizeButton.horizontalLine = panel.minimizeButton:CreateTexture(nil, "ARTWORK")
+    panel.minimizeButton.horizontalLine:SetPoint("CENTER")
+    panel.minimizeButton.horizontalLine:SetSize(9, 2)
+
+    panel.minimizeButton.verticalLine = panel.minimizeButton:CreateTexture(nil, "ARTWORK")
+    panel.minimizeButton.verticalLine:SetPoint("CENTER")
+    panel.minimizeButton.verticalLine:SetSize(2, 9)
+
+    panel.minimizeButton:SetScript("OnEnter", function(button)
+        if not GameTooltip then return end
+        GameTooltip:SetOwner(button, "ANCHOR_TOP")
+        GameTooltip:SetText(button.tooltipText)
+        GameTooltip:Show()
+    end)
+    panel.minimizeButton:SetScript("OnLeave", function()
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+    panel.minimizeButton:SetScript("OnClick", function()
+        SetPanelMinimized(not IsPanelMinimized())
+        UpdateMinimizeButton()
+        UpdatePanel()
+    end)
+    UpdateMinimizeButton()
+
+    panel.title:SetPoint("RIGHT", panel.minimizeButton, "LEFT", -2, 0)
 
     panel.cards = {}
     for cardIndex = 1, MAX_CARDS do
@@ -1306,10 +1432,14 @@ local function EnsurePanel()
 end
 
 local function LayoutPanel(cardCount)
+    local minimized = IsPanelMinimized()
+    local cardHeight = minimized and MINIMIZED_CARD_HEIGHT or CARD_HEIGHT
+    local cardGap = minimized and MINIMIZED_CARD_GAP or CARD_GAP
+    local bottomInset = minimized and MINIMIZED_PANEL_BOTTOM_INSET or PANEL_BOTTOM_INSET
     local height = PANEL_TOP_INSET
-        + cardCount * CARD_HEIGHT
-        + math.max(cardCount - 1, 0) * CARD_GAP
-        + PANEL_BOTTOM_INSET
+        + cardCount * cardHeight
+        + math.max(cardCount - 1, 0) * cardGap
+        + bottomInset
     panel.helperPanelHeight = height
     panel:SetSize(PANEL_WIDTH, height)
 
@@ -1321,7 +1451,7 @@ local function LayoutPanel(cardCount)
                 panel,
                 "TOPLEFT",
                 CARD_SIDE_INSET,
-                -PANEL_TOP_INSET - (cardIndex - 1) * (CARD_HEIGHT + CARD_GAP)
+                -PANEL_TOP_INSET - (cardIndex - 1) * (cardHeight + cardGap)
             )
         end
     end
@@ -1346,12 +1476,14 @@ local function PositionPanel()
 end
 
 local function UpdateCard(card, state)
+    local minimized = IsPanelMinimized()
+    ApplyCardLayout(card, minimized)
     card.cardState = state
     card.actionButton.cardState = state
     card.modeName:SetText(state.bracket.label)
     card.ratingValue:SetText(state.rating.rating > 0 and state.rating.rating or "—")
     local sessionDelta = state.rating.sessionDelta
-    if sessionDelta and sessionDelta ~= 0 then
+    if not minimized and sessionDelta and sessionDelta ~= 0 then
         local prefix = sessionDelta >= 0 and "+" or ""
         card.sessionDelta:SetText(prefix .. sessionDelta)
         card.sessionDelta:Show()
@@ -1375,11 +1507,19 @@ local function UpdateCard(card, state)
 
     card.statusText:SetText(state.statusText)
     card.queueText:SetText(state.failureReason or state.bracket.description)
+    local showCompactRating = minimized and not state.failureReason and not state.queue
+    local ratingText = state.rating.rating > 0 and state.rating.rating or "—"
+    local deltaText = sessionDelta == nil and "—" or ((sessionDelta >= 0 and "+" or "") .. sessionDelta)
+    card.compactRating:SetText("Rating " .. ratingText)
+    card.compactRating:SetShown(showCompactRating)
+    card.compactDelta:SetText("Session " .. deltaText)
+    card.compactDelta:SetShown(showCompactRating)
+    card.queueText:SetShown(not showCompactRating)
     card.actionButton:SetText(state.buttonText)
     card.actionButton:SetEnabled(state.buttonEnabled)
     card.actionButton:SetShown(state.buttonVisible)
     card.queueText:ClearAllPoints()
-    card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 13)
+    card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, minimized and 7 or 13)
     if state.buttonVisible then
         card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
     else
