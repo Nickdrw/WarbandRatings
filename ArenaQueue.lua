@@ -107,6 +107,8 @@ local queueStatusOriginalLayout
 local queueStatusRelocated
 local queueStatusHooked
 local queueEyeEffect
+local builtInPvPDeltas = {}
+local builtInPvPDeltasHooked
 local UpdatePanel
 local UpdateDynamicCards
 
@@ -722,6 +724,45 @@ local function GetRatingInfo(bracket)
         tierIcon = tierInfo and tierInfo.tierIconID,
         sessionDelta = sessionDelta,
     }
+end
+
+local function UpdateBuiltInPvPRatingDeltas()
+    local conquestFrame = _G.ConquestFrame
+    if not conquestFrame or not GetPersonalRatedInfo then return end
+
+    for _, bracketKey in ipairs(BRACKET_DISPLAY_ORDER) do
+        local bracket = BRACKETS[bracketKey]
+        local bracketFrame = conquestFrame[bracket.targetKey]
+        local currentRating = bracketFrame and bracketFrame.CurrentRating
+        if currentRating then
+            local deltaText = builtInPvPDeltas[bracketKey]
+            if not deltaText then
+                deltaText = bracketFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+                deltaText:SetPoint("LEFT", currentRating, "RIGHT", 4, 0)
+                deltaText:SetJustifyH("LEFT")
+                builtInPvPDeltas[bracketKey] = deltaText
+            end
+
+            local sessionDelta = GetRatingInfo(bracket).sessionDelta
+            if sessionDelta and sessionDelta ~= 0 then
+                deltaText:SetText((sessionDelta >= 0 and "+" or "") .. sessionDelta)
+                if sessionDelta > 0 then
+                    deltaText:SetTextColor(unpack(STATUS_COLORS.ready))
+                else
+                    deltaText:SetTextColor(unpack(SESSION_LOSS_COLOR))
+                end
+                deltaText:Show()
+            else
+                deltaText:SetText("")
+                deltaText:Hide()
+            end
+        end
+    end
+
+    if not builtInPvPDeltasHooked then
+        conquestFrame:HookScript("OnShow", UpdateBuiltInPvPRatingDeltas)
+        builtInPvPDeltasHooked = true
+    end
 end
 
 local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSize)
@@ -1530,6 +1571,8 @@ local function UpdateCard(card, state)
 end
 
 UpdatePanel = function()
+    UpdateBuiltInPvPRatingDeltas()
+
     if ns.UI and ns.UI.UpdateQueueHelperPvPButton then
         ns.UI.UpdateQueueHelperPvPButton()
     end
