@@ -526,7 +526,7 @@ local function GetBlitzFailure(groupSize)
     if lfgFailure then return lfgFailure end
 
     if groupSize == 2 and (not UnitIsGroupLeader or not UnitIsGroupLeader("player")) then
-        return _G.PVP_NOT_LEADER or "Only the group leader can queue."
+        return _G.PVP_NOT_LEADER or "Only the group leader can queue.", "notLeader"
     end
 
     if C_PvP and C_PvP.GetRatedSoloRBGMinItemLevel then
@@ -578,7 +578,7 @@ local function GetArenaGroupFailure(groupSize)
         return "Waiting for rated PvP availability."
     end
     if not UnitIsGroupLeader or not UnitIsGroupLeader("player") then
-        return _G.PVP_NOT_LEADER or "Only the group leader can queue."
+        return _G.PVP_NOT_LEADER or "Only the group leader can queue.", "notLeader"
     end
 
     local lfgFailure = GetLFGListFailure()
@@ -810,7 +810,11 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
         return state
     end
 
-    state.failureReason = commonFailure or GetBracketFailure(bracket, groupSize)
+    if commonFailure then
+        state.failureReason = commonFailure
+    else
+        state.failureReason, state.failureKind = GetBracketFailure(bracket, groupSize)
+    end
     if not state.failureReason and not ConfigureSecureBracket(cardIndex, bracket) then
         state.failureReason = "Rated PvP queue controls are not ready."
     end
@@ -876,6 +880,10 @@ local function SetCardProgress(card, ratio)
     card.progressFill:Show()
 end
 
+local function SetQueueDisplayText(card, expandedText, minimizedText)
+    card.queueText:SetText(card.minimizedLayout and minimizedText or expandedText)
+end
+
 local function UpdateDynamicCard(card)
     local state = card.cardState
     local queue = state and state.queue
@@ -888,13 +896,13 @@ local function UpdateDynamicCard(card)
 
     if queue.status == "rolecheck" then
         card.readyGlow:Hide()
-        card.queueText:SetText("Waiting for all players to choose a role")
+        SetQueueDisplayText(card, "Waiting for all players to choose a role", "Role check")
         card.progressBg:Hide()
         card.progressFill:Hide()
     elseif queue.status == "queued" then
         card.readyGlow:Hide()
         if queue.suspended then
-            card.queueText:SetText("Queue suspended")
+            SetQueueDisplayText(card, "Queue suspended", "Suspended")
             card.progressBg:Hide()
             card.progressFill:Hide()
             return
@@ -906,14 +914,22 @@ local function UpdateDynamicCard(card)
             or 0
         waited = (tonumber(waited) or 0) / 1000
         estimated = (tonumber(estimated) or 0) / 1000
+        local waitedText = FormatDuration(waited)
 
         if estimated > 0 then
-            card.queueText:SetText(
-                "Queued " .. FormatDuration(waited) .. "  •  Est. " .. FormatDuration(estimated)
+            local estimatedText = FormatDuration(estimated)
+            SetQueueDisplayText(
+                card,
+                "Queued " .. waitedText .. "  •  Est. " .. estimatedText,
+                "Wait " .. waitedText .. "\nEst. " .. estimatedText
             )
             SetCardProgress(card, waited / estimated)
         else
-            card.queueText:SetText("Queued " .. FormatDuration(waited) .. "  •  Est. —")
+            SetQueueDisplayText(
+                card,
+                "Queued " .. waitedText .. "  •  Est. —",
+                "Wait " .. waitedText .. "\nEst. —"
+            )
             SetCardProgress(card, 0.08)
         end
         card.progressBg:Show()
@@ -921,7 +937,12 @@ local function UpdateDynamicCard(card)
         local expiration = GetBattlefieldPortExpiration
             and GetBattlefieldPortExpiration(queue.index)
             or 0
-        card.queueText:SetText("Match ready  •  " .. FormatDuration(expiration))
+        local expirationText = FormatDuration(expiration)
+        SetQueueDisplayText(
+            card,
+            "Match ready  •  " .. expirationText,
+            "Ready\n" .. expirationText
+        )
         card.progressBg:Show()
         SetCardProgress(card, 1)
         card.readyGlow:Show()
@@ -929,7 +950,7 @@ local function UpdateDynamicCard(card)
         card.readyGlow:SetAlpha(0.12 + (math.sin(now * 5) + 1) * 0.10)
     else
         card.readyGlow:Hide()
-        card.queueText:SetText(state.statusText)
+        SetQueueDisplayText(card, state.statusText, state.buttonText)
         card.progressBg:Hide()
         card.progressFill:Hide()
     end
@@ -1378,6 +1399,7 @@ local function CreateCard(cardIndex)
     card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 13)
     card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
     card.queueText:SetJustifyH("LEFT")
+    card.queueText:SetJustifyV("MIDDLE")
 
     card.compactRating = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     card.compactRating:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 7)
@@ -1548,23 +1570,32 @@ local function UpdateCard(card, state)
 
     card.statusText:SetText(state.statusText)
     card.queueText:SetText(state.failureReason or state.bracket.description)
-    local showCompactRating = minimized and not state.failureReason and not state.queue
+    local isLeaderOnly = state.failureKind == "notLeader"
+    local showQueueInButton = minimized and state.queue ~= nil
+    local showCompactRating = minimized
+        and (showQueueInButton or not state.failureReason or isLeaderOnly)
     local ratingText = state.rating.rating > 0 and state.rating.rating or "—"
     local deltaText = sessionDelta == nil and "—" or ((sessionDelta >= 0 and "+" or "") .. sessionDelta)
     card.compactRating:SetText("Rating " .. ratingText)
     card.compactRating:SetShown(showCompactRating)
     card.compactDelta:SetText("Session " .. deltaText)
     card.compactDelta:SetShown(showCompactRating)
-    card.queueText:SetShown(not showCompactRating)
-    card.actionButton:SetText(state.buttonText)
+    card.queueText:SetShown(showQueueInButton or not showCompactRating)
+    card.actionButton:SetText(minimized and isLeaderOnly and "Leader only" or state.buttonText)
     card.actionButton:SetEnabled(state.buttonEnabled)
-    card.actionButton:SetShown(state.buttonVisible)
+    card.actionButton:SetShown(state.buttonVisible and not showQueueInButton)
     card.queueText:ClearAllPoints()
-    card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, minimized and 7 or 13)
-    if state.buttonVisible then
-        card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
+    if showQueueInButton then
+        card.queueText:SetAllPoints(card.actionButton)
+        card.queueText:SetJustifyH("CENTER")
     else
-        card.queueText:SetPoint("RIGHT", card, "RIGHT", -10, 0)
+        card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, minimized and 7 or 13)
+        if state.buttonVisible then
+            card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
+        else
+            card.queueText:SetPoint("RIGHT", card, "RIGHT", -10, 0)
+        end
+        card.queueText:SetJustifyH("LEFT")
     end
     card:Show()
     UpdateDynamicCard(card)
