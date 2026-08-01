@@ -18,6 +18,7 @@ local CARD_WIDTH = PANEL_WIDTH - CARD_SIDE_INSET * 2
 local CARD_PROGRESS_WIDTH = CARD_WIDTH - 20
 local MAX_CARDS = 3
 local FALLBACK_BADGE_TEXTURE = 2022761
+local NO_SHOW_SPELL_ID = 368798
 local QUEUE_EYE_TOP_PADDING = 6
 local QUEUE_EYE_FLARE_SCALE = 1.15
 
@@ -109,6 +110,7 @@ local queueStatusHooked
 local queueEyeEffect
 local builtInPvPDeltas = {}
 local builtInPvPDeltasHooked
+local noShowPenaltyActive = false
 local UpdatePanel
 local UpdateDynamicCards
 
@@ -450,6 +452,13 @@ local function GetDisplayedBrackets(queues)
         end
     end
 
+    -- Solo Shuffle queues only the player, so remaining in a group should not
+    -- remove it from the helper.
+    if not included.soloShuffle and #displayed < MAX_CARDS then
+        displayed[#displayed + 1] = BRACKETS.soloShuffle
+        included.soloShuffle = true
+    end
+
     for _, key in ipairs(BRACKET_DISPLAY_ORDER) do
         if queues[key] and not included[key] and #displayed < MAX_CARDS then
             displayed[#displayed + 1] = BRACKETS[key]
@@ -496,6 +505,25 @@ local function GetPlayerPVPItemLevel()
     return tonumber(playerPVPItemLevel) or 0
 end
 
+local function FormatPVPItemLevelFailure(requiredItemLevel, currentItemLevel, playerName)
+    if playerName then
+        return ("%s: PvP ilvl %d/%d."):format(
+            playerName,
+            currentItemLevel,
+            requiredItemLevel
+        )
+    end
+    return ("PvP ilvl %d/%d required."):format(currentItemLevel, requiredItemLevel)
+end
+
+local function HasNoShowPenalty()
+    noShowPenaltyActive = C_UnitAuras
+        and C_UnitAuras.GetPlayerAuraBySpellID
+        and C_UnitAuras.GetPlayerAuraBySpellID(NO_SHOW_SPELL_ID) ~= nil
+        or false
+    return noShowPenaltyActive
+end
+
 local function GetSoloShuffleFailure()
     if _G.ConquestFrame and _G.ConquestFrame.ratedSoloShuffleEnabled == false then
         return "Solo Shuffle is currently unavailable."
@@ -503,16 +531,52 @@ local function GetSoloShuffleFailure()
         return "Waiting for rated PvP availability."
     end
 
+    if HasNoShowPenalty() then
+        return "No-Show penalty active.", "noShow"
+    end
+
     if C_PvP and C_PvP.GetRatedSoloShuffleMinItemLevel then
         local minItemLevel = tonumber(C_PvP.GetRatedSoloShuffleMinItemLevel()) or 0
         local playerPVPItemLevel = GetPlayerPVPItemLevel()
         if minItemLevel > 0 and playerPVPItemLevel < minItemLevel then
-            if _G.INSTANCE_UNAVAILABLE_SELF_PVP_GEAR_TOO_LOW then
-                return _G.INSTANCE_UNAVAILABLE_SELF_PVP_GEAR_TOO_LOW:format(minItemLevel, playerPVPItemLevel)
-            end
-            return "Your PvP item level is too low."
+            return FormatPVPItemLevelFailure(minItemLevel, playerPVPItemLevel)
         end
     end
+end
+
+local function UnitClassCanHeal(unit)
+    if not UnitClass
+        or not C_SpecializationInfo
+        or not C_SpecializationInfo.GetNumSpecializationsForClassID
+        or not GetSpecializationInfoForClassID then
+        return nil
+    end
+
+    local _, _, classID = UnitClass(unit)
+    if not classID then return nil end
+
+    local specializationCount = tonumber(
+        C_SpecializationInfo.GetNumSpecializationsForClassID(classID)
+    ) or 0
+    if specializationCount <= 0 then return nil end
+
+    for specializationIndex = 1, specializationCount do
+        local _, _, _, _, role = GetSpecializationInfoForClassID(
+            classID,
+            specializationIndex
+        )
+        if role == "HEALER" then
+            return true
+        end
+    end
+    return false
+end
+
+local function IsBlitzDuoMissingHealerCapableClass()
+    -- Fail open when class/spec data is not ready; Blizzard's role check remains
+    -- authoritative and will reject a duo that does not select a healer.
+    return UnitClassCanHeal("player") == false
+        and UnitClassCanHeal("party1") == false
 end
 
 local function GetBlitzFailure(groupSize)
@@ -522,8 +586,16 @@ local function GetBlitzFailure(groupSize)
         return "Waiting for rated PvP availability."
     end
 
+    if HasNoShowPenalty() then
+        return "No-Show penalty active.", "noShow"
+    end
+
     local lfgFailure = GetLFGListFailure()
     if lfgFailure then return lfgFailure end
+
+    if groupSize == 2 and IsBlitzDuoMissingHealerCapableClass() then
+        return "Blitz duo needs a healer class."
+    end
 
     if groupSize == 2 and (not UnitIsGroupLeader or not UnitIsGroupLeader("player")) then
         return _G.PVP_NOT_LEADER or "Only the group leader can queue.", "notLeader"
@@ -540,25 +612,16 @@ local function GetBlitzFailure(groupSize)
                 C_PartyInfo.GetMinItemLevel(Enum.AvgItemLevelCategories.PvP)
             partyMinItemLevel = tonumber(partyMinItemLevel)
             if minItemLevel > 0 and partyMinItemLevel and partyMinItemLevel < minItemLevel then
-                if _G.INSTANCE_UNAVAILABLE_OTHER_GEAR_TOO_LOW and lowestPlayer then
-                    return _G.INSTANCE_UNAVAILABLE_OTHER_GEAR_TOO_LOW:format(
-                        lowestPlayer,
-                        minItemLevel,
-                        partyMinItemLevel
-                    )
-                end
-                return "A group member's PvP item level is too low."
+                return FormatPVPItemLevelFailure(
+                    minItemLevel,
+                    partyMinItemLevel,
+                    lowestPlayer
+                )
             end
         else
             local playerPVPItemLevel = GetPlayerPVPItemLevel()
             if minItemLevel > 0 and playerPVPItemLevel < minItemLevel then
-                if _G.INSTANCE_UNAVAILABLE_SELF_PVP_GEAR_TOO_LOW then
-                    return _G.INSTANCE_UNAVAILABLE_SELF_PVP_GEAR_TOO_LOW:format(
-                        minItemLevel,
-                        playerPVPItemLevel
-                    )
-                end
-                return "Your PvP item level is too low."
+                return FormatPVPItemLevelFailure(minItemLevel, playerPVPItemLevel)
             end
         end
     end
@@ -589,7 +652,7 @@ local function GetArenaGroupFailure(groupSize)
     for index = 1, unitCount do
         local unit = unitPrefix .. index
         if UnitIsConnected and not UnitIsConnected(unit) then
-            return _G.PVP_NO_QUEUE_DISCONNECTED_GROUP or "Every group member must be online."
+            return "A group member is offline."
         end
         if maxLevel and UnitLevel and UnitLevel(unit) < maxLevel then
             if _G.QUEUE_UNAVAILABLE_PARTY_MIN_LEVEL then
@@ -819,7 +882,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
         state.failureReason = "Rated PvP queue controls are not ready."
     end
     state.buttonEnabled = not state.failureReason
-    state.statusText = state.failureReason or "READY TO QUEUE"
+    state.statusText = state.failureReason and "UNAVAILABLE" or "READY TO QUEUE"
     return state
 end
 
@@ -1571,9 +1634,16 @@ local function UpdateCard(card, state)
     card.statusText:SetText(state.statusText)
     card.queueText:SetText(state.failureReason or state.bracket.description)
     local isLeaderOnly = state.failureKind == "notLeader"
+    local isNoShow = state.failureKind == "noShow"
+    local compactFailureButtonText
+    if isLeaderOnly then
+        compactFailureButtonText = "Leader only"
+    elseif isNoShow then
+        compactFailureButtonText = "No-Show"
+    end
     local showQueueInButton = minimized and state.queue ~= nil
     local showCompactRating = minimized
-        and (showQueueInButton or not state.failureReason or isLeaderOnly)
+        and (showQueueInButton or not state.failureReason or compactFailureButtonText ~= nil)
     local ratingText = state.rating.rating > 0 and state.rating.rating or "—"
     local deltaText = sessionDelta == nil and "—" or ((sessionDelta >= 0 and "+" or "") .. sessionDelta)
     card.compactRating:SetText("Rating " .. ratingText)
@@ -1581,7 +1651,7 @@ local function UpdateCard(card, state)
     card.compactDelta:SetText("Session " .. deltaText)
     card.compactDelta:SetShown(showCompactRating)
     card.queueText:SetShown(showQueueInButton or not showCompactRating)
-    card.actionButton:SetText(minimized and isLeaderOnly and "Leader only" or state.buttonText)
+    card.actionButton:SetText(minimized and compactFailureButtonText or state.buttonText)
     card.actionButton:SetEnabled(state.buttonEnabled)
     card.actionButton:SetShown(state.buttonVisible and not showQueueInButton)
     card.queueText:ClearAllPoints()
@@ -1703,6 +1773,7 @@ function ArenaQueue.Attach()
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
+    eventFrame:RegisterEvent("PLAYER_AVG_ITEM_LEVEL_UPDATE")
     eventFrame:RegisterEvent("PVP_TYPES_ENABLED")
     eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
     eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_STATUS")
@@ -1715,10 +1786,17 @@ function ArenaQueue.Attach()
     eventFrame:RegisterEvent("LFG_UPDATE")
     eventFrame:RegisterEvent("LFG_LIST_ACTIVE_ENTRY_UPDATE")
     eventFrame:RegisterEvent("LFG_LIST_SEARCH_RESULT_UPDATED")
+    eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     eventFrame:RegisterEvent("ADDON_LOADED")
     eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if event == "ADDON_LOADED" and arg1 ~= "Blizzard_PVPUI" then
             return
+        end
+
+        if event == "UNIT_AURA" then
+            local wasActive = noShowPenaltyActive
+            HasNoShowPenalty()
+            if noShowPenaltyActive == wasActive then return end
         end
 
         if event == "PLAYER_LOGIN" then

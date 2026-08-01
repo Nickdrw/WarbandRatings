@@ -41,9 +41,11 @@ read_globals = {
     "GetSpecialization",
     "GetSpecializationInfo",
     "GetSpecializationInfoByID",
+    "GetSpecializationInfoForClassID",
 
     -- PvP
     "C_PvP",
+    "C_UnitAuras",
     "C_LobbyMatchmakerInfo",
     "MAX_BATTLEFIELD_QUEUES",
     "GetAverageItemLevel",
