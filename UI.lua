@@ -9,13 +9,13 @@ local Utils = ns.Utils
 local WINDOW_WIDTH = 780 -- initial size, resized dynamically in RefreshTable
 local WINDOW_HEIGHT = 450
 local WINDOW_MIN_WIDTH = 400
-local WINDOW_MIN_HEIGHT = 260
+local WINDOW_MIN_HEIGHT = 280
 local WINDOW_SCREEN_MARGIN = 20
 local RESIZE_GRIP_WIDTH = 72
 local RESIZE_GRIP_HEIGHT = 10
 local SURFACE_INSET_X = 0
 local TABLE_CONTENT_PADDING_X = 8
-local CONTENT_TOP_OFFSET = 26
+local CONTENT_TOP_OFFSET = 64
 local CONTENT_BOTTOM_INSET = 2
 local TITLE_BAR_TOP_INSET = 1
 local TITLE_BAR_HEIGHT = 22
@@ -174,6 +174,7 @@ local movingMainFrame
 local resizingMainFrame
 local mainWindowNeedsInitialCenter
 local UpdateMainDockFrameSize
+local PositionSettingsPanelNearMain
 local UpdateSettingsTabs
 local UpdateFilterPresetButtons
 UI.TableSort = UI.TableSort or { key = "character", direction = "asc" }
@@ -319,6 +320,9 @@ local function ClampMainDockFrameToScreen()
 
     SetMainDockFrameTopLeft(left, top)
     RefreshScrollAreaLayout()
+    if settingsPanel and settingsPanel.dockedToMain and settingsPanel:IsShown() and PositionSettingsPanelNearMain then
+        PositionSettingsPanelNearMain(settingsPanel)
+    end
 end
 
 local function CenterMainDockFrameOnScreen()
@@ -361,7 +365,7 @@ UpdateMainDockFrameSize = function()
     RefreshScrollAreaLayout()
 end
 
-local function PositionSettingsPanelNearMain(panel)
+PositionSettingsPanelNearMain = function(panel)
     if not panel or not UIParent then return end
 
     local parentWidth = UIParent:GetWidth()
@@ -370,8 +374,11 @@ local function PositionSettingsPanelNearMain(panel)
     local panelHeight = (panel:GetHeight() or SETTINGS_HEIGHT) + SETTINGS_TAB_HEIGHT
 
     panel:ClearAllPoints()
+    panel.dockedToMain = nil
+    panel.manuallyDetached = nil
 
-    if not mainFrame or not parentWidth or not parentHeight or parentWidth <= 0 or parentHeight <= 0 then
+    if not mainFrame or not mainFrame:IsShown()
+        or not parentWidth or not parentHeight or parentWidth <= 0 or parentHeight <= 0 then
         panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         return
     end
@@ -412,6 +419,7 @@ local function PositionSettingsPanelNearMain(panel)
         top = parentHeight - margin
     end
 
+    panel.dockedToMain = true
     panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
 end
 
@@ -532,7 +540,7 @@ end
 ------------------------------------------------------------
 -- Minimap Button
 ------------------------------------------------------------
-local MINIMAP_ICON = 2022761 -- Achievement_RankedPvP_06 (Elite)
+local ADDON_ICON = "Interface\\AddOns\\WarbandRatings\\media\\warbandratings-icon"
 
 local function UpdateMinimapButtonPosition(btn)
     local angle = math.rad(Database.GetSettings().minimapPos or 220)
@@ -564,20 +572,26 @@ function UI.CreateMinimapButton()
     background:SetPoint("CENTER", 0, 1)
 
     local icon = minimapButton:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(18, 18)
-    icon:SetTexture(MINIMAP_ICON)
+    icon:SetSize(22, 22)
+    icon:SetTexture(ADDON_ICON)
     icon:SetPoint("CENTER", 0, 1)
 
     minimapButton:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight", "ADD")
 
-    minimapButton:SetScript("OnClick", function()
-        UI.Toggle()
+    minimapButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    minimapButton:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            UI.ToggleSettings()
+        else
+            UI.Toggle()
+        end
     end)
 
     minimapButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Warband Ratings")
-        GameTooltip:AddLine("Click to toggle window", 1, 1, 1)
+        GameTooltip:AddLine(ns.DISPLAY_NAME)
+        GameTooltip:AddLine("Left-click to toggle main window", 1, 1, 1)
+        GameTooltip:AddLine("Right-click to toggle settings window", 1, 1, 1)
         GameTooltip:Show()
     end)
 
@@ -628,7 +642,7 @@ function UI.UpdateCompartmentVisibility()
             local addons = AddonCompartmentFrame.registeredAddons
             if addons then
                 for i = #addons, 1, -1 do
-                    if addons[i].text == "Warband Ratings" then
+                    if addons[i].text == ns.DISPLAY_NAME then
                         table.remove(addons, i)
                     end
                 end
@@ -639,8 +653,8 @@ function UI.UpdateCompartmentVisibility()
     else
         if not compartmentRegistered then
             AddonCompartmentFrame:RegisterAddon({
-                text = "Warband Ratings",
-                icon = 2022761,
+                text = ns.DISPLAY_NAME,
+                icon = ADDON_ICON,
                 func = WarbandRatings_OnAddonCompartmentClick,
                 funcOnEnter = WarbandRatings_OnAddonCompartmentEnter,
                 funcOnLeave = WarbandRatings_OnAddonCompartmentLeave,
@@ -950,6 +964,10 @@ function UI.ApplyTheme()
         SetTextureColor(EnsureFillTexture(scrollFrame, "themeBg", "BACKGROUND", 0, 0), theme.surface)
     end
 
+    if ns.SeasonUI and ns.SeasonUI.ApplyTheme then
+        ns.SeasonUI.ApplyTheme(theme)
+    end
+
     if headerRow then
         SetTextureColor(EnsureFillTexture(headerRow, "themeBg", "BACKGROUND", 1, 0), theme.header)
         if not headerRow.themeLine then
@@ -962,8 +980,7 @@ function UI.ApplyTheme()
     end
 
     if settingsPanel then
-        ApplyPanelTheme(settingsPanel, theme.surface, theme.border)
-        SetFontColor(settingsPanel.title, theme.title)
+        ns.HelperPanel.ApplyShellTheme(settingsPanel)
         SetFontColor(settingsPanel.themeLabel, theme.headerText)
         if settingsPanel.checkboxes then
             for _, cb in ipairs(settingsPanel.checkboxes) do
@@ -1186,7 +1203,7 @@ function UI.CreateMainFrame()
     mainFrame:Hide()
     HideTemplateArtwork(mainFrame)
 
-    mainFrame.TitleText:SetText("Warband Ratings")
+    mainFrame.TitleText:SetText(ns.DISPLAY_NAME .. " - Ratings")
     mainFrame.TitleText:ClearAllPoints()
     mainFrame.TitleText:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -TITLE_BAR_TOP_INSET)
     mainFrame.TitleText:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, -TITLE_BAR_TOP_INSET)
@@ -1206,6 +1223,9 @@ function UI.CreateMainFrame()
     end)
     CreateHeliotropeCounter(settingsBtn)
 
+    if ns.SeasonUI and ns.SeasonUI.Create then
+        ns.SeasonUI.Create(mainFrame)
+    end
     UI.CreateScrollArea()
     UI.CreateSettingsPanel()
     UI.CreateHistoryGraphPanel()
@@ -1441,16 +1461,24 @@ end
 function UI.CreateSettingsPanel()
     if settingsPanel then return settingsPanel end
 
-    settingsPanel = CreateFrame("Frame", "WarbandRatingsSettingsWindow", UIParent, "BasicFrameTemplateWithInset")
+    settingsPanel = ns.HelperPanel.CreateShell(
+        "WarbandRatingsSettingsWindow",
+        SETTINGS_WIDTH,
+        SETTINGS_HEIGHT,
+        ns.DISPLAY_NAME .. " - Settings"
+    )
     tinsert(UISpecialFrames, "WarbandRatingsSettingsWindow")
-    settingsPanel:SetSize(SETTINGS_WIDTH, SETTINGS_HEIGHT)
     PositionSettingsPanelNearMain(settingsPanel)
-    settingsPanel:Hide()
     settingsPanel:SetMovable(true)
-    settingsPanel:EnableMouse(true)
     settingsPanel:RegisterForDrag("LeftButton")
-    settingsPanel:SetScript("OnDragStart", settingsPanel.StartMoving)
-    settingsPanel:SetScript("OnDragStop", settingsPanel.StopMovingOrSizing)
+    settingsPanel:SetScript("OnDragStart", function(self)
+        self.dockedToMain = nil
+        self.manuallyDetached = true
+        self:StartMoving()
+    end)
+    settingsPanel:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+    end)
     settingsPanel:SetScript("OnHide", function(self)
         if self.themeDropdown and self.themeDropdown.menu then
             self.themeDropdown.menu:Hide()
@@ -1461,16 +1489,16 @@ function UI.CreateSettingsPanel()
     end)
     settingsPanel:SetFrameStrata("DIALOG")
     settingsPanel:SetClampedToScreen(true)
-    HideTemplateArtwork(settingsPanel)
 
-    settingsPanel.TitleText:SetText("Settings")
-    settingsPanel.TitleText:ClearAllPoints()
-    settingsPanel.TitleText:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 0, -TITLE_BAR_TOP_INSET)
-    settingsPanel.TitleText:SetPoint("TOPRIGHT", settingsPanel, "TOPRIGHT", 0, -TITLE_BAR_TOP_INSET)
-    settingsPanel.TitleText:SetHeight(TITLE_BAR_HEIGHT)
-    settingsPanel.TitleText:SetJustifyH("CENTER")
-    settingsPanel.TitleText:SetJustifyV("MIDDLE")
-    settingsPanel.title = settingsPanel.TitleText
+    settingsPanel.closeButton = CreateFrame("Button", nil, settingsPanel, "UIPanelCloseButton")
+    settingsPanel.closeButton:SetSize(20, 20)
+    settingsPanel.closeButton:SetPoint("TOPRIGHT", settingsPanel, "TOPRIGHT", -1, -1)
+    settingsPanel.closeButton:SetFrameLevel(settingsPanel:GetFrameLevel() + 5)
+    settingsPanel.closeButton:SetScript("OnClick", function()
+        settingsPanel:Hide()
+    end)
+    settingsPanel.title:SetPoint("RIGHT", settingsPanel.closeButton, "LEFT", -2, 0)
+    settingsPanel.title:SetJustifyH("LEFT")
 
     settingsPanel.checkboxes = {}
     settingsPanel.filterCheckboxes = {}
@@ -1491,6 +1519,7 @@ function UI.CreateSettingsPanel()
     local helpersPage = CreateFrame("Frame", nil, settingsPanel)
     helpersPage:SetAllPoints(settingsPanel)
     helpersPage.settingsWindow = settingsPanel
+    helpersPage.checkboxXOffset = 4
     helpersPage:Hide()
     settingsPanel.helpersPage = helpersPage
 
@@ -1518,15 +1547,32 @@ function UI.CreateSettingsPanel()
     local helperYOffset = -38
     UI.CreateSettingsSectionLabel(helpersPage, "Helper windows", helperYOffset)
     helperYOffset = helperYOffset - 26
-    UI.CreateCheckbox(helpersPage, "Hide boxes helper", "hideBoxesHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    UI.CreateCheckbox(helpersPage, "Hide reward-opening helper", "hideBoxesHelper", helperYOffset, UI.RefreshFeatureHelpers)
     helperYOffset = helperYOffset - 26
-    UI.CreateCheckbox(helpersPage, "Hide Heliotrope helper", "hideHeliotropeHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    UI.CreateCheckbox(helpersPage, "Hide Heliotrope purchase helper", "hideHeliotropeHelper", helperYOffset, UI.RefreshFeatureHelpers)
     helperYOffset = helperYOffset - 26
-    UI.CreateCheckbox(helpersPage, "Hide Conquest Chest helper", "hideGalacticConquestChestHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    settingsPanel.seasonFeatureStartYOffset = helperYOffset
+    settingsPanel.seasonFeatureCheckboxes = {
+        UI.CreateCheckbox(
+            helpersPage,
+            "Hide Equipment Chest purchase helper",
+            "hideConquestEquipmentChestPurchaseHelper",
+            helperYOffset,
+            UI.RefreshFeatureHelpers
+        ),
+    }
     helperYOffset = helperYOffset - 26
-    UI.CreateCheckbox(helpersPage, "Hide Equipment Chest mail helper", "hideGalacticEquipmentMailHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    settingsPanel.seasonFeatureCheckboxes[#settingsPanel.seasonFeatureCheckboxes + 1] =
+        UI.CreateCheckbox(
+            helpersPage,
+            "Hide Equipment Chest mailing helper",
+            "hideConquestEquipmentChestMailHelper",
+            helperYOffset,
+            UI.RefreshFeatureHelpers
+        )
     helperYOffset = helperYOffset - 26
-    UI.CreateCheckbox(helpersPage, "Hide the queue helper", "hideArenaQueueHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    settingsPanel.queueHelperCheckbox = UI.CreateCheckbox(helpersPage, "Hide queue helper", "hideArenaQueueHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    settingsPanel.queueHelperYOffsetWithFeature = helperYOffset
 
     local presetLabel = filtersPage:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     presetLabel:SetPoint("TOPLEFT", 14, -38)
@@ -1575,13 +1621,15 @@ function UI.CreateSettingsPanel()
     }
     settingsPanel.activeTab = "settings"
     SetSettingsTab("settings")
+    UI.RefreshSettingsCheckboxes()
+    UI.ApplyTheme()
 
     return settingsPanel
 end
 
 function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
     local cb = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
-    cb:SetPoint("TOPLEFT", 12, yOffset)
+    cb:SetPoint("TOPLEFT", parent.checkboxXOffset or 12, yOffset)
     cb.Text:SetText(label)
     cb.Text:SetFontObject("GameFontNormalSmall")
     SetFontColor(cb.Text, GetActiveTheme().text)
@@ -1596,6 +1644,7 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
         UI.RefreshTable()
         if onChange then onChange() end
     end)
+    return cb
 end
 
 function UI.RefreshSettingsCheckboxes()
@@ -1606,6 +1655,22 @@ function UI.RefreshSettingsCheckboxes()
         if cb.settingKey then
             cb:SetChecked(settings[cb.settingKey])
         end
+    end
+
+    local featureAvailable = ns.Season.IsFeatureAvailable("conquestEquipmentChest")
+    for _, cb in ipairs(settingsPanel.seasonFeatureCheckboxes or {}) do
+        cb:SetShown(featureAvailable)
+    end
+    if settingsPanel.queueHelperCheckbox then
+        local queueYOffset = featureAvailable
+            and settingsPanel.queueHelperYOffsetWithFeature
+            or settingsPanel.seasonFeatureStartYOffset
+        settingsPanel.queueHelperCheckbox:ClearAllPoints()
+        settingsPanel.queueHelperCheckbox:SetPoint(
+            "TOPLEFT",
+            settingsPanel.helpersPage.checkboxXOffset or 12,
+            queueYOffset
+        )
     end
 end
 
@@ -2057,6 +2122,7 @@ local function ClearGraphDrawings()
     if not graphPanel then return end
 
     if graphPanel.drawLayer then
+        graphPanel.drawLayer:Hide()
         for _, region in ipairs({ graphPanel.drawLayer:GetRegions() }) do
             region:Hide()
         end
@@ -2426,6 +2492,11 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
 
     local theme = GetActiveTheme()
     local stats = UI.PVPTooltip.GetStats(charData, specID, col)
+    local characterKey = Utils.CharKey(charData.name, charData.realm)
+    local statsAreTrusted = not stats
+        or not History
+        or not History.IsPVPStatsTrusted
+        or History.IsPVPStatsTrusted(stats, characterKey, specID)
     local rating = UI.PVPTooltip.GetRating(charData, specID, col, stats)
     local mmr = UI.PVPTooltip.GetMMR(charData, specID, col)
     GameTooltip:SetOwner(owner, "ANCHOR_TOP")
@@ -2476,15 +2547,24 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
             mostPlayedWeeklyCount
         )
         GameTooltip:AddLine(" ")
-        UI.PVPTooltip.AddStatsBlock(
-            "Season",
-            stats.seasonBest,
-            seasonWon,
-            seasonPlayed,
-            unitLabel,
-            mostPlayedSeasonSpecID,
-            mostPlayedSeasonCount
-        )
+        if statsAreTrusted then
+            UI.PVPTooltip.AddStatsBlock(
+                "Season",
+                stats.seasonBest,
+                seasonWon,
+                seasonPlayed,
+                unitLabel,
+                mostPlayedSeasonSpecID,
+                mostPlayedSeasonCount
+            )
+        else
+            GameTooltip:AddLine("Season", theme.accent[1], theme.accent[2], theme.accent[3])
+            GameTooltip:AddLine(
+                "Season totals hidden until this character is refreshed.",
+                theme.muted[1], theme.muted[2], theme.muted[3],
+                true
+            )
+        end
     else
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Log in on this character to record weekly and season stats.", theme.muted[1], theme.muted[2], theme.muted[3], true)
@@ -3171,13 +3251,18 @@ function UI.CreateHistoryGraphPanel()
     return graphPanel
 end
 
-function UI.RefreshHistoryGraph()
+function UI.RefreshHistoryGraphNow()
     if not graphPanel or not graphPanel:IsShown() or not selectedGraph then return end
 
     ClearGraphDrawings()
     local theme = GetActiveTheme()
 
-    local series = History and History.GetCurrentSeries(selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID)
+    local series = History and History.GetSeriesForSeason(
+        selectedGraph.seasonKey or (ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey()),
+        selectedGraph.charKey,
+        selectedGraph.colKey,
+        selectedGraph.specID
+    )
     local points = series and series.points
     local pointCount = points and #points or 0
 
@@ -3245,9 +3330,9 @@ function UI.RefreshHistoryGraph()
     graphPanel.zoomLabel:SetAlpha(1)
     graphPanel.zoomSlider:SetAlpha(zoomMin == zoomMax and 0.45 or 1)
     graphPanel.zoomValueLabel:SetAlpha(1)
+    graphPanel.updatingZoomSlider = true
     graphPanel.zoomSlider:SetMinMaxValues(zoomMin, zoomMax)
     graphPanel.zoomSlider:SetValueStep(GRAPH_VISIBLE_POINT_STEP)
-    graphPanel.updatingZoomSlider = true
     graphPanel.zoomSlider:SetValue(visiblePointCount)
     graphPanel.updatingZoomSlider = false
 
@@ -3267,9 +3352,9 @@ function UI.RefreshHistoryGraph()
     if pointCount > visiblePointCount then
         graphPanel.gamesLabel:SetText(visibleStart .. "-" .. visibleEnd .. " / " .. pointCount .. " games")
         graphPanel.rangeSlider:Show()
+        graphPanel.updatingRangeSlider = true
         graphPanel.rangeSlider:SetMinMaxValues(1, maxViewportStart)
         graphPanel.rangeSlider:SetValueStep(1)
-        graphPanel.updatingRangeSlider = true
         graphPanel.rangeSlider:SetValue(visibleStart)
         graphPanel.updatingRangeSlider = false
     else
@@ -3452,15 +3537,47 @@ function UI.RefreshHistoryGraph()
     end
 end
 
+function UI.RefreshHistoryGraph()
+    if not graphPanel or not graphPanel:IsShown() or not selectedGraph then return end
+
+    -- Slider and layout callbacks can fire synchronously during a redraw. Let the
+    -- active pass finish, then redraw once with the latest state instead of
+    -- appending a second set of lines to the shared pools.
+    if graphPanel.refreshingGraph then
+        graphPanel.refreshGraphPending = true
+        return
+    end
+
+    graphPanel.refreshingGraph = true
+    repeat
+        graphPanel.refreshGraphPending = false
+        UI.RefreshHistoryGraphNow()
+    until not graphPanel.refreshGraphPending
+    graphPanel.refreshingGraph = false
+end
+
+function UI.SetHistorySeason(seasonKey)
+    if not selectedGraph then return end
+    selectedGraph.seasonKey = seasonKey
+    if graphPanel then
+        graphPanel.visiblePointCount = nil
+        graphPanel.viewportStart = nil
+        graphPanel.viewportAtLatest = true
+    end
+    UI.RefreshHistoryGraph()
+end
+
 function UI.ShowHistoryGraph(charData, specID, col)
     if not History or not Database.IsPVPColumn(col) then return end
 
     local charKey = Utils.CharKey(charData.name, charData.realm)
     local graphSpecID = Database.IsSpecColumn(col) and specID or 0
+    local seasonKey = ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey() or History.GetContentSeasonKey()
     if graphPanel and graphPanel:IsShown() and selectedGraph
         and selectedGraph.charKey == charKey
         and selectedGraph.specID == graphSpecID
-        and selectedGraph.colKey == col.key then
+        and selectedGraph.colKey == col.key
+        and selectedGraph.seasonKey == seasonKey then
         return
     end
 
@@ -3478,6 +3595,7 @@ function UI.ShowHistoryGraph(charData, specID, col)
         classFilename = charData.classFilename,
         characterTitle = characterTitle,
         titleSuffix = titleSuffix,
+        seasonKey = seasonKey,
     }
 
     UI.CreateHistoryGraphPanel()
@@ -3588,8 +3706,15 @@ function UI.RefreshTable()
     ClearRows()
     UI.RefreshHeliotropeCounter()
 
-    local groups = Database.GetFilteredCharacterGroups()
-    local columns = Database.GetVisibleColumns(groups)
+    local seasonKey = ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey() or History.GetContentSeasonKey()
+    if ns.SeasonUI and ns.SeasonUI.Refresh then
+        ns.SeasonUI.Refresh()
+    end
+    local characters = History.GetSeasonDisplayCharacters
+        and History.GetSeasonDisplayCharacters(seasonKey)
+        or History.GetSeasonCharacters(seasonKey)
+    local groups = Database.GetFilteredCharacterGroups(seasonKey, characters)
+    local columns = Database.GetVisibleColumns(groups, seasonKey)
     UI.TableSort.SortGroups(groups, columns)
     local theme = GetActiveTheme()
     UI.ApplyTheme()
@@ -3980,6 +4105,9 @@ function UI.Toggle()
         DataCollection.CollectCurrentCharacter()
         frame:Show()
         UI.RefreshTable()
+        if settingsPanel and settingsPanel:IsShown() and not settingsPanel.manuallyDetached then
+            PositionSettingsPanelNearMain(settingsPanel)
+        end
     end
 end
 
@@ -3988,6 +4116,9 @@ function UI.Show()
     DataCollection.CollectCurrentCharacter()
     frame:Show()
     UI.RefreshTable()
+    if settingsPanel and settingsPanel:IsShown() and not settingsPanel.manuallyDetached then
+        PositionSettingsPanelNearMain(settingsPanel)
+    end
 end
 
 ------------------------------------------------------------
@@ -4014,10 +4145,10 @@ local function CreatePvPButton()
     pvpButtonCreated = true
 
     local btn = CreateFrame("Button", "WarbandRatingsPvPButton", ConquestFrame, "UIPanelButtonTemplate")
-    btn:SetSize(130, 22)
+    btn:SetSize(190, 22)
     btn:SetFrameStrata("HIGH")
     btn:SetPoint("BOTTOMRIGHT", PVPUIFrame, "BOTTOMRIGHT", -8, 4)
-    btn:SetText("Warband Ratings")
+    btn:SetText(ns.DISPLAY_NAME)
     btn:SetScript("OnClick", function()
         UI.Toggle()
     end)
@@ -4051,10 +4182,10 @@ local function CreateMPlusButton()
     mplusButtonCreated = true
 
     local btn = CreateFrame("Button", "WarbandRatingsMPlusButton", ChallengesFrame, "UIPanelButtonTemplate")
-    btn:SetSize(130, 22)
+    btn:SetSize(190, 22)
     btn:SetFrameStrata("HIGH")
     btn:SetPoint("RIGHT", ChallengesFrame, "RIGHT", -8, -120)
-    btn:SetText("Warband Ratings")
+    btn:SetText(ns.DISPLAY_NAME)
     btn:SetScript("OnClick", function()
         UI.Toggle()
     end)
@@ -4101,8 +4232,10 @@ function UI.ShowWithSettings()
     frame:Show()
     UI.RefreshTable()
     local panel = UI.CreateSettingsPanel()
-    if not panel:IsShown() then
+    if not panel.manuallyDetached then
         PositionSettingsPanelNearMain(panel)
+    end
+    if not panel:IsShown() then
         panel:Show()
     end
 end
@@ -4115,7 +4248,7 @@ function UI.CreateAddonSettingsPanel()
 
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16)
-    title:SetText("Warband Ratings")
+    title:SetText(ns.DISPLAY_NAME)
     title:SetTextColor(1, 1, 1)
 
     local titleDivider = panel:CreateTexture(nil, "ARTWORK")
@@ -4127,7 +4260,7 @@ function UI.CreateAddonSettingsPanel()
     local openButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     openButton:SetPoint("TOPLEFT", titleDivider, "BOTTOMLEFT", 0, -12)
     openButton:SetSize(200, 26)
-    openButton:SetText("Open Warband Ratings")
+    openButton:SetText("Open " .. ns.DISPLAY_NAME)
     openButton:SetScript("OnClick", function()
         UI.ShowWithSettings()
         if SettingsPanel and SettingsPanel:IsShown() then
@@ -4249,11 +4382,11 @@ end
 function UI.RegisterAddonSettings()
     if Settings and Settings.RegisterCanvasLayoutCategory then
         local panel = UI.CreateAddonSettingsPanel()
-        local category = Settings.RegisterCanvasLayoutCategory(panel, "Warband Ratings")
+        local category = Settings.RegisterCanvasLayoutCategory(panel, ns.DISPLAY_NAME)
         Settings.RegisterAddOnCategory(category)
     elseif InterfaceOptions_AddCategory then
         local panel = UI.CreateAddonSettingsPanel()
-        panel.name = "Warband Ratings"
+        panel.name = ns.DISPLAY_NAME
         InterfaceOptions_AddCategory(panel)
     end
 end

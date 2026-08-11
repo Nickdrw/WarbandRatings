@@ -2,13 +2,11 @@ local _, ns = ...
 ns.Database = {}
 local Database = ns.Database
 local Utils = ns.Utils
+local Season = ns.Season
 
 Database.HELIOTROPE_ITEM_ID = 253307
 Database.HELIOTROPE_NAME = "Infused Heliotrope"
 Database.HELIOTROPE_FALLBACK_HONOR_COST = 2500
-Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID = 256553
-Database.GALACTIC_EQUIPMENT_CHEST_NAME = "Galactic Equipment Chest"
-Database.GALACTIC_EQUIPMENT_CHEST_FALLBACK_CONQUEST_COST = 375
 Database.FIELD_MEDIC_HAZARD_PAYOUT_ITEM_ID = 258620
 Database.FIELD_MEDIC_HAZARD_PAYOUT_ITEM_IDS = { 258620, 224557, 203724 }
 Database.FIELD_MEDIC_HAZARD_PAYOUT_NAME = "Field Medic's Hazard Payout"
@@ -17,7 +15,7 @@ Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_NAME = "Illustrious Contender's Strongb
 
 -- Rating column definitions.
 -- bracketIndex: index passed to GetPersonalRatedInfo().
--- Known retail bracket indices (as of TWW / 12.x):
+-- Known retail bracket indices for 12.x:
 --   1 = Arena 2v2
 --   2 = Arena 3v3
 --   3 = Arena 5v5 (defunct, returns 0)
@@ -49,22 +47,44 @@ Database.GLOBAL_COLUMNS = {
       }
     },
     { key = "mythicPlus",   label = "Mythic+",       bracketIndex = nil },
-    -- Crests: current season tiers from lowest to highest.
-    { key = "crests",       label = "Crests",
-      crests = {
-          { label = "Adventurer Dawncrest", key = "crest_adventurer", currencyID = 3383 },
-          { label = "Veteran Dawncrest",    key = "crest_veteran",    currencyID = 3341 },
-          { label = "Champion Dawncrest",   key = "crest_champion",   currencyID = 3343 },
-          { label = "Hero Dawncrest",       key = "crest_hero",       currencyID = 3345 },
-          { label = "Myth Dawncrest",       key = "crest_myth",       currencyID = 3347 },
-      }
-    },
 }
+
+local function BuildGlobalColumns(seasonKey)
+    local columns = {}
+    for _, column in ipairs(Database.GLOBAL_COLUMNS) do
+        columns[#columns + 1] = column
+    end
+
+    local crests = Season.GetCrests(seasonKey)
+    if #crests > 0 then
+        columns[#columns + 1] = {
+            key = "crests",
+            label = "Crests",
+            crests = crests,
+        }
+    end
+    return columns
+end
+
+function Database.GetGlobalColumns(seasonKey)
+    return BuildGlobalColumns(seasonKey or Season.GetContentSeasonKey())
+end
+
+function Database.GetRatingColumns(seasonKey)
+    local columns = {}
+    for _, column in ipairs(Database.SPEC_COLUMNS) do
+        columns[#columns + 1] = column
+    end
+    for _, column in ipairs(BuildGlobalColumns(seasonKey or Season.GetContentSeasonKey())) do
+        columns[#columns + 1] = column
+    end
+    return columns
+end
 
 -- All columns in display order
 Database.RATING_COLUMNS = {}
 for _, c in ipairs(Database.SPEC_COLUMNS) do Database.RATING_COLUMNS[#Database.RATING_COLUMNS + 1] = c end
-for _, c in ipairs(Database.GLOBAL_COLUMNS) do Database.RATING_COLUMNS[#Database.RATING_COLUMNS + 1] = c end
+for _, c in ipairs(Database.GetGlobalColumns()) do Database.RATING_COLUMNS[#Database.RATING_COLUMNS + 1] = c end
 
 -- Lookup set for O(1) spec column checks
 local specColumnKeys = {}
@@ -145,8 +165,8 @@ function Database.Init()
     if not WarbandRatingsDB then
         WarbandRatingsDB = {}
     end
-    if not WarbandRatingsDB.characters then
-        WarbandRatingsDB.characters = {}
+    if type(WarbandRatingsDB.seasonFeatures) ~= "table" then
+        WarbandRatingsDB.seasonFeatures = {}
     end
     if not WarbandRatingsDB.settings then
         WarbandRatingsDB.settings = {
@@ -155,12 +175,13 @@ function Database.Init()
             hideNonMaxLevel = false,
             hideBoxesHelper = false,
             hideHeliotropeHelper = false,
-            hideGalacticConquestChestHelper = false,
-            hideGalacticEquipmentMailHelper = false,
+            hideConquestEquipmentChestPurchaseHelper = false,
+            hideConquestEquipmentChestMailHelper = false,
             hideArenaQueueHelper = false,
             arenaQueueMinimized = false,
+            arenaQueueCategory = "rated",
             arenaQueueRatingSessions = {},
-            galacticEquipmentMailRecipient = "",
+            conquestEquipmentChestMailRecipient = "",
             themeKey = "obsidian",
             windowHeight = 450,
             sortKey = "character",
@@ -179,24 +200,33 @@ function Database.Init()
     if WarbandRatingsDB.settings.hideHeliotropeHelper == nil then
         WarbandRatingsDB.settings.hideHeliotropeHelper = false
     end
-    if WarbandRatingsDB.settings.hideGalacticConquestChestHelper == nil then
-        WarbandRatingsDB.settings.hideGalacticConquestChestHelper = false
+    if WarbandRatingsDB.settings.hideConquestEquipmentChestPurchaseHelper == nil then
+        WarbandRatingsDB.settings.hideConquestEquipmentChestPurchaseHelper =
+            WarbandRatingsDB.settings.hideGalacticConquestChestHelper or false
     end
-    if WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper == nil then
-        WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper = false
+    if WarbandRatingsDB.settings.hideConquestEquipmentChestMailHelper == nil then
+        WarbandRatingsDB.settings.hideConquestEquipmentChestMailHelper =
+            WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper or false
     end
+    WarbandRatingsDB.settings.hideGalacticConquestChestHelper = nil
+    WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper = nil
     if WarbandRatingsDB.settings.hideArenaQueueHelper == nil then
         WarbandRatingsDB.settings.hideArenaQueueHelper = false
     end
     if WarbandRatingsDB.settings.arenaQueueMinimized == nil then
         WarbandRatingsDB.settings.arenaQueueMinimized = false
     end
+    if WarbandRatingsDB.settings.arenaQueueCategory ~= "unrated" then
+        WarbandRatingsDB.settings.arenaQueueCategory = "rated"
+    end
     if type(WarbandRatingsDB.settings.arenaQueueRatingSessions) ~= "table" then
         WarbandRatingsDB.settings.arenaQueueRatingSessions = {}
     end
-    if WarbandRatingsDB.settings.galacticEquipmentMailRecipient == nil then
-        WarbandRatingsDB.settings.galacticEquipmentMailRecipient = ""
+    if WarbandRatingsDB.settings.conquestEquipmentChestMailRecipient == nil then
+        WarbandRatingsDB.settings.conquestEquipmentChestMailRecipient =
+            WarbandRatingsDB.settings.galacticEquipmentMailRecipient or ""
     end
+    WarbandRatingsDB.settings.galacticEquipmentMailRecipient = nil
     if WarbandRatingsDB.settings.windowHeight == nil then
         WarbandRatingsDB.settings.windowHeight = 450
     end
@@ -212,50 +242,116 @@ function Database.Init()
     if WarbandRatingsDB.settings.sortDirection ~= "asc" and WarbandRatingsDB.settings.sortDirection ~= "desc" then
         WarbandRatingsDB.settings.sortDirection = "asc"
     end
-    Database.Migrate()
 end
 
 -- Migrate old flat-ratings format to new per-spec format
 function Database.Migrate()
-    for _, charData in pairs(WarbandRatingsDB.characters) do
-        if charData.level == nil then
-            charData.level = 0
-        end
-
-        if charData.ratings and not charData.specRatings then
-            charData.specRatings = {}
-            local specID = NormalizeSpecID(charData.specID) or NormalizeSpecID(charData.currentSpecID)
-            if specID then
-                charData.specRatings[specID] = {}
-            end
-            for _, sc in ipairs(Database.SPEC_COLUMNS) do
-                if specID then
-                    charData.specRatings[specID][sc.key] = charData.ratings[sc.key] or 0
-                end
-                charData.ratings[sc.key] = nil
-            end
-        end
-        -- Ensure specRatings exists
-        if not charData.specRatings then
-            charData.specRatings = {}
-        end
-        if not charData.pvpStats then
-            charData.pvpStats = {}
-        end
-        if not charData.specPVPStats then
-            charData.specPVPStats = {}
-        end
-        if not charData.lastMMR then
-            charData.lastMMR = {}
-        end
-        if not charData.specLastMMR then
-            charData.specLastMMR = {}
-        end
-        if not charData.itemCounts then
-            charData.itemCounts = {}
-        end
-        NormalizeCharacterSpecData(charData)
+    local characterMaps = {}
+    if type(WarbandRatingsDB.characters) == "table" then
+        characterMaps[#characterMaps + 1] = WarbandRatingsDB.characters
     end
+    for _, season in pairs(WarbandRatingsDB.seasons or {}) do
+        if type(season.characters) == "table" then
+            characterMaps[#characterMaps + 1] = season.characters
+        end
+    end
+
+    for _, characters in ipairs(characterMaps) do
+        for _, charData in pairs(characters) do
+            if charData.level == nil then
+                charData.level = 0
+            end
+
+            if charData.ratings and not charData.specRatings then
+                charData.specRatings = {}
+                local specID = NormalizeSpecID(charData.specID) or NormalizeSpecID(charData.currentSpecID)
+                if specID then
+                    charData.specRatings[specID] = {}
+                end
+                for _, sc in ipairs(Database.SPEC_COLUMNS) do
+                    if specID then
+                        charData.specRatings[specID][sc.key] = charData.ratings[sc.key] or 0
+                    end
+                    charData.ratings[sc.key] = nil
+                end
+            end
+            -- Ensure specRatings exists
+            if not charData.specRatings then
+                charData.specRatings = {}
+            end
+            if not charData.pvpStats then
+                charData.pvpStats = {}
+            end
+            if not charData.specPVPStats then
+                charData.specPVPStats = {}
+            end
+            if not charData.lastMMR then
+                charData.lastMMR = {}
+            end
+            if not charData.specLastMMR then
+                charData.specLastMMR = {}
+            end
+            if not charData.itemCounts then
+                charData.itemCounts = {}
+            end
+            charData.series = charData.series or { global = {}, specs = {} }
+            charData.series.global = charData.series.global or {}
+            charData.series.specs = charData.series.specs or {}
+            NormalizeCharacterSpecData(charData)
+        end
+    end
+end
+
+function Database.IsValidSeasonKey(seasonKey)
+    return type(seasonKey) == "string" and seasonKey ~= ""
+end
+
+function Database.IsStorageReady()
+    return WarbandRatingsDB
+        and (tonumber(WarbandRatingsDB.schemaVersion) or 0) >= 2
+        and not WarbandRatingsDB.storageMigrationError
+end
+
+function Database.EnsureSeason(seasonKey)
+    if not Database.IsValidSeasonKey(seasonKey) then return nil end
+
+    WarbandRatingsDB.seasons = WarbandRatingsDB.seasons or {}
+    WarbandRatingsDB.seasons[seasonKey] = WarbandRatingsDB.seasons[seasonKey] or {
+        archived = false,
+        characters = {},
+    }
+
+    local season = WarbandRatingsDB.seasons[seasonKey]
+    if type(season) ~= "table" then return nil end
+    if season.seasonKey and season.seasonKey ~= seasonKey then return nil end
+    local seasonInfo = Season.GetSeasonInfo(seasonKey)
+    season.characters = season.characters or {}
+    season.seasonKey = seasonKey
+    season.expansionKey = seasonInfo.expansionKey
+    season.expansionName = seasonInfo.expansionName
+    season.seasonNumber = seasonInfo.number
+    return season
+end
+
+function Database.GetSeasonCharacters(seasonKey)
+    if not WarbandRatingsDB or not Database.IsValidSeasonKey(seasonKey) then return {} end
+    local season = WarbandRatingsDB.seasons and WarbandRatingsDB.seasons[seasonKey]
+    if type(season) ~= "table"
+        or season.seasonKey ~= seasonKey
+        or type(season.characters) ~= "table"
+    then
+        return {}
+    end
+    for _, character in pairs(season.characters) do
+        if type(character) ~= "table" or character.seasonKey ~= seasonKey then
+            return {}
+        end
+    end
+    return season.characters
+end
+
+function Database.GetCurrentCharacters()
+    return Database.GetSeasonCharacters(Season.GetContentSeasonKey())
 end
 
 function Database.GetSettings()
@@ -272,9 +368,85 @@ local function PreserveKnownStatValue(existingRatings, newRatings, key)
     end
 end
 
-function Database.SaveCharacter(data)
+local MONOTONIC_PVP_STAT_FIELDS = {
+    "seasonBest",
+    "seasonPlayed",
+    "seasonWon",
+    "roundsSeasonPlayed",
+    "roundsSeasonWon",
+}
+
+local function HasStatsOwner(stats)
+    return type(stats) == "table"
+        and type(stats.ownerCharacterKey) == "string"
+        and stats.ownerCharacterKey ~= ""
+end
+
+local function HasSameStatsOwner(existing, incoming)
+    if existing.ownerCharacterKey ~= incoming.ownerCharacterKey then return false end
+
+    local existingSpecID = tonumber(existing.ownerSpecID) or 0
+    local incomingSpecID = tonumber(incoming.ownerSpecID) or 0
+    return existingSpecID == incomingSpecID
+end
+
+local function MergePVPBracketStats(existing, incoming)
+    if type(incoming) ~= "table" then return existing end
+    if type(existing) ~= "table" then return incoming end
+
+    -- A fresh response bound to this character/spec is authoritative. Legacy
+    -- values have no owner marker and may contain another character's cached
+    -- season totals; retaining their larger values would make that corruption
+    -- permanent. Once ownership matches, cumulative values remain monotonic.
+    local incomingHasOwner = HasStatsOwner(incoming)
+    local preserveMonotonic = not incomingHasOwner
+        or (HasStatsOwner(existing)
+            and HasSameStatsOwner(existing, incoming)
+            and not existing.seasonTotalsUntrusted)
+
+    local merged = {}
+    if preserveMonotonic then
+        for key, value in pairs(existing) do
+            merged[key] = value
+        end
+    end
+    for key, value in pairs(incoming) do
+        merged[key] = value
+    end
+    if preserveMonotonic then
+        for _, key in ipairs(MONOTONIC_PVP_STAT_FIELDS) do
+            merged[key] = math.max(tonumber(existing[key]) or 0, tonumber(incoming[key]) or 0)
+        end
+
+        local oldMostPlayed = tonumber(existing.seasonMostPlayedSpecCount) or 0
+        local newMostPlayed = tonumber(incoming.seasonMostPlayedSpecCount) or 0
+        if oldMostPlayed > newMostPlayed then
+            merged.seasonMostPlayedSpecCount = oldMostPlayed
+            merged.seasonMostPlayedSpecID = existing.seasonMostPlayedSpecID
+        end
+    end
+    return merged
+end
+
+local function MergePVPStats(existing, incoming)
+    local merged = existing or {}
+    for colKey, stats in pairs(incoming or {}) do
+        merged[colKey] = MergePVPBracketStats(merged[colKey], stats)
+    end
+    return merged
+end
+
+function Database.SaveCharacter(seasonKey, data)
+    if not Database.IsStorageReady() then return false end
+    if not Database.IsValidSeasonKey(seasonKey) or type(data) ~= "table" then return false end
+    if data.seasonKey and data.seasonKey ~= seasonKey then return false end
+
     local key = Utils.CharKey(data.name, data.realm)
-    local existing = WarbandRatingsDB.characters[key]
+    local season = Database.EnsureSeason(seasonKey)
+    if not season then return false end
+    local existing = season.characters[key]
+    data.seasonKey = seasonKey
+    if existing and existing.seasonKey ~= seasonKey then return false end
     NormalizeCharacterSpecData(data)
     if existing then
         NormalizeCharacterSpecData(existing)
@@ -298,7 +470,7 @@ function Database.SaveCharacter(data)
         end
         existing.ratings = data.ratings
         existing.itemCounts = data.itemCounts or existing.itemCounts or {}
-        existing.pvpStats = data.pvpStats or existing.pvpStats or {}
+        existing.pvpStats = MergePVPStats(existing.pvpStats, data.pvpStats)
         existing.lastMMR = existing.lastMMR or {}
         if data.lastMMR then
             for k, v in pairs(data.lastMMR) do
@@ -316,16 +488,28 @@ function Database.SaveCharacter(data)
         if NormalizeSpecID(data.currentSpecID) and data.currentSpecRatings then
             existing.specRatings[data.currentSpecID] = data.currentSpecRatings
             if data.specPVPStats and data.specPVPStats[data.currentSpecID] then
-                existing.specPVPStats[data.currentSpecID] = data.specPVPStats[data.currentSpecID]
+                existing.specPVPStats[data.currentSpecID] = MergePVPStats(
+                    existing.specPVPStats[data.currentSpecID],
+                    data.specPVPStats[data.currentSpecID]
+                )
             end
         end
     else
-        WarbandRatingsDB.characters[key] = data
+        data.series = data.series or { global = {}, specs = {} }
+        data.series.global = data.series.global or {}
+        data.series.specs = data.series.specs or {}
+        season.characters[key] = data
+        existing = data
     end
+    existing.seasonKey = seasonKey
+    existing.series = existing.series or { global = {}, specs = {} }
+    existing.series.global = existing.series.global or {}
+    existing.series.specs = existing.series.specs or {}
+    return true
 end
 
 function Database.SaveWarbandItemCount(itemID, quantity)
-    if not WarbandRatingsDB then return end
+    if not Database.IsStorageReady() then return end
 
     WarbandRatingsDB.warbandItemCounts = WarbandRatingsDB.warbandItemCounts or {}
     WarbandRatingsDB.warbandItemCounts[itemID] = {
@@ -354,7 +538,7 @@ function Database.GetItemWarbandSummary(itemID)
         }
     end
 
-    for _, charData in pairs(WarbandRatingsDB and WarbandRatingsDB.characters or {}) do
+    for _, charData in pairs(Database.GetCurrentCharacters()) do
         local quantity = tonumber(charData.itemCounts and charData.itemCounts[itemID]) or 0
         if quantity > 0 then
             total = total + quantity
@@ -376,7 +560,9 @@ function Database.GetItemWarbandSummary(itemID)
     return total, entries
 end
 
-function Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
+function Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, mmr)
+    if not Database.IsStorageReady() then return false end
+    if not Database.IsValidSeasonKey(seasonKey) then return false end
     mmr = tonumber(mmr)
     if not mmr or mmr <= 0 then return false end
 
@@ -384,8 +570,9 @@ function Database.SaveLastMMR(name, realm, specID, bracketIndex, mmr)
     if not col then return false end
 
     local key = Utils.CharKey(name, realm)
-    local existing = WarbandRatingsDB.characters[key]
+    local existing = Database.GetSeasonCharacters(seasonKey)[key]
     if not existing then return false end
+    if existing.seasonKey ~= seasonKey then return false end
 
     if Database.IsSpecColumn(col) then
         specID = tonumber(specID)
@@ -405,8 +592,9 @@ end
 -- Returns grouped character data for display.
 -- Each entry = { charData = ..., specs = { specID1, specID2, ... } }
 -- Sorted by name-realm. specs sorted by specID.
-function Database.BuildCharacterGroups(characters)
+function Database.BuildCharacterGroups(characters, seasonKey)
     local settings = Database.GetSettings()
+    local globalColumns = Database.GetGlobalColumns(seasonKey)
     local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
     local groups = {}
 
@@ -423,12 +611,12 @@ function Database.BuildCharacterGroups(characters)
         if not skip and (charData.level or 0) < maxLevel then
             local patchedRatings = {}
             for k, v in pairs(charData.ratings or {}) do patchedRatings[k] = v end
-            for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+            for _, col in ipairs(globalColumns) do
                 if col.bracketIndex then patchedRatings[col.key] = 0 end
             end
             local patchedLastMMR = {}
             for k, v in pairs(charData.lastMMR or {}) do patchedLastMMR[k] = v end
-            for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+            for _, col in ipairs(globalColumns) do
                 if col.bracketIndex then patchedLastMMR[col.key] = 0 end
             end
             local patchedSpecRatings = {}
@@ -483,7 +671,7 @@ function Database.BuildCharacterGroups(characters)
         -- Filter: hide if all ratings empty (global + all specs)
         if not skip and settings.hideNoRating then
             local hasAny = false
-            for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+            for _, col in ipairs(globalColumns) do
                 if not Utils.IsEmptyRating(charData.ratings and charData.ratings[col.key]) then
                     hasAny = true
                     break
@@ -527,18 +715,23 @@ function Database.BuildCharacterGroups(characters)
     return groups
 end
 
-function Database.GetFilteredCharacterGroups()
-    return Database.BuildCharacterGroups(WarbandRatingsDB and WarbandRatingsDB.characters)
+function Database.GetFilteredCharacterGroups(seasonKey, characters)
+    seasonKey = seasonKey or Season.GetContentSeasonKey()
+    return Database.BuildCharacterGroups(
+        characters or Database.GetSeasonCharacters(seasonKey),
+        seasonKey
+    )
 end
 
 -- For column visibility, check across all groups and their specs.
-function Database.GetVisibleColumns(groups)
+function Database.GetVisibleColumns(groups, seasonKey)
     local settings = Database.GetSettings()
     local hiddenColumns = settings.hiddenColumns or {}
+    local ratingColumns = Database.GetRatingColumns(seasonKey)
 
     if not settings.hideEmptyColumns then
         local visible = {}
-        for _, col in ipairs(Database.RATING_COLUMNS) do
+        for _, col in ipairs(ratingColumns) do
             if not hiddenColumns[col.key] then
                 visible[#visible + 1] = col
             end
@@ -547,7 +740,7 @@ function Database.GetVisibleColumns(groups)
     end
 
     local visible = {}
-    for _, col in ipairs(Database.RATING_COLUMNS) do
+    for _, col in ipairs(ratingColumns) do
         if not hiddenColumns[col.key] then
             local found = false
 

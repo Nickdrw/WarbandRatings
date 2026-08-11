@@ -3,10 +3,14 @@ ns.DataCollection = {}
 local DataCollection = ns.DataCollection
 local Database = ns.Database
 local History = ns.History
+local Season = ns.Season
+local Utils = ns.Utils
 local lastKnownRatedBracketIndex
 local lastKnownRatedBracketTime
 local ratedStatsSpecID
 local ratedStatsRequestedSpecID
+local ratedStatsCharacterKey
+local ratedStatsRequestedCharacterKey
 local activeRatedMatch
 
 local ACCOUNT_BANK_BAG_IDS = {
@@ -23,6 +27,11 @@ local function GetCurrentCharacterIdentity()
     return name, realm
 end
 
+local function GetCurrentCharacterKey()
+    local name, realm = GetCurrentCharacterIdentity()
+    return Utils.CharKey(name, realm)
+end
+
 local function GetCurrentSpecID()
     local specIndex = GetSpecialization()
     local specID
@@ -32,12 +41,16 @@ local function GetCurrentSpecID()
     return specID or 0
 end
 
-local function CanCollectSpecRatings(specID, isMaxLevel)
+local function IsRatedSeasonInactive()
+    return Season.IsRatedSeasonActive and Season.IsRatedSeasonActive() == false
+end
+
+local function CanCollectRatedStats(characterKey, specID, isMaxLevel)
     if not isMaxLevel then
         return true
     end
 
-    return ratedStatsSpecID == specID
+    return ratedStatsCharacterKey == characterKey and ratedStatsSpecID == specID
 end
 
 local function AddPVPBracketSpecStats(stats, colKey)
@@ -58,7 +71,14 @@ local function AddPVPBracketSpecStats(stats, colKey)
     stats.seasonMostPlayedSpecCount = tonumber(specStats["seasonMostPlayedSpec" .. countField]) or 0
 end
 
-local function CollectPVPBracketInfo(bracketIndex, isMaxLevel, colKey)
+local function CollectPVPBracketInfo(
+    bracketIndex,
+    isMaxLevel,
+    colKey,
+    collectStats,
+    characterKey,
+    specID
+)
     if not isMaxLevel then
         return 0, nil
     end
@@ -66,6 +86,13 @@ local function CollectPVPBracketInfo(bracketIndex, isMaxLevel, colKey)
     local rating, seasonBest, weeklyBest, seasonPlayed, seasonWon, weeklyPlayed, weeklyWon,
         _, _, _, _, roundsSeasonPlayed, roundsSeasonWon, roundsWeeklyPlayed, roundsWeeklyWon = GetPersonalRatedInfo(bracketIndex)
     rating = tonumber(rating) or 0
+
+    -- The current rating becomes readable before the cumulative season fields on
+    -- login. Persist those fields only after PVP_RATED_STATS_UPDATE confirms the
+    -- cache requested for this exact character and specialization.
+    if not collectStats then
+        return rating, nil
+    end
 
     local stats = {
         rating = rating,
@@ -79,6 +106,8 @@ local function CollectPVPBracketInfo(bracketIndex, isMaxLevel, colKey)
         roundsSeasonWon = tonumber(roundsSeasonWon) or 0,
         roundsWeeklyPlayed = tonumber(roundsWeeklyPlayed) or 0,
         roundsWeeklyWon = tonumber(roundsWeeklyWon) or 0,
+        ownerCharacterKey = characterKey,
+        ownerSpecID = specID,
     }
     AddPVPBracketSpecStats(stats, colKey)
     return rating, stats
@@ -149,17 +178,22 @@ end
 function DataCollection.MarkRatedStatsStale()
     ratedStatsSpecID = nil
     ratedStatsRequestedSpecID = nil
+    ratedStatsCharacterKey = nil
+    ratedStatsRequestedCharacterKey = nil
     return GetCurrentSpecID()
 end
 
 function DataCollection.RequestRatedInfo(expectedSpecID)
     local specID = GetCurrentSpecID()
+    local characterKey = GetCurrentCharacterKey()
     if expectedSpecID and expectedSpecID ~= specID then
         return false
     end
 
     ratedStatsSpecID = nil
     ratedStatsRequestedSpecID = specID
+    ratedStatsCharacterKey = nil
+    ratedStatsRequestedCharacterKey = characterKey
 
     if RequestRatedInfo then
         RequestRatedInfo()
@@ -170,20 +204,37 @@ end
 
 function DataCollection.MarkRatedStatsUpdated()
     local specID = GetCurrentSpecID()
+    local characterKey = GetCurrentCharacterKey()
+    if ratedStatsRequestedCharacterKey and ratedStatsRequestedCharacterKey ~= characterKey then
+        return false
+    end
     if ratedStatsRequestedSpecID and ratedStatsRequestedSpecID ~= specID then
         return false
     end
     if not ratedStatsRequestedSpecID and not ratedStatsSpecID then
         return false
     end
+    if not ratedStatsRequestedCharacterKey and ratedStatsCharacterKey ~= characterKey then
+        return false
+    end
 
+    ratedStatsCharacterKey = characterKey
     ratedStatsSpecID = specID
+    ratedStatsRequestedCharacterKey = nil
     ratedStatsRequestedSpecID = nil
     return true
 end
 
-function DataCollection.CollectCurrentCharacter()
+function DataCollection.CollectCurrentCharacter(seasonKey)
+    seasonKey = seasonKey or Season.GetContentSeasonKey()
+    if not Database.IsValidSeasonKey(seasonKey) then return nil end
+
     local name, realm = GetCurrentCharacterIdentity()
+    if seasonKey == Season.GetContentSeasonKey() and IsRatedSeasonInactive() then
+        local characters = Database.GetSeasonCharacters and Database.GetSeasonCharacters(seasonKey)
+        return characters and characters[Utils.CharKey(name, realm)] or nil
+    end
+
     local _, classFilename, classID = UnitClass("player")
 
     local specID = GetCurrentSpecID()
@@ -191,14 +242,22 @@ function DataCollection.CollectCurrentCharacter()
     local level = UnitLevel("player")
     local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
     local isMaxLevel = level >= maxLevel
+    local characterKey = Utils.CharKey(name, realm)
+    local ratedStatsAreFresh = CanCollectRatedStats(characterKey, specID, isMaxLevel)
 
     -- Global ratings (not per-spec)
     local globalRatings = {}
     local globalPVPStats = {}
-    for _, col in ipairs(Database.GLOBAL_COLUMNS) do
+    for _, col in ipairs(Database.GetGlobalColumns(seasonKey)) do
         if col.bracketIndex then
             -- PvP bracket ratings are season-specific; zero out for sub-max-level characters
-            local rating, stats = CollectPVPBracketInfo(col.bracketIndex, isMaxLevel, col.key)
+            local rating, stats = CollectPVPBracketInfo(
+                col.bracketIndex,
+                isMaxLevel,
+                col.key,
+                ratedStatsAreFresh,
+                characterKey
+            )
             globalRatings[col.key] = rating
             globalPVPStats[col.key] = stats
         elseif col.key == "mythicPlus" then
@@ -248,12 +307,19 @@ function DataCollection.CollectCurrentCharacter()
     -- PVP_RATED_STATS_UPDATE for the active spec.
     local specRatings
     local specPVPStats
-    if CanCollectSpecRatings(specID, isMaxLevel) then
+    if ratedStatsAreFresh then
         specRatings = {}
         specPVPStats = {}
         for _, col in ipairs(Database.SPEC_COLUMNS) do
             if col.bracketIndex then
-                local rating, stats = CollectPVPBracketInfo(col.bracketIndex, isMaxLevel, col.key)
+                local rating, stats = CollectPVPBracketInfo(
+                    col.bracketIndex,
+                    isMaxLevel,
+                    col.key,
+                    true,
+                    characterKey,
+                    specID
+                )
                 specRatings[col.key] = rating
                 specPVPStats[col.key] = stats
             end
@@ -280,7 +346,7 @@ function DataCollection.CollectCurrentCharacter()
         lastUpdated = time(),
     }
 
-    Database.SaveCharacter(data)
+    if not Database.SaveCharacter(seasonKey, data) then return nil end
     return data
 end
 
@@ -601,8 +667,15 @@ local function MatchesActiveContext(context, name, realm, specID, bracketIndex)
 end
 
 function DataCollection.BeginRatedMatch(forceNew)
+    if IsRatedSeasonInactive() then
+        activeRatedMatch = nil
+        if History then History.RecordDiagnostic("matchStartInactiveSeason") end
+        return false
+    end
+
     local name, realm = GetCurrentCharacterIdentity()
     local specID = GetCurrentSpecID()
+    local seasonKey = Season.GetContentSeasonKey()
     local bracketIndex = GetActiveRatedBracketIndex() or GetRememberedRatedBracketIndex()
     if not bracketIndex then
         if History then History.RecordDiagnostic("matchStartNoBracket") end
@@ -612,6 +685,7 @@ function DataCollection.BeginRatedMatch(forceNew)
 
     if not forceNew
         and MatchesActiveContext(activeRatedMatch, name, realm, specID, bracketIndex)
+        and activeRatedMatch.seasonKey == seasonKey
         and not activeRatedMatch.finalized
     then
         return true
@@ -619,6 +693,7 @@ function DataCollection.BeginRatedMatch(forceNew)
 
     local snapshot = GetRatedSnapshot(bracketIndex) or {}
     activeRatedMatch = {
+        seasonKey = seasonKey,
         name = name,
         realm = realm,
         specID = specID,
@@ -633,6 +708,10 @@ function DataCollection.BeginRatedMatch(forceNew)
 end
 
 function DataCollection.CaptureActiveMatchMMR()
+    if IsRatedSeasonInactive() then
+        activeRatedMatch = nil
+        return false
+    end
     if not activeRatedMatch then return false end
 
     local context = activeRatedMatch
@@ -645,6 +724,7 @@ function DataCollection.CaptureActiveMatchMMR()
         context.enrichmentMMR = enrichmentMMR
         if History then
             History.EnrichPendingMMR(
+                context.seasonKey,
                 context.name,
                 context.realm,
                 context.specID,
@@ -661,6 +741,7 @@ function DataCollection.CaptureActiveMatchMMR()
     local currentMMR = postMatchMMR or prematchMMR
     if currentMMR then
         Database.SaveLastMMR(
+            context.seasonKey,
             context.name,
             context.realm,
             context.specID,
@@ -717,7 +798,13 @@ local function HasFreshMatch(context, matchSequence)
 end
 
 local function FinalizeRatedMatch(recordHistory)
-    if not WarbandRatingsDB or not WarbandRatingsDB.characters then
+    if IsRatedSeasonInactive() then
+        activeRatedMatch = nil
+        if History then History.RecordDiagnostic("finalizeInactiveSeason") end
+        return false
+    end
+
+    if not WarbandRatingsDB or not WarbandRatingsDB.seasons then
         return false
     end
 
@@ -747,7 +834,14 @@ local function FinalizeRatedMatch(recordHistory)
         return false
     end
 
-    local data = DataCollection.CollectCurrentCharacter()
+    local seasonKey = context.seasonKey
+    if not Database.IsValidSeasonKey(seasonKey) then
+        if History then History.RecordDiagnostic("finalizeMissingSeason") end
+        return false
+    end
+
+    local data = DataCollection.CollectCurrentCharacter(seasonKey)
+    if not data then return false end
     local stats = GetCollectedStats(data, col, specID)
     local matchSequence = GetMatchSequence(stats)
     local rating = tonumber(GetCollectedRating(data, col, specID))
@@ -755,6 +849,7 @@ local function FinalizeRatedMatch(recordHistory)
 
     if enrichmentMMR and History then
         History.EnrichPendingMMR(
+            seasonKey,
             name,
             realm,
             specID,
@@ -766,7 +861,7 @@ local function FinalizeRatedMatch(recordHistory)
 
     local currentMMR = postMatchMMR or prematchMMR
     local savedMMR = currentMMR
-        and Database.SaveLastMMR(name, realm, specID, bracketIndex, currentMMR)
+        and Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, currentMMR)
         or false
 
     if not recordHistory then
@@ -783,6 +878,7 @@ local function FinalizeRatedMatch(recordHistory)
 
     local result = GetResultFromContext(context, scoreInfo, bracketIndex)
     local recorded = History and History.RecordMatch(
+        seasonKey,
         name,
         realm,
         specID,

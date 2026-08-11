@@ -4,18 +4,28 @@ local Mailbox = ns.Mailbox
 local Database = ns.Database
 local Utils = ns.Utils
 local HelperPanel = ns.HelperPanel
+local Season = ns.Season
 
 local PANEL_WIDTH = 220
 local PANEL_HEIGHT = 114
 local ICON_SIZE = 28
 local PANEL_BELOW_OFFSET_Y = -42
 local FALLBACK_ATTACHMENT_LIMIT = 12
-local SAVED_RECIPIENT_KEY = "galacticEquipmentMailRecipient"
+local SAVED_RECIPIENT_KEY = "conquestEquipmentChestMailRecipient"
 
 local eventFrame
 local panel
 local hookedMailFrames = {}
 local UpdatePanel
+
+local function GetChestFeature()
+    return Season.GetFeature("conquestEquipmentChest")
+end
+
+local function GetChestPluralName(chest)
+    chest = chest or GetChestFeature()
+    return chest and (chest.pluralName or (chest.name .. "s")) or "Equipment Chests"
+end
 
 local function FormatNumber(value)
     value = tonumber(value) or 0
@@ -65,10 +75,12 @@ local function HookMailFrameRefreshes()
 end
 
 local function GetChestIcon()
+    local chest = GetChestFeature()
+    if not chest then return nil end
     if C_Item and C_Item.GetItemIconByID then
-        return C_Item.GetItemIconByID(Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID)
+        return C_Item.GetItemIconByID(chest.itemID)
     elseif C_Item and C_Item.GetItemInfoInstant then
-        local _, _, _, _, icon = C_Item.GetItemInfoInstant(Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID)
+        local _, _, _, _, icon = C_Item.GetItemInfoInstant(chest.itemID)
         return icon
     end
 end
@@ -96,13 +108,15 @@ local function GetContainerItemName(itemInfo)
     return nil
 end
 
-local function IsGalacticEquipmentChest(itemInfo)
+local function IsConquestEquipmentChest(itemInfo)
+    local chest = GetChestFeature()
+    if not chest then return false end
     local itemID = GetContainerItemID(itemInfo)
-    if itemID == Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID then
+    if itemID == chest.itemID then
         return true
     end
 
-    return GetContainerItemName(itemInfo) == Database.GALACTIC_EQUIPMENT_CHEST_NAME
+    return GetContainerItemName(itemInfo) == chest.name
 end
 
 local function AddBagID(bagIDs, used, bagID)
@@ -130,7 +144,7 @@ local function GetPlayerBagIDs()
     return bagIDs
 end
 
-local function ScanGalacticEquipmentChests()
+local function ScanConquestEquipmentChests()
     local state = {
         count = 0,
         locations = {},
@@ -144,7 +158,7 @@ local function ScanGalacticEquipmentChests()
         local slots = tonumber(C_Container.GetContainerNumSlots(bagID)) or 0
         for slot = 1, slots do
             local itemInfo = C_Container.GetContainerItemInfo(bagID, slot)
-            if IsGalacticEquipmentChest(itemInfo) then
+            if IsConquestEquipmentChest(itemInfo) then
                 local stackCount = tonumber(itemInfo.stackCount) or 1
                 state.count = state.count + stackCount
                 if not itemInfo.isLocked then
@@ -255,7 +269,8 @@ end
 
 local function IsMailboxHelperHidden()
     local settings = WarbandRatingsDB and WarbandRatingsDB.settings
-    return settings and settings.hideGalacticEquipmentMailHelper
+    return not GetChestFeature()
+        or (settings and settings.hideConquestEquipmentChestMailHelper)
 end
 
 local function GetAttachmentLimit()
@@ -315,12 +330,12 @@ local function GetEmptyAttachmentSlots()
     return emptySlots
 end
 
-local function CountAttachedGalacticEquipmentChests()
+local function CountAttachedConquestEquipmentChests()
     local attachedCount = 0
     local attachedSlotCount = 0
     for index = 1, GetAttachmentLimit() do
         local itemInfo = GetSendMailAttachmentInfo(index)
-        if itemInfo and IsGalacticEquipmentChest(itemInfo) then
+        if itemInfo and IsConquestEquipmentChest(itemInfo) then
             attachedCount = attachedCount + (tonumber(itemInfo.count) or 1)
             attachedSlotCount = attachedSlotCount + 1
         end
@@ -353,13 +368,13 @@ end
 local function GetMailState()
     if IsMailboxHelperHidden() or not IsMailboxShown() then return nil end
 
-    local chests = ScanGalacticEquipmentChests()
+    local chests = ScanConquestEquipmentChests()
     local sendMailShown = IsSendMailFrameShown()
     local emptySlots = sendMailShown and GetEmptyAttachmentSlots() or {}
     local attachedCount = 0
     local attachedSlotCount = 0
     if sendMailShown then
-        attachedCount, attachedSlotCount = CountAttachedGalacticEquipmentChests()
+        attachedCount, attachedSlotCount = CountAttachedConquestEquipmentChests()
     end
     if chests.count <= 0 and attachedCount <= 0 then return nil end
 
@@ -431,7 +446,10 @@ local function GetStaticPopupItemName(dialogName)
     return itemName and itemName.GetText and itemName:GetText()
 end
 
-local function IsGalacticEquipmentRefundPopup(dialogName)
+local function IsConquestEquipmentRefundPopup(dialogName)
+    local chest = GetChestFeature()
+    if not chest then return false end
+
     local text = GetStaticPopupText(dialogName)
     text = text and string.lower(text) or ""
     if not text:find("non-refundable", 1, true) then
@@ -439,15 +457,15 @@ local function IsGalacticEquipmentRefundPopup(dialogName)
     end
 
     local itemName = GetStaticPopupItemName(dialogName)
-    return not itemName or itemName == "" or itemName == Database.GALACTIC_EQUIPMENT_CHEST_NAME
+    return not itemName or itemName == "" or itemName == chest.name
 end
 
-local function ConfirmGalacticEquipmentRefundPopup()
+local function ConfirmConquestEquipmentRefundPopup()
     local dialogCount = tonumber(_G.STATICPOPUP_NUMDIALOGS) or 4
     for index = 1, dialogCount do
         local dialogName = "StaticPopup" .. index
         local dialog = _G[dialogName]
-        if dialog and dialog:IsShown() and IsGalacticEquipmentRefundPopup(dialogName) then
+        if dialog and dialog:IsShown() and IsConquestEquipmentRefundPopup(dialogName) then
             local button = _G[dialogName .. "Button1"]
             if button and (not button.IsEnabled or button:IsEnabled()) then
                 button:Click()
@@ -469,7 +487,7 @@ local function UseContainerItemForMail(location)
         return false
     end
 
-    ConfirmGalacticEquipmentRefundPopup()
+    ConfirmConquestEquipmentRefundPopup()
     return true
 end
 
@@ -490,7 +508,7 @@ local function SendCurrentMail()
     RefreshSoon()
 end
 
-local function AttachGalacticEquipmentChests()
+local function AttachConquestEquipmentChests()
     if not IsSendMailFrameShown() then
         OpenSendMailTab()
         RefreshSoon()
@@ -519,10 +537,10 @@ local function AttachGalacticEquipmentChests()
         end
     end
 
-    ConfirmGalacticEquipmentRefundPopup()
+    ConfirmConquestEquipmentRefundPopup()
     RefreshSoon()
     if C_Timer and C_Timer.After then
-        C_Timer.After(0.1, ConfirmGalacticEquipmentRefundPopup)
+        C_Timer.After(0.1, ConfirmConquestEquipmentRefundPopup)
         C_Timer.After(attached > 0 and 0.35 or 0.15, UpdatePanel)
     end
 end
@@ -530,16 +548,17 @@ end
 local function ShowTooltip(self)
     local state = GetMailState()
     if not state then return end
+    local chestPluralName = GetChestPluralName()
 
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine("Warband Ratings")
+    GameTooltip:AddLine(ns.DISPLAY_NAME)
     if not state.sendMailShown then
-        GameTooltip:AddLine("Opens the Send Mail tab so you can attach Galactic Equipment Chests.", 1, 1, 1, true)
+        GameTooltip:AddLine("Opens the Send Mail tab so you can attach " .. chestPluralName .. ".", 1, 1, 1, true)
     elseif state.shouldSend then
-        GameTooltip:AddLine("Sends the current mail with attached Galactic Equipment Chests.", 1, 1, 1, true)
+        GameTooltip:AddLine("Sends the current mail with attached " .. chestPluralName .. ".", 1, 1, 1, true)
     else
-        GameTooltip:AddLine("Attaches Galactic Equipment Chests from your bags to empty mail slots.", 1, 1, 1, true)
+        GameTooltip:AddLine("Attaches " .. chestPluralName .. " from your bags to empty mail slots.", 1, 1, 1, true)
     end
     GameTooltip:AddDoubleLine("In bags:", FormatNumber(state.chests.count), 1, 0.82, 0, 1, 1, 1)
     if state.sendMailShown then
@@ -556,13 +575,13 @@ end
 
 local function EnsurePanel()
     local mailFrame = _G.MailFrame
-    if panel or not mailFrame then return end
+    if panel or not mailFrame or not GetChestFeature() then return end
 
     HookMailFrameRefreshes()
     HookRecipientEditBox()
     RestoreSavedRecipientIfEmpty()
 
-    panel = HelperPanel.CreateShell("WarbandRatingsMailboxHelperFrame", PANEL_WIDTH, PANEL_HEIGHT, "Warband Ratings")
+    panel = HelperPanel.CreateShell("WarbandRatingsMailboxHelperFrame", PANEL_WIDTH, PANEL_HEIGHT, ns.DISPLAY_NAME)
     panel:SetFrameLevel((mailFrame:GetFrameLevel() or 0) + 10)
     panel:SetScript("OnEnter", ShowTooltip)
     panel:SetScript("OnLeave", function()
@@ -613,7 +632,7 @@ local function EnsurePanel()
     panel.button:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 10, 7)
     panel.button:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 7)
     panel.button:SetHeight(22)
-    panel.button:SetScript("OnClick", AttachGalacticEquipmentChests)
+    panel.button:SetScript("OnClick", AttachConquestEquipmentChests)
     panel.button:SetScript("OnEnter", ShowTooltip)
     panel.button:SetScript("OnLeave", function()
         GameTooltip:Hide()
@@ -650,7 +669,8 @@ UpdatePanel = function()
     if state.attachedCount > 0 then
         panel.body:SetText(FormatNumber(state.chests.count) .. " in bags, " .. FormatNumber(state.attachedCount) .. " attached.")
     else
-        panel.body:SetText(FormatNumber(state.chests.count) .. " " .. Database.GALACTIC_EQUIPMENT_CHEST_NAME .. " in bags.")
+        local chest = GetChestFeature()
+        panel.body:SetText(FormatNumber(state.chests.count) .. " " .. (chest and chest.name or "Equipment Chest") .. " in bags.")
     end
 
     if not state.sendMailShown then
@@ -690,6 +710,10 @@ UpdatePanel = function()
 end
 
 function Mailbox.Refresh()
+    if not GetChestFeature() then
+        if panel then panel:Hide() end
+        return
+    end
     if IsMailboxShown() then
         HookMailFrameRefreshes()
         HookRecipientEditBox()
@@ -727,7 +751,11 @@ function Mailbox.Attach()
         else
             RestoreSavedRecipientIfEmpty()
         end
-        EnsurePanel()
+        if GetChestFeature() then
+            EnsurePanel()
+        elseif panel then
+            panel:Hide()
+        end
         RefreshSoon()
     end)
 end

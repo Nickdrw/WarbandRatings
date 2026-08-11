@@ -7,6 +7,8 @@ local now = 1000
 local rating = 1500
 local seasonPlayed = 10
 local roundsSeasonPlayed = 60
+local currentName = "Tester"
+local currentRealm = "Realm"
 local scoreInfo = {
     faction = 0,
     prematchMMR = 1550,
@@ -15,11 +17,12 @@ local recorded
 local recordCount = 0
 local enriched
 local savedMMR
+local seasonActive = true
 
 time = function() return now end
-UnitName = function() return "Tester" end
-GetNormalizedRealmName = function() return "Realm" end
-GetRealmName = function() return "Realm" end
+UnitName = function() return currentName end
+GetNormalizedRealmName = function() return currentRealm end
+GetRealmName = function() return currentRealm end
 GetSpecialization = function() return 1 end
 GetSpecializationInfo = function() return 71 end
 UnitClass = function() return "Warrior", "WARRIOR", 1 end
@@ -48,7 +51,12 @@ C_PvP = {
 }
 
 local specColumn = { key = "soloShuffle", bracketIndex = 7 }
+local globalColumn = { key = "arena3v3", bracketIndex = 2 }
 local ns = {
+    Season = {
+        GetContentSeasonKey = function() return "pvp-42" end,
+        IsRatedSeasonActive = function() return seasonActive end,
+    },
     Utils = {
         CharKey = function(name, realm)
             return name .. "-" .. realm
@@ -59,7 +67,8 @@ local ns = {
     },
     Database = {
         HELIOTROPE_ITEM_ID = 253307,
-        GLOBAL_COLUMNS = {},
+        GLOBAL_COLUMNS = { globalColumn },
+        GetGlobalColumns = function() return { globalColumn } end,
         SPEC_COLUMNS = { specColumn },
         IsSpecColumn = function(col)
             return col == specColumn
@@ -67,17 +76,25 @@ local ns = {
         GetPVPColumnByBracketIndex = function(bracketIndex)
             if bracketIndex == 7 then return specColumn end
         end,
-        SaveCharacter = function(data)
-            WarbandRatingsDB.characters["Tester-Realm"] = data
+        IsValidSeasonKey = function(seasonKey)
+            return seasonKey == "pvp-42"
         end,
-        SaveLastMMR = function(_, _, _, _, mmr)
+        GetSeasonCharacters = function(seasonKey)
+            return WarbandRatingsDB.seasons[seasonKey].characters
+        end,
+        SaveCharacter = function(seasonKey, data)
+            data.seasonKey = seasonKey
+            WarbandRatingsDB.seasons[seasonKey].characters[data.name .. "-" .. data.realm] = data
+            return true
+        end,
+        SaveLastMMR = function(_, _, _, _, _, mmr)
             savedMMR = mmr
             return true
         end,
     },
     History = {
         RecordDiagnostic = function() end,
-        EnrichPendingMMR = function(_, _, _, _, mmr, matchSequence)
+        EnrichPendingMMR = function(_, _, _, _, _, mmr, matchSequence)
             enriched = {
                 mmr = mmr,
                 matchSequence = matchSequence,
@@ -93,14 +110,20 @@ local ns = {
 }
 
 WarbandRatingsDB = {
-    characters = {
-        ["Tester-Realm"] = {
-            specRatings = {
-                [71] = {
-                    soloShuffle = rating,
+    seasons = {
+        ["pvp-42"] = {
+            seasonKey = "pvp-42",
+            characters = {
+                ["Tester-Realm"] = {
+                    seasonKey = "pvp-42",
+                    specRatings = {
+                        [71] = {
+                            soloShuffle = rating,
+                        },
+                    },
+                    ratings = {},
                 },
             },
-            ratings = {},
         },
     },
 }
@@ -122,13 +145,26 @@ now = 1100
 
 assert(DataCollection.CollectLastMatchMMR(true))
 assert(recorded, "fresh rating was not recorded")
-assert(recorded[5] == 1520, "wrong post-lobby rating")
-assert(recorded[6] == nil, "prematch MMR was incorrectly stored as post-match MMR")
-assert(recorded[7] == nil, "Solo Shuffle should not invent a binary lobby result")
-assert(recorded[10] == 11, "season game counter was not used as the match sequence")
-assert(recorded[11] == "pending", "missing post-match MMR was not marked pending")
+assert(recorded[1] == "pvp-42", "match history was not bound to its season")
+assert(recorded[6] == 1520, "wrong post-lobby rating")
+assert(recorded[7] == nil, "prematch MMR was incorrectly stored as post-match MMR")
+assert(recorded[8] == nil, "Solo Shuffle should not invent a binary lobby result")
+assert(recorded[11] == 11, "season game counter was not used as the match sequence")
+assert(recorded[12] == "pending", "missing post-match MMR was not marked pending")
 assert(savedMMR == 1550, "latest readable MMR was not retained for the character")
 assert(not DataCollection.CollectLastMatchMMR(true), "untracked stats refresh should not finalize history")
+
+local storedCharacter = WarbandRatingsDB.seasons["pvp-42"].characters["Tester-Realm"]
+storedCharacter.ratings.arena3v3 = 1816
+seasonActive = false
+rating = 1964
+local frozenCharacter = DataCollection.CollectCurrentCharacter()
+assert(frozenCharacter == storedCharacter, "offseason collection did not return the frozen snapshot")
+assert(frozenCharacter.ratings.arena3v3 == 1816, "offseason collection changed the table rating")
+assert(not DataCollection.BeginRatedMatch(true), "offseason match tracking should not start")
+assert(not DataCollection.CollectLastMatchMMR(true), "offseason match history should not be recorded")
+assert(recordCount == 1, "offseason collection added a graph point")
+seasonActive = true
 assert(recordCount == 1, "untracked stats refresh manufactured a history point")
 
 scoreInfo = { faction = 0 }
@@ -153,6 +189,31 @@ rating = 100
 seasonPlayed = 1
 DataCollection.CollectLastMatchMMR(true)
 assert(recordCount == 2, "first completed lobby was not recorded")
-assert(recorded[10] == 1, "first completed lobby did not use its season game counter")
+assert(recorded[11] == 1, "first completed lobby did not use its season game counter")
+
+local testerData = DataCollection.CollectCurrentCharacter()
+assert(testerData.seasonKey == "pvp-42", "collected character data was not bound to its season")
+assert(testerData.pvpStats.arena3v3.ownerCharacterKey == "Tester-Realm",
+    "fresh global statistics were not bound to their character")
+assert(testerData.specPVPStats[71].soloShuffle.ownerSpecID == 71,
+    "fresh specialization statistics were not bound to their specialization")
+
+currentName = "Other"
+local staleCharacterData = DataCollection.CollectCurrentCharacter()
+assert(staleCharacterData.pvpStats.arena3v3 == nil,
+    "a different character received cached global season statistics")
+assert(staleCharacterData.currentSpecRatings == nil,
+    "a different character received cached specialization ratings")
+
+assert(DataCollection.RequestRatedInfo())
+currentName = "Tester"
+assert(not DataCollection.MarkRatedStatsUpdated(),
+    "a rated-stats response was accepted for the wrong character")
+currentName = "Other"
+assert(DataCollection.RequestRatedInfo())
+assert(DataCollection.MarkRatedStatsUpdated())
+local otherData = DataCollection.CollectCurrentCharacter()
+assert(otherData.pvpStats.arena3v3.ownerCharacterKey == "Other-Realm",
+    "the refreshed character did not receive owned global statistics")
 
 print("data collection tests passed")

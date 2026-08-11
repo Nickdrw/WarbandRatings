@@ -4,53 +4,75 @@ local ArenaQueue = ns.ArenaQueue
 local Database = ns.Database
 local HelperPanel = ns.HelperPanel
 
-local PANEL_WIDTH = 300
+local PANEL_WIDTH = 308
 local PANEL_GAP = 8
-local PANEL_TOP_INSET = 30
-local PANEL_BOTTOM_INSET = 8
+local PANEL_TOP_INSET = 46
+local PANEL_BOTTOM_INSET = 4
 local CARD_HEIGHT = 100
-local CARD_GAP = 7
+local UNRATED_CARD_HEIGHT = 82
+local CARD_GAP = 4
 local MINIMIZED_CARD_HEIGHT = 44
-local MINIMIZED_CARD_GAP = 4
-local MINIMIZED_PANEL_BOTTOM_INSET = 6
-local CARD_SIDE_INSET = 8
+local MINIMIZED_CARD_GAP = 2
+local MINIMIZED_PANEL_BOTTOM_INSET = 3
+local CARD_SIDE_INSET = 4
 local CARD_WIDTH = PANEL_WIDTH - CARD_SIDE_INSET * 2
 local CARD_PROGRESS_WIDTH = CARD_WIDTH - 20
-local MAX_CARDS = 3
+local MAX_CARDS = 4
 local FALLBACK_BADGE_TEXTURE = 2022761
-local NO_SHOW_SPELL_ID = 368798
+local NO_SHOW_SPELL_IDS = {
+    368798, -- Leaving an active Solo Shuffle match.
+    1311694, -- Missing a Solo Shuffle or Battleground Blitz invitation.
+}
 local QUEUE_EYE_TOP_PADDING = 6
 local QUEUE_EYE_FLARE_SCALE = 1.15
+local HEADER_ROLE_BUTTON_SIZE = 18
+local HEADER_ROLE_BUTTON_GAP = 1
+local HEADER_ROLE_SELECTOR_GAP = 10
+local QUEUE_TAB_HEIGHT = 18
+local QUEUE_TAB_GAP = 2
+local QUEUE_TAB_TOP_INSET = 26
+local QUEUE_CATEGORY_RATED = "rated"
+local QUEUE_CATEGORY_UNRATED = "unrated"
+
+local PVP_ROLE_ATLASES = {
+    TANK = "roleicon-tiny-tank",
+    HEALER = "roleicon-tiny-healer",
+    DAMAGER = "roleicon-tiny-dps",
+}
+
+local PVP_ROLE_OPTIONS = {
+    { role = "TANK", atlas = PVP_ROLE_ATLASES.TANK, frameKey = "TankIcon" },
+    { role = "HEALER", atlas = PVP_ROLE_ATLASES.HEALER, frameKey = "HealerIcon" },
+    { role = "DAMAGER", atlas = PVP_ROLE_ATLASES.DAMAGER, frameKey = "DPSIcon" },
+}
 
 local STATUS_COLORS = {
-    rolecheck = { 1.00, 0.78, 0.25, 1 },
+    rolecheck = { 0.82, 0.36, 0.24, 1 },
     queued = { 0.30, 0.68, 1.00, 1 },
     ready = { 0.24, 0.95, 0.48, 1 },
     active = { 0.72, 0.48, 1.00, 1 },
 }
 local SESSION_LOSS_COLOR = { 1.00, 0.32, 0.32, 1 }
 
-local SECURE_PROXY_NAMES = {
-    "WarbandRatingsRatedQueueProxy1",
-    "WarbandRatingsRatedQueueProxy2",
-    "WarbandRatingsRatedQueueProxy3",
-}
-
-local SECURE_BUTTON_NAMES = {
-    "WarbandRatingsRatedQueueButton1",
-    "WarbandRatingsRatedQueueButton2",
-    "WarbandRatingsRatedQueueButton3",
-}
-
+local SECURE_PROXY_NAMES = {}
+local SECURE_BUTTON_NAMES = {}
 local QUEUE_MACROS = {
-    "/click " .. SECURE_PROXY_NAMES[1] .. " LeftButton\n/click ConquestJoinButton LeftButton",
-    "/click " .. SECURE_PROXY_NAMES[2] .. " LeftButton\n/click ConquestJoinButton LeftButton",
-    "/click " .. SECURE_PROXY_NAMES[3] .. " LeftButton\n/click ConquestJoinButton LeftButton",
+    [QUEUE_CATEGORY_RATED] = {},
+    [QUEUE_CATEGORY_UNRATED] = {},
 }
+for cardIndex = 1, MAX_CARDS do
+    SECURE_PROXY_NAMES[cardIndex] = "WarbandRatingsRatedQueueProxy" .. cardIndex
+    SECURE_BUTTON_NAMES[cardIndex] = "WarbandRatingsRatedQueueButton" .. cardIndex
+    QUEUE_MACROS[QUEUE_CATEGORY_RATED][cardIndex] =
+        "/click " .. SECURE_PROXY_NAMES[cardIndex] .. " LeftButton\n/click ConquestJoinButton LeftButton"
+    QUEUE_MACROS[QUEUE_CATEGORY_UNRATED][cardIndex] =
+        "/click " .. SECURE_PROXY_NAMES[cardIndex] .. " LeftButton\n/click HonorFrameQueueButton LeftButton"
+end
 
 local BRACKETS = {
     soloShuffle = {
         key = "soloShuffle",
+        category = QUEUE_CATEGORY_RATED,
         label = "Solo Shuffle",
         description = "Rated solo arena for one player.",
         bracketIndex = 7,
@@ -58,6 +80,7 @@ local BRACKETS = {
     },
     ratedBGBlitz = {
         key = "ratedBGBlitz",
+        category = QUEUE_CATEGORY_RATED,
         label = "Battleground Blitz",
         description = "Rated 8v8 battleground for solo players or a duo with a healer.",
         bracketIndex = 9,
@@ -65,6 +88,7 @@ local BRACKETS = {
     },
     arena2v2 = {
         key = "arena2v2",
+        category = QUEUE_CATEGORY_RATED,
         label = "2v2 Arena",
         description = "Rated arena for your two-player group.",
         bracketIndex = 1,
@@ -72,10 +96,42 @@ local BRACKETS = {
     },
     arena3v3 = {
         key = "arena3v3",
+        category = QUEUE_CATEGORY_RATED,
         label = "3v3 Arena",
         description = "Rated arena for your three-player group.",
         bracketIndex = 2,
         targetKey = "Arena3v3",
+    },
+}
+
+local UNRATED_BRACKETS = {
+    randomBattleground = {
+        key = "randomBattleground",
+        category = QUEUE_CATEGORY_UNRATED,
+        label = _G.RANDOM_BATTLEGROUNDS or "Random Battleground",
+        description = "A random battleground for honor and seasonal rewards.",
+        targetKey = "RandomBGButton",
+    },
+    randomEpicBattleground = {
+        key = "randomEpicBattleground",
+        category = QUEUE_CATEGORY_UNRATED,
+        label = _G.RANDOM_EPIC_BATTLEGROUND or "Random Epic Battleground",
+        description = "A large-scale random battleground.",
+        targetKey = "RandomEpicBGButton",
+    },
+    arenaSkirmish = {
+        key = "arenaSkirmish",
+        category = QUEUE_CATEGORY_UNRATED,
+        label = _G.SKIRMISH or "Arena Skirmish",
+        description = "An unrated arena match.",
+        targetKey = "Arena1Button",
+    },
+    brawl = {
+        key = "brawl",
+        category = QUEUE_CATEGORY_UNRATED,
+        label = _G.PVP_BRAWL or "PvP Brawl",
+        description = "The currently active PvP brawl.",
+        targetKey = "BrawlButton",
     },
 }
 
@@ -92,11 +148,21 @@ local BRACKET_DISPLAY_ORDER = {
     "arena3v3",
 }
 
+local UNRATED_BRACKET_DISPLAY_ORDER = {
+    "randomBattleground",
+    "randomEpicBattleground",
+    "arenaSkirmish",
+    "brawl",
+}
+
 local eventFrame
 local panel
 local isPanelMoving
 local pendingRoleCheck
 local activeRoleCheckBracketKey
+local roleCheckTracking
+local roleCheckResponses = {}
+local lastGroupSize
 local ratedStatsReady
 local ratingSessionInitialized
 local ratingSessionResumeSaved
@@ -110,7 +176,9 @@ local queueStatusHooked
 local queueEyeEffect
 local builtInPvPDeltas = {}
 local builtInPvPDeltasHooked
+local betterBlizzTrackerPoints = {}
 local noShowPenaltyActive = false
+local queueBracketKeysByIndex = {}
 local UpdatePanel
 local UpdateDynamicCards
 
@@ -168,6 +236,26 @@ local function SetPanelMinimized(minimized)
         Database.SetSetting("arenaQueueMinimized", minimized)
     else
         settings.arenaQueueMinimized = minimized
+    end
+end
+
+local function GetQueueCategory()
+    local settings = GetSettings()
+    if settings and settings.arenaQueueCategory == QUEUE_CATEGORY_UNRATED then
+        return QUEUE_CATEGORY_UNRATED
+    end
+    return QUEUE_CATEGORY_RATED
+end
+
+local function SetQueueCategory(category)
+    category = category == QUEUE_CATEGORY_UNRATED and QUEUE_CATEGORY_UNRATED or QUEUE_CATEGORY_RATED
+    local settings = GetSettings()
+    if not settings or GetQueueCategory() == category then return end
+
+    if Database and Database.SetSetting then
+        Database.SetSetting("arenaQueueCategory", category)
+    else
+        settings.arenaQueueCategory = category
     end
 end
 
@@ -262,6 +350,13 @@ local function IsPVPUIReady()
         and _G.ConquestFrame.RatedBGBlitz
         and _G.ConquestFrame.Arena2v2
         and _G.ConquestFrame.Arena3v3
+        and _G.HonorFrame
+        and _G.HonorFrameQueueButton
+        and _G.HonorFrame.BonusFrame
+        and _G.HonorFrame.BonusFrame.RandomBGButton
+        and _G.HonorFrame.BonusFrame.RandomEpicBGButton
+        and _G.HonorFrame.BonusFrame.Arena1Button
+        and _G.HonorFrame.BonusFrame.BrawlButton
 end
 
 local function IsPVPUISettingUpAllowed()
@@ -297,20 +392,34 @@ local function EnsureBracketProxy(cardIndex)
     return true
 end
 
+local function GetBracketTarget(bracket)
+    if bracket.category == QUEUE_CATEGORY_UNRATED then
+        local honorFrame = _G.HonorFrame
+        local bonusFrame = honorFrame and honorFrame.BonusFrame
+        return bonusFrame and bonusFrame[bracket.targetKey]
+    end
+
+    local conquestFrame = _G.ConquestFrame
+    return conquestFrame and conquestFrame[bracket.targetKey]
+end
+
 local function ConfigureSecureBracket(cardIndex, bracket)
     local card = panel and panel.cards and panel.cards[cardIndex]
     local button = card and card.actionButton
     if not bracket or not button then return false end
+    local queueMacros = QUEUE_MACROS[bracket.category]
+    local queueMacro = queueMacros and queueMacros[cardIndex]
+    if not queueMacro then return false end
     if configuredBracketKeys[cardIndex] == bracket.key
         and bracketProxies[cardIndex]
         and button:GetAttribute("type") == "macro"
-        and button:GetAttribute("macrotext") == QUEUE_MACROS[cardIndex] then
+        and button:GetAttribute("macrotext") == queueMacro then
         return true
     end
     if not IsPVPUISettingUpAllowed() then return false end
     if not LoadPVPUI() or not EnsureBracketProxy(cardIndex) then return false end
 
-    local target = _G.ConquestFrame[bracket.targetKey]
+    local target = GetBracketTarget(bracket)
     if not target then return false end
 
     if configuredBracketKeys[cardIndex] ~= bracket.key then
@@ -319,7 +428,8 @@ local function ConfigureSecureBracket(cardIndex, bracket)
     end
 
     button:SetAttribute("type", "macro")
-    button:SetAttribute("macrotext", QUEUE_MACROS[cardIndex])
+    button:SetAttribute("clickbutton", nil)
+    button:SetAttribute("macrotext", queueMacro)
     return true
 end
 
@@ -329,11 +439,12 @@ local function ClearSecureAction(cardIndex)
     if not button or not IsPVPUISettingUpAllowed() then return false end
 
     button:SetAttribute("type", nil)
+    button:SetAttribute("clickbutton", nil)
     button:SetAttribute("macrotext", nil)
     return true
 end
 
-local function GetQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue)
+local function GetRatedQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue)
     if queueType == "RATEDSOLORBG" then
         return BRACKETS.ratedBGBlitz
     elseif queueType == "RATEDSHUFFLE" then
@@ -351,27 +462,142 @@ local function GetQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue
     end
 end
 
-local function ScanRatedQueues()
-    local queues = {}
+local function NormalizeQueueName(queueName)
+    if type(queueName) ~= "string" then return nil end
+    return queueName:lower():gsub("[%s%p]+", "")
+end
+
+local function QueueNamesMatch(firstName, secondName)
+    local first = NormalizeQueueName(firstName)
+    local second = NormalizeQueueName(secondName)
+    if not first or not second or first == "" or second == "" then return false end
+    if first == second then return true end
+
+    -- Blizzard's casual PvP tile and battlefield status can differ only by an
+    -- English plural (for example, "Random Epic Battlegrounds" vs
+    -- "Random Epic Battleground"). Treat those as the same queue.
+    return (first:sub(-1) == "s" and first:sub(1, -2) == second)
+        or (second:sub(-1) == "s" and second:sub(1, -2) == first)
+end
+
+local function QueueNameContains(queueName, fragment)
+    local normalizedName = NormalizeQueueName(queueName)
+    local normalizedFragment = NormalizeQueueName(fragment)
+    return normalizedName
+        and normalizedFragment
+        and normalizedFragment ~= ""
+        and normalizedName:find(normalizedFragment, 1, true) ~= nil
+end
+
+local function GetBrawlInfo(specialEvent)
+    if not C_PvP then return nil end
+    local getter = specialEvent and C_PvP.GetSpecialEventBrawlInfo or C_PvP.GetAvailableBrawlInfo
+    return getter and getter() or nil
+end
+
+local function RefreshUnratedBracketLabels()
+    local brawlInfo = GetBrawlInfo(false)
+    local specialBrawlInfo = GetBrawlInfo(true)
+    UNRATED_BRACKETS.brawl.label = brawlInfo and brawlInfo.name
+        or _G.PVP_BRAWL
+        or "PvP Brawl"
+    return brawlInfo, specialBrawlInfo
+end
+
+local function GetUnratedQueueBracket(queueType, mapName, teamSize, registeredMatch, cachedBracketKey)
+    if cachedBracketKey == "ignoredSpecialBrawl" then return nil, true end
+
+    local brawlInfo, specialBrawlInfo = RefreshUnratedBracketLabels()
+    if (queueType and queueType:find("SKIRMISH", 1, true))
+        or QueueNameContains(mapName, _G.SKIRMISH or "Skirmish") then
+        return UNRATED_BRACKETS.arenaSkirmish
+    elseif QueueNamesMatch(mapName, specialBrawlInfo and specialBrawlInfo.name) then
+        return nil, true
+    elseif QueueNamesMatch(mapName, brawlInfo and brawlInfo.name) then
+        return UNRATED_BRACKETS.brawl
+    elseif queueType and queueType:find("BRAWL", 1, true) then
+        return UNRATED_BRACKETS.brawl
+    elseif QueueNamesMatch(mapName, _G.RANDOM_EPIC_BATTLEGROUND) then
+        return UNRATED_BRACKETS.randomEpicBattleground
+    elseif QueueNamesMatch(mapName, _G.RANDOM_BATTLEGROUNDS) then
+        return UNRATED_BRACKETS.randomBattleground
+    end
+
+    if not registeredMatch and (teamSize == 2 or teamSize == 3 or teamSize == 5) then
+        return UNRATED_BRACKETS.arenaSkirmish
+    end
+    if registeredMatch then return nil end
+    if queueType == "ARENA" then
+        return UNRATED_BRACKETS.arenaSkirmish
+    end
+
+    local cachedBracket = cachedBracketKey and UNRATED_BRACKETS[cachedBracketKey]
+    if queueType == "BATTLEGROUND" and cachedBracket then
+        return cachedBracket
+    elseif queueType == "BATTLEGROUND" then
+        return UNRATED_BRACKETS.randomBattleground
+    end
+end
+
+local function GetQueuedPVPRole(queueIndex, battlefieldRole)
+    local specializationID = C_PvP
+        and C_PvP.GetAssignedSpecForBattlefieldQueue
+        and C_PvP.GetAssignedSpecForBattlefieldQueue(queueIndex)
+    local role
+    if specializationID then
+        if _G.GetSpecializationRoleByID then
+            role = _G.GetSpecializationRoleByID(specializationID)
+        elseif _G.GetSpecializationInfoByID then
+            role = select(5, _G.GetSpecializationInfoByID(specializationID))
+        end
+    end
+    if PVP_ROLE_ATLASES[role] then return role end
+    if PVP_ROLE_ATLASES[battlefieldRole] then return battlefieldRole end
+end
+
+local function ScanPVPQueues()
+    local queues = {
+        [QUEUE_CATEGORY_RATED] = {},
+        [QUEUE_CATEGORY_UNRATED] = {},
+    }
     local maxQueues = GetMaxBattlefieldID and GetMaxBattlefieldID()
     maxQueues = tonumber(maxQueues) or tonumber(_G.MAX_BATTLEFIELD_QUEUES) or 8
 
     for queueIndex = 1, maxQueues do
-        local status, mapName, teamSize, registeredMatch, suspended, queueType, _, _, asGroup, _, _, isSoloQueue =
+        local status, mapName, teamSize, registeredMatch, suspended, queueType, _, battlefieldRole, asGroup, _, _, isSoloQueue =
             GetBattlefieldStatus(queueIndex)
-        local bracket = GetQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue)
-        if bracket and status and status ~= "none" then
-            queues[bracket.key] = {
-                index = queueIndex,
-                status = status,
-                mapName = mapName,
-                suspended = suspended,
-                asGroup = asGroup,
-                isSolo = isSoloQueue
-                    or bracket.key == "soloShuffle"
-                    or bracket.key == "ratedBGBlitz",
-                bracket = bracket,
-            }
+        if status and status ~= "none" then
+            local bracket, ignoredQueue = GetUnratedQueueBracket(
+                queueType,
+                mapName,
+                teamSize,
+                registeredMatch,
+                queueBracketKeysByIndex[queueIndex]
+            )
+            if not bracket and not ignoredQueue then
+                bracket = GetRatedQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue)
+            end
+            if bracket then
+                queueBracketKeysByIndex[queueIndex] = bracket.key
+                queues[bracket.category][bracket.key] = {
+                    index = queueIndex,
+                    status = status,
+                    mapName = mapName,
+                    suspended = suspended,
+                    role = GetQueuedPVPRole(queueIndex, battlefieldRole),
+                    asGroup = asGroup,
+                    isSolo = isSoloQueue
+                        or bracket.key == "soloShuffle"
+                        or bracket.key == "ratedBGBlitz",
+                    bracket = bracket,
+                }
+            elseif ignoredQueue then
+                queueBracketKeysByIndex[queueIndex] = "ignoredSpecialBrawl"
+            else
+                queueBracketKeysByIndex[queueIndex] = nil
+            end
+        else
+            queueBracketKeysByIndex[queueIndex] = nil
         end
     end
 
@@ -397,14 +623,170 @@ local function GetRoleCheckBracketKeyFromName(queueName)
     then
         return "arena3v3"
     end
+
+    local brawlInfo, specialBrawlInfo = RefreshUnratedBracketLabels()
+    if QueueNamesMatch(queueName, specialBrawlInfo and specialBrawlInfo.name) then
+        return nil
+    elseif QueueNamesMatch(queueName, brawlInfo and brawlInfo.name) then
+        return "brawl"
+    elseif QueueNamesMatch(queueName, _G.RANDOM_EPIC_BATTLEGROUND) then
+        return "randomEpicBattleground"
+    elseif QueueNamesMatch(queueName, _G.RANDOM_BATTLEGROUNDS) then
+        return "randomBattleground"
+    elseif QueueNameContains(queueName, _G.SKIRMISH or "Skirmish") then
+        return "arenaSkirmish"
+    end
 end
 
-local function ScanRatedRoleCheck()
+local function NormalizeRoleCheckPlayerName(playerName)
+    if type(playerName) ~= "string" or playerName == "" then return nil end
+
+    local linkedName = playerName:match("|Hplayer:[^|]+|h%[([^%]]+)%]|h")
+    if linkedName then
+        playerName = linkedName
+    end
+    playerName = playerName:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    return playerName:lower():gsub("%s+", "")
+end
+
+local function GetClassColoredPlayerName(unit, playerName)
+    if not UnitClass or not RAID_CLASS_COLORS then return playerName end
+
+    local _, classFilename = UnitClass(unit)
+    local classColor = classFilename and RAID_CLASS_COLORS[classFilename]
+    if not classColor then return playerName end
+    if classColor.WrapTextInColorCode then
+        return classColor:WrapTextInColorCode(playerName)
+    elseif classColor.colorStr then
+        return "|c" .. classColor.colorStr .. playerName .. "|r"
+    end
+    return playerName
+end
+
+local function GetRoleCheckPlayerInfo(unit)
+    if not UnitName then return nil end
+
+    local playerName, realmName = UnitName(unit)
+    if not playerName or playerName == "" then return nil end
+
+    local fullName = playerName
+    if realmName and realmName ~= "" then
+        fullName = playerName .. "-" .. realmName
+    end
+    return {
+        key = NormalizeRoleCheckPlayerName(fullName),
+        shortKey = NormalizeRoleCheckPlayerName(playerName),
+        displayName = GetClassColoredPlayerName(unit, playerName),
+        responded = false,
+    }
+end
+
+local function FindTrackedRoleCheckPlayer(players, responseKey)
+    for _, playerInfo in ipairs(players) do
+        if playerInfo.key == responseKey then
+            return playerInfo
+        end
+    end
+
+    local responseShortKey = responseKey:match("^([^-]+)")
+    local matchingPlayer
+    for _, playerInfo in ipairs(players) do
+        if playerInfo.shortKey == responseShortKey then
+            if matchingPlayer then return nil end
+            matchingPlayer = playerInfo
+        end
+    end
+    return matchingPlayer
+end
+
+local function StartRoleCheckTracking(bracketKey)
+    roleCheckTracking = nil
+    if not bracketKey
+        or GetGroupSize() <= 1
+        or not UnitIsGroupLeader
+        or not UnitIsGroupLeader("player")
+    then
+        return
+    end
+
+    local players = {}
+    for partyIndex = 1, GetGroupSize() - 1 do
+        local playerInfo = GetRoleCheckPlayerInfo("party" .. partyIndex)
+        if playerInfo then
+            players[#players + 1] = playerInfo
+        end
+    end
+    if #players == 0 then return end
+
+    roleCheckTracking = {
+        bracketKey = bracketKey,
+        players = players,
+    }
+    for responseKey in pairs(roleCheckResponses) do
+        local playerInfo = FindTrackedRoleCheckPlayer(players, responseKey)
+        if playerInfo then
+            playerInfo.responded = true
+        end
+    end
+end
+
+local function EnsureRoleCheckTracking(bracketKey)
+    if roleCheckTracking and roleCheckTracking.bracketKey == bracketKey then return end
+    StartRoleCheckTracking(bracketKey)
+end
+
+local function MarkRoleCheckPlayerResponded(playerName)
+    local responseKey = NormalizeRoleCheckPlayerName(playerName)
+    if not responseKey then return end
+    roleCheckResponses[responseKey] = true
+
+    if roleCheckTracking then
+        local playerInfo = FindTrackedRoleCheckPlayer(roleCheckTracking.players, responseKey)
+        if playerInfo then
+            playerInfo.responded = true
+        end
+    end
+end
+
+local function SyncRoleCheckPlayerResponses(numMembers)
+    local getRoleUpdateMember = _G.GetLFGRoleUpdateMember
+    if not getRoleUpdateMember then return end
+
+    numMembers = tonumber(numMembers) or GetGroupSize()
+    for memberIndex = 1, numMembers do
+        local responded, _, playerName = getRoleUpdateMember(memberIndex)
+        if responded == true and playerName then
+            MarkRoleCheckPlayerResponded(playerName)
+        end
+    end
+end
+
+local function GetUnansweredRoleCheckPlayers(bracketKey)
+    if not roleCheckTracking or roleCheckTracking.bracketKey ~= bracketKey then return nil end
+
+    local unanswered = {}
+    for _, playerInfo in ipairs(roleCheckTracking.players) do
+        if not playerInfo.responded then
+            unanswered[#unanswered + 1] = playerInfo.displayName
+        end
+    end
+
+    return unanswered
+end
+
+local function FormatPlayerList(playerNames)
+    if #playerNames == 1 then return playerNames[1] end
+    if #playerNames == 2 then return playerNames[1] .. " and " .. playerNames[2] end
+    return table.concat(playerNames, ", ")
+end
+
+local function ScanPVPRoleCheck()
     if not GetLFGRoleUpdate then return nil end
 
-    local inProgress, _, _, _, fifthValue, sixthValue = GetLFGRoleUpdate()
+    local inProgress, _, numMembers, _, fifthValue, sixthValue = GetLFGRoleUpdate()
     if not inProgress then
         activeRoleCheckBracketKey = nil
+        roleCheckTracking = nil
         local now = GetTime and GetTime() or 0
         if pendingRoleCheck and pendingRoleCheck.expiresAt < now then
             pendingRoleCheck = nil
@@ -428,11 +810,14 @@ local function ScanRatedRoleCheck()
     local bracketKey = activeRoleCheckBracketKey
         or (pendingRoleCheck and pendingRoleCheck.bracketKey)
         or GetRoleCheckBracketKeyFromName(queueName)
-    local bracket = bracketKey and BRACKETS[bracketKey]
+    local bracket = bracketKey
+        and (BRACKETS[bracketKey] or UNRATED_BRACKETS[bracketKey])
     if not bracket then return nil end
 
     activeRoleCheckBracketKey = bracketKey
     pendingRoleCheck = nil
+    EnsureRoleCheckTracking(bracketKey)
+    SyncRoleCheckPlayerResponses(numMembers)
     return {
         status = "rolecheck",
         queueName = queueName,
@@ -467,6 +852,112 @@ local function GetDisplayedBrackets(queues)
     end
 
     return displayed
+end
+
+local function GetDisplayedUnratedBrackets(queues)
+    local displayed = {}
+    local brawlInfo = RefreshUnratedBracketLabels()
+
+    for _, key in ipairs(UNRATED_BRACKET_DISPLAY_ORDER) do
+        local isCoreBracket = key == "randomBattleground"
+            or key == "randomEpicBattleground"
+            or key == "arenaSkirmish"
+        local isAvailableBrawl = key == "brawl" and brawlInfo ~= nil
+        if isCoreBracket or isAvailableBrawl or queues[key] then
+            displayed[#displayed + 1] = UNRATED_BRACKETS[key]
+        end
+    end
+
+    return displayed
+end
+
+local function CountQueues(queues)
+    local count = 0
+    for _ in pairs(queues) do
+        count = count + 1
+    end
+    return count
+end
+
+local QUEUE_VISUAL_STATE_PRIORITY = {
+    queued = 1,
+    active = 2,
+    rolecheck = 3,
+    ready = 4,
+}
+
+local function GetQueueVisualState(queue)
+    if not queue then return nil end
+    if queue.status == "confirm" then
+        return "ready"
+    elseif queue.status == "rolecheck" then
+        return "rolecheck"
+    elseif queue.status == "active" or queue.status == "locked" then
+        return "active"
+    elseif queue.status == "queued" then
+        return "queued"
+    end
+end
+
+local function GetCategoryQueueVisualState(queues)
+    local bestState
+    local bestPriority = 0
+    for _, queue in pairs(queues) do
+        local visualState = GetQueueVisualState(queue)
+        local priority = visualState and QUEUE_VISUAL_STATE_PRIORITY[visualState] or 0
+        if priority > bestPriority then
+            bestState = visualState
+            bestPriority = priority
+        end
+    end
+    return bestState
+end
+
+local function PrepareUnratedQueueControls()
+    return LoadPVPUI()
+end
+
+local function GetUnratedQueueFailure(bracket, groupSize)
+    if not GetBracketTarget(bracket) or not _G.HonorFrameQueueButton then
+        return "Unrated PvP queue controls are not ready."
+    end
+
+    if C_LobbyMatchmakerInfo
+        and C_LobbyMatchmakerInfo.IsInQueue
+        and C_LobbyMatchmakerInfo.IsInQueue() then
+        return _G.WOW_LABS_CANNOT_ENTER_NON_PLUNDER_QUEUE or "Another matchmaking queue is active."
+    end
+    if groupSize > 1 and UnitIsGroupLeader and not UnitIsGroupLeader("player") then
+        return _G.ERR_NOT_LEADER or "Only the group leader can queue."
+    end
+
+    if bracket.key == "randomBattleground" and C_PvP and C_PvP.GetRandomBGInfo then
+        local info = C_PvP.GetRandomBGInfo()
+        if not info or not info.canQueue or not info.bgID then
+            return "Random Battlegrounds are currently unavailable."
+        end
+    elseif bracket.key == "randomEpicBattleground" and C_PvP and C_PvP.GetRandomEpicBGInfo then
+        local info = C_PvP.GetRandomEpicBGInfo()
+        if not info or not info.canQueue or not info.bgID then
+            return "Random Epic Battlegrounds are currently unavailable."
+        end
+    elseif bracket.key == "arenaSkirmish" and C_PvP and C_PvP.GetSkirmishInfo then
+        local info = C_PvP.GetSkirmishInfo(4)
+        if not info then
+            return "Arena Skirmishes are currently unavailable."
+        elseif groupSize < (tonumber(info.minPlayers) or 1) then
+            return "Your group needs more players for Arena Skirmish."
+        elseif groupSize > (tonumber(info.maxPlayers) or groupSize) then
+            return "Your group has too many players for Arena Skirmish."
+        end
+    elseif bracket.key == "brawl" then
+        local info = GetBrawlInfo(false)
+        if not info or not info.canQueue then
+            return "The PvP Brawl is currently unavailable."
+        elseif groupSize > 1 and info.groupsAllowed == false then
+            return _G.SOLO_BRAWL_CANT_QUEUE or "This PvP Brawl only allows solo players."
+        end
+    end
 end
 
 local function GetRatedAccessFailure()
@@ -517,10 +1008,15 @@ local function FormatPVPItemLevelFailure(requiredItemLevel, currentItemLevel, pl
 end
 
 local function HasNoShowPenalty()
-    noShowPenaltyActive = C_UnitAuras
-        and C_UnitAuras.GetPlayerAuraBySpellID
-        and C_UnitAuras.GetPlayerAuraBySpellID(NO_SHOW_SPELL_ID) ~= nil
-        or false
+    noShowPenaltyActive = false
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        for _, spellID in ipairs(NO_SHOW_SPELL_IDS) do
+            if C_UnitAuras.GetPlayerAuraBySpellID(spellID) then
+                noShowPenaltyActive = true
+                break
+            end
+        end
+    end
     return noShowPenaltyActive
 end
 
@@ -789,6 +1285,45 @@ local function GetRatingInfo(bracket)
     }
 end
 
+local function GetBetterBlizzTrackerPoints(tracker)
+    local points = betterBlizzTrackerPoints[tracker]
+    if points then return points end
+
+    points = {}
+    for index = 1, tracker:GetNumPoints() do
+        points[index] = { tracker:GetPoint(index) }
+    end
+    betterBlizzTrackerPoints[tracker] = points
+    return points
+end
+
+local function ApplyBetterBlizzTrackerOffset(tracker, yOffset)
+    local points = GetBetterBlizzTrackerPoints(tracker)
+    tracker:ClearAllPoints()
+    for _, point in ipairs(points) do
+        tracker:SetPoint(point[1], point[2], point[3], point[4], (point[5] or 0) + yOffset)
+    end
+end
+
+local function PositionBuiltInPvPRatingDelta(deltaText, bracketFrame, currentRating)
+    deltaText:ClearAllPoints()
+
+    local gladWinTracker = bracketFrame.bbfGladWinTracker
+    if gladWinTracker and gladWinTracker:IsShown() and deltaText:IsShown() then
+        local verticalGap = 1
+        local trackerOffset = -((deltaText:GetStringHeight() + verticalGap) / 2)
+        ApplyBetterBlizzTrackerOffset(gladWinTracker, trackerOffset)
+        deltaText:SetJustifyH("CENTER")
+        deltaText:SetPoint("BOTTOM", gladWinTracker, "TOP", 0, verticalGap)
+    else
+        if gladWinTracker and betterBlizzTrackerPoints[gladWinTracker] then
+            ApplyBetterBlizzTrackerOffset(gladWinTracker, 0)
+        end
+        deltaText:SetJustifyH("LEFT")
+        deltaText:SetPoint("LEFT", currentRating, "RIGHT", 4, 0)
+    end
+end
+
 local function UpdateBuiltInPvPRatingDeltas()
     local conquestFrame = _G.ConquestFrame
     if not conquestFrame or not GetPersonalRatedInfo then return end
@@ -800,8 +1335,7 @@ local function UpdateBuiltInPvPRatingDeltas()
         if currentRating then
             local deltaText = builtInPvPDeltas[bracketKey]
             if not deltaText then
-                deltaText = bracketFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-                deltaText:SetPoint("LEFT", currentRating, "RIGHT", 4, 0)
+                deltaText = bracketFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 deltaText:SetJustifyH("LEFT")
                 builtInPvPDeltas[bracketKey] = deltaText
             end
@@ -819,6 +1353,7 @@ local function UpdateBuiltInPvPRatingDeltas()
                 deltaText:SetText("")
                 deltaText:Hide()
             end
+            PositionBuiltInPvPRatingDelta(deltaText, bracketFrame, currentRating)
         end
     end
 
@@ -829,10 +1364,17 @@ local function UpdateBuiltInPvPRatingDeltas()
 end
 
 local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSize)
+    local isRated = bracket.category == QUEUE_CATEGORY_RATED
     local state = {
         bracket = bracket,
+        category = bracket.category,
+        isRated = isRated,
         queue = queue,
-        rating = GetRatingInfo(bracket),
+        rating = isRated and GetRatingInfo(bracket) or {
+            rating = 0,
+            ranking = 0,
+            tierName = "",
+        },
         buttonText = "Queue",
         buttonEnabled = false,
         buttonVisible = true,
@@ -841,10 +1383,19 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
 
     if queue then
         if queue.status == "rolecheck" then
-            state.buttonVisible = false
             state.visualState = "rolecheck"
             state.statusText = "ROLE CHECK"
-            ClearSecureAction(cardIndex)
+            if groupSize > 1
+                and UnitIsGroupLeader
+                and UnitIsGroupLeader("player")
+                and ConfigureSecureBracket(cardIndex, bracket)
+            then
+                state.buttonText = "Requeue"
+                state.buttonEnabled = true
+            else
+                state.buttonVisible = false
+                ClearSecureAction(cardIndex)
+            end
         elseif queue.status == "queued" then
             state.buttonVisible = false
             state.visualState = "queued"
@@ -875,11 +1426,15 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
 
     if commonFailure then
         state.failureReason = commonFailure
+    elseif not isRated then
+        state.failureReason = GetUnratedQueueFailure(bracket, groupSize)
     else
         state.failureReason, state.failureKind = GetBracketFailure(bracket, groupSize)
     end
     if not state.failureReason and not ConfigureSecureBracket(cardIndex, bracket) then
-        state.failureReason = "Rated PvP queue controls are not ready."
+        state.failureReason = isRated
+            and "Rated PvP queue controls are not ready."
+            or "Unrated PvP queue controls are not ready."
     end
     state.buttonEnabled = not state.failureReason
     state.statusText = state.failureReason and "UNAVAILABLE" or "READY TO QUEUE"
@@ -889,23 +1444,45 @@ end
 local function GetPanelState()
     if IsHelperHidden() or not GetObjectiveTracker() then return nil end
 
-    local queues = ScanRatedQueues()
-    local roleCheck = ScanRatedRoleCheck()
-    if roleCheck and not queues[roleCheck.bracket.key] then
-        queues[roleCheck.bracket.key] = roleCheck
+    local queueGroups = ScanPVPQueues()
+    local ratedQueues = queueGroups[QUEUE_CATEGORY_RATED]
+    local unratedQueues = queueGroups[QUEUE_CATEGORY_UNRATED]
+    local roleCheck = ScanPVPRoleCheck()
+    if roleCheck then
+        local roleCheckQueues = queueGroups[roleCheck.bracket.category]
+        if roleCheckQueues and not roleCheckQueues[roleCheck.bracket.key] then
+            roleCheckQueues[roleCheck.bracket.key] = roleCheck
+        end
     end
-    local brackets = GetDisplayedBrackets(queues)
+    local category = GetQueueCategory()
+    local queues = category == QUEUE_CATEGORY_UNRATED and unratedQueues or ratedQueues
+    local brackets = category == QUEUE_CATEGORY_UNRATED
+        and GetDisplayedUnratedBrackets(queues)
+        or GetDisplayedBrackets(queues)
     if #brackets == 0 then return nil end
 
     local groupSize = GetGroupSize()
     local commonFailure
-    if not IsPVPUIReady() then
+    if category == QUEUE_CATEGORY_UNRATED then
+        if not PrepareUnratedQueueControls() then
+            commonFailure = "Unrated PvP UI is not ready."
+        end
+    elseif not IsPVPUIReady() then
         commonFailure = "Rated PvP UI is not ready."
     else
         commonFailure = GetRatedAccessFailure()
     end
 
     local state = {
+        category = category,
+        queueCounts = {
+            [QUEUE_CATEGORY_RATED] = CountQueues(ratedQueues),
+            [QUEUE_CATEGORY_UNRATED] = CountQueues(unratedQueues),
+        },
+        queueVisualStates = {
+            [QUEUE_CATEGORY_RATED] = GetCategoryQueueVisualState(ratedQueues),
+            [QUEUE_CATEGORY_UNRATED] = GetCategoryQueueVisualState(unratedQueues),
+        },
         cards = {},
     }
     for cardIndex, bracket in ipairs(brackets) do
@@ -959,7 +1536,25 @@ local function UpdateDynamicCard(card)
 
     if queue.status == "rolecheck" then
         card.readyGlow:Hide()
-        SetQueueDisplayText(card, "Waiting for all players to choose a role", "Role check")
+        local unanswered = GetUnansweredRoleCheckPlayers(queue.bracket.key)
+        if unanswered and #unanswered == 0 then
+            card.statusText:SetText("ROLE CHECK COMPLETE")
+            if card.minimizedLayout then card.modeName:SetText("All responded") end
+            SetQueueDisplayText(card, "All group members responded; joining queue", "All responded")
+        elseif unanswered and #unanswered > 0 then
+            local playerList = FormatPlayerList(unanswered)
+            card.statusText:SetText("ROLE CHECK")
+            if card.minimizedLayout then card.modeName:SetText("Waiting: " .. playerList) end
+            SetQueueDisplayText(
+                card,
+                "Waiting for " .. playerList .. " to choose a role",
+                "Waiting: " .. playerList
+            )
+        else
+            card.statusText:SetText("ROLE CHECK")
+            if card.minimizedLayout then card.modeName:SetText("Role check") end
+            SetQueueDisplayText(card, "Waiting for all players to choose a role", "Role check")
+        end
         card.progressBg:Hide()
         card.progressFill:Hide()
     elseif queue.status == "queued" then
@@ -1049,7 +1644,7 @@ local function ApplyCardTheme(card, theme)
 
     local accent = GetCardAccent(state, theme)
     HelperPanel.SetTextureColor(card.bg, theme.surfaceRaised)
-    HelperPanel.SetTextureColor(card.badgeBg, theme.surface)
+    HelperPanel.SetTextureColor(card.badgeBg, theme.surface, 0)
     HelperPanel.SetTextureColor(card.borderTop, theme.border, 0.72)
     HelperPanel.SetTextureColor(card.borderBottom, theme.border, 0.72)
     HelperPanel.SetTextureColor(card.borderLeft, theme.border, 0.72)
@@ -1077,6 +1672,213 @@ local function ApplyCardTheme(card, theme)
     HelperPanel.SetFontColor(card.queueText, theme.muted)
 end
 
+local function ApplyQueueTabTheme(button, theme)
+    local backgroundColor = button.selected and theme.accent or theme.surface
+    local backgroundAlpha = button.selected and 0.18 or 0.28
+    local borderColor = button.selected and theme.accent or theme.border
+    local borderAlpha = button.selected and 0.72 or 0.42
+
+    HelperPanel.SetTextureColor(button.bg, backgroundColor, backgroundAlpha)
+    HelperPanel.SetTextureColor(button.border, borderColor, borderAlpha)
+    HelperPanel.SetTextureColor(button.selection, theme.accent, button.selected and 1 or 0)
+    HelperPanel.SetTextureColor(button.highlight, theme.rowHover)
+    HelperPanel.SetTextureColor(
+        button.queueIndicator,
+        STATUS_COLORS[button.queueVisualState] or STATUS_COLORS.queued
+    )
+    HelperPanel.SetFontColor(button.label, button.selected and theme.accent or theme.muted)
+end
+
+local function UpdateQueueTabs(state, theme)
+    if not panel or not panel.queueTabs then return end
+
+    local selectedCategory = state and state.category or GetQueueCategory()
+    local queueCounts = state and state.queueCounts or {}
+    local queueVisualStates = state and state.queueVisualStates or {}
+    theme = theme or HelperPanel.GetTheme()
+    for _, button in ipairs(panel.queueTabs) do
+        button.selected = button.category == selectedCategory
+        button.queueCount = queueCounts[button.category] or 0
+        button.queueVisualState = queueVisualStates[button.category]
+        button.queueIndicator:SetShown(not button.selected and button.queueCount > 0)
+        ApplyQueueTabTheme(button, theme)
+    end
+end
+
+local function CreateQueueTabs()
+    panel.queueTabs = {}
+    local tabWidth = (CARD_WIDTH - QUEUE_TAB_GAP) / 2
+    local tabOptions = {
+        { category = QUEUE_CATEGORY_RATED, label = "Rated" },
+        { category = QUEUE_CATEGORY_UNRATED, label = "Unrated" },
+    }
+
+    local anchor
+    for tabIndex, tabOption in ipairs(tabOptions) do
+        local button = CreateFrame("Button", nil, panel)
+        button:SetSize(tabWidth, QUEUE_TAB_HEIGHT)
+        if anchor then
+            button:SetPoint("TOPLEFT", anchor, "TOPRIGHT", QUEUE_TAB_GAP, 0)
+        else
+            button:SetPoint("TOPLEFT", panel, "TOPLEFT", CARD_SIDE_INSET, -QUEUE_TAB_TOP_INSET)
+        end
+        button:SetFrameLevel(panel:GetFrameLevel() + 4)
+        button:RegisterForClicks("LeftButtonUp")
+        button.category = tabOption.category
+
+        button.border = button:CreateTexture(nil, "BORDER")
+        button.border:SetAllPoints()
+
+        button.bg = button:CreateTexture(nil, "BORDER", nil, 1)
+        button.bg:SetPoint("TOPLEFT", button, "TOPLEFT", 1, -1)
+        button.bg:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
+
+        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        button.label:SetPoint("CENTER")
+        button.label:SetText(tabOption.label:upper())
+
+        button.selection = button:CreateTexture(nil, "OVERLAY")
+        button.selection:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 1, 0)
+        button.selection:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 0)
+        button.selection:SetHeight(2)
+
+        button.queueIndicator = button:CreateTexture(nil, "OVERLAY")
+        button.queueIndicator:SetSize(6, 6)
+        button.queueIndicator:SetPoint("RIGHT", button, "RIGHT", -9, 0)
+        button.queueIndicator:Hide()
+
+        button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+        button.highlight:SetAllPoints()
+        button:SetHighlightTexture(button.highlight)
+
+        button:SetScript("OnClick", function()
+            if GetQueueCategory() == button.category then return end
+            SetQueueCategory(button.category)
+            UpdatePanel()
+        end)
+
+        panel.queueTabs[tabIndex] = button
+        anchor = button
+    end
+end
+
+local function GetBuiltInPVPRoleCheckButton(frameKey)
+    local pvpFrame = GetQueueCategory() == QUEUE_CATEGORY_UNRATED and _G.HonorFrame or _G.ConquestFrame
+    local roleList = pvpFrame and pvpFrame.RoleList
+    local roleButton = roleList and roleList[frameKey]
+    return roleButton and roleButton.checkButton
+end
+
+local function GetPVPRoleSelections()
+    local getPVPRoles = _G.GetPVPRoles
+    if not getPVPRoles then return {} end
+
+    local tank, healer, damager = getPVPRoles()
+    return {
+        TANK = not not tank,
+        HEALER = not not healer,
+        DAMAGER = not not damager,
+    }
+end
+
+local function AreHeaderRolesLocked()
+    return InCombatLockdown and InCombatLockdown() or false
+end
+
+local function ApplyHeaderRoleButtonTheme(button, theme)
+    local borderColor = button.selected and theme.accent or theme.border
+    local borderAlpha = button.available and (button.selected and 0.95 or 0.48) or 0.20
+    local backgroundColor = button.selected and theme.accent or theme.surface
+    local backgroundAlpha = button.selected and 0.22 or 0
+
+    HelperPanel.SetTextureColor(button.border, borderColor, borderAlpha)
+    HelperPanel.SetTextureColor(button.bg, backgroundColor, backgroundAlpha)
+    HelperPanel.SetTextureColor(button.highlight, theme.rowHover)
+    button.icon:SetDesaturated(not button.available)
+    button.icon:SetAlpha(button.available and (button.selected and 1 or 0.58) or 0.22)
+end
+
+local function UpdateHeaderRoleSelector(theme)
+    if not panel or not panel.roleButtons then return end
+
+    local selections = GetPVPRoleSelections()
+    local rolesLocked = AreHeaderRolesLocked()
+    theme = theme or HelperPanel.GetTheme()
+    for _, button in ipairs(panel.roleButtons) do
+        local builtInCheckButton = GetBuiltInPVPRoleCheckButton(button.frameKey)
+        button.locked = rolesLocked
+        button.available = not rolesLocked
+            and builtInCheckButton ~= nil
+            and builtInCheckButton:IsEnabled()
+        button.selected = selections[button.role] == true
+        button:SetEnabled(button.available)
+        ApplyHeaderRoleButtonTheme(button, theme)
+    end
+end
+
+local function ToggleHeaderPVPRole(button)
+    if not button.available then return end
+
+    local getPVPRoles = _G.GetPVPRoles
+    local setPVPRoles = _G.SetPVPRoles
+    if not getPVPRoles or not setPVPRoles then return end
+
+    local tank, healer, damager = getPVPRoles()
+    tank = not not tank
+    healer = not not healer
+    damager = not not damager
+    if button.role == "TANK" then
+        tank = not tank
+    elseif button.role == "HEALER" then
+        healer = not healer
+    elseif button.role == "DAMAGER" then
+        damager = not damager
+    end
+
+    setPVPRoles(tank, healer, damager)
+    if _G.LFG_UpdateAllRoleCheckboxes then
+        _G.LFG_UpdateAllRoleCheckboxes()
+    end
+    UpdatePanel()
+end
+
+local function CreateHeaderRoleSelector()
+    panel.roleButtons = {}
+    local anchor = panel.minimizeButton
+    for roleIndex = #PVP_ROLE_OPTIONS, 1, -1 do
+        local roleOption = PVP_ROLE_OPTIONS[roleIndex]
+        local button = CreateFrame("Button", nil, panel)
+        button:SetSize(HEADER_ROLE_BUTTON_SIZE, HEADER_ROLE_BUTTON_SIZE)
+        local gap = roleIndex == #PVP_ROLE_OPTIONS and HEADER_ROLE_SELECTOR_GAP or HEADER_ROLE_BUTTON_GAP
+        button:SetPoint("RIGHT", anchor, "LEFT", -gap, 0)
+        button:SetFrameLevel(panel:GetFrameLevel() + 5)
+        button:RegisterForClicks("LeftButtonUp")
+        button.role = roleOption.role
+        button.frameKey = roleOption.frameKey
+
+        button.border = button:CreateTexture(nil, "BORDER")
+        button.border:SetAllPoints()
+
+        button.bg = button:CreateTexture(nil, "BORDER", nil, 1)
+        button.bg:SetPoint("TOPLEFT", button, "TOPLEFT", 1, -1)
+        button.bg:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
+
+        button.icon = button:CreateTexture(nil, "ARTWORK")
+        button.icon:SetSize(16, 16)
+        button.icon:SetPoint("CENTER")
+        button.icon:SetAtlas(roleOption.atlas, false)
+
+        button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+        button.highlight:SetAllPoints()
+        button:SetHighlightTexture(button.highlight)
+
+        button:SetScript("OnClick", ToggleHeaderPVPRole)
+
+        panel.roleButtons[roleIndex] = button
+        anchor = button
+    end
+end
+
 local function ApplyQueueEyeEffectTheme(theme)
     if not queueEyeEffect or not theme then return end
     local accent = theme.accent
@@ -1099,6 +1901,8 @@ local function ApplyPanelTheme()
         HelperPanel.SetTextureColor(panel.minimizeButton.horizontalLine, theme.text)
         HelperPanel.SetTextureColor(panel.minimizeButton.verticalLine, theme.text)
     end
+    UpdateQueueTabs(panel.state, theme)
+    UpdateHeaderRoleSelector(theme)
     for _, card in ipairs(panel.cards) do
         if card:IsShown() then
             ApplyCardTheme(card, theme)
@@ -1114,6 +1918,31 @@ local function RefreshSoon()
         C_Timer.After(0.1, UpdatePanel)
     else
         UpdatePanel()
+    end
+end
+
+local function RefreshBuiltInQueueStatusSoon()
+    local function RefreshBuiltInQueueStatus()
+        local queueStatusFrame = _G.QueueStatusFrame
+        if queueStatusFrame and queueStatusFrame.Update then
+            queueStatusFrame:Update()
+        end
+    end
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.2, RefreshBuiltInQueueStatus)
+    else
+        RefreshBuiltInQueueStatus()
+    end
+end
+
+local function CancelAbandonedPVPRoleCheck()
+    if not GetLFGRoleUpdate then return end
+
+    local inProgress, _, _, _, _, isBattleground = GetLFGRoleUpdate()
+    local completeRoleCheck = _G.CompleteLFGRoleCheck
+    if inProgress and isBattleground and completeRoleCheck then
+        completeRoleCheck(false)
     end
 end
 
@@ -1302,11 +2131,12 @@ local function UpdateMinimizeButton()
     button.tooltipText = minimized and "Expand queue helper" or "Minimize queue helper"
 end
 
-local function ApplyCardLayout(card, minimized)
-    if card.minimizedLayout == minimized then return end
+local function ApplyCardLayout(card, minimized, isRated)
+    if card.minimizedLayout == minimized and card.ratedLayout == isRated then return end
     card.minimizedLayout = minimized
+    card.ratedLayout = isRated
 
-    local cardHeight = minimized and MINIMIZED_CARD_HEIGHT or CARD_HEIGHT
+    local cardHeight = minimized and MINIMIZED_CARD_HEIGHT or (isRated and CARD_HEIGHT or UNRATED_CARD_HEIGHT)
     card:SetSize(CARD_WIDTH, cardHeight)
     card.borderLeft:SetHeight(cardHeight)
     card.borderRight:SetHeight(cardHeight)
@@ -1314,6 +2144,7 @@ local function ApplyCardLayout(card, minimized)
     card.modeName:ClearAllPoints()
     card.progressBg:ClearAllPoints()
     card.actionButton:ClearAllPoints()
+    card.statusDot:ClearAllPoints()
 
     if minimized then
         card.badgeBg:Hide()
@@ -1330,18 +2161,50 @@ local function ApplyCardLayout(card, minimized)
         card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 2)
         card.actionButton:SetPoint("RIGHT", card, "RIGHT", -9, 0)
     else
-        card.badgeBg:Show()
-        card.badge:Show()
-        card.ratingValue:Show()
-        card.ratingLabel:Show()
-        card.rankText:Show()
+        card.badgeBg:SetShown(isRated)
+        card.badge:SetShown(isRated)
+        card.ratingValue:SetShown(isRated)
+        card.ratingLabel:SetShown(isRated)
+        card.rankText:SetShown(isRated)
         card.statusDot:Show()
         card.statusText:Show()
 
-        card.modeName:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -10)
-        card.modeName:SetPoint("RIGHT", card.ratingValue, "LEFT", -8, 0)
-        card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 34)
+        local contentLeft = isRated and 64 or 10
+        card.modeName:SetPoint("TOPLEFT", card, "TOPLEFT", contentLeft, -10)
+        if isRated then
+            card.modeName:SetPoint("RIGHT", card.ratingValue, "LEFT", -8, 0)
+            card.statusDot:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -49)
+        else
+            card.modeName:SetPoint("RIGHT", card, "RIGHT", -10, 0)
+            card.statusDot:SetPoint("TOPLEFT", card, "TOPLEFT", 10, -32)
+        end
+        card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, isRated and 34 or 27)
         card.actionButton:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -9, 7)
+    end
+end
+
+local function UpdateQueuedRoleIcon(card, role, minimized, isRated)
+    local roleAtlas = PVP_ROLE_ATLASES[role]
+    local baseX = minimized and 10 or (isRated and 64 or 10)
+    card.queuedRoleIcon:ClearAllPoints()
+    card.modeName:ClearAllPoints()
+
+    if roleAtlas then
+        card.queuedRoleIcon:SetPoint("TOPLEFT", card, "TOPLEFT", baseX, minimized and -5 or -8)
+        card.queuedRoleIcon:SetAtlas(roleAtlas, false)
+        card.queuedRoleIcon:Show()
+        baseX = baseX + 21
+    else
+        card.queuedRoleIcon:Hide()
+    end
+
+    card.modeName:SetPoint("TOPLEFT", card, "TOPLEFT", baseX, minimized and -6 or -10)
+    if minimized then
+        card.modeName:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
+    elseif isRated then
+        card.modeName:SetPoint("RIGHT", card.ratingValue, "LEFT", -8, 0)
+    else
+        card.modeName:SetPoint("RIGHT", card, "RIGHT", -10, 0)
     end
 end
 
@@ -1410,6 +2273,10 @@ local function CreateCard(cardIndex)
     card.modeName:SetPoint("RIGHT", card.ratingValue, "LEFT", -8, 0)
     card.modeName:SetJustifyH("LEFT")
 
+    card.queuedRoleIcon = card:CreateTexture(nil, "OVERLAY")
+    card.queuedRoleIcon:SetSize(16, 16)
+    card.queuedRoleIcon:Hide()
+
     card.rankText = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     card.rankText:SetPoint("TOPLEFT", card.modeName, "BOTTOMLEFT", 0, -4)
     card.rankText:SetPoint("RIGHT", card.sessionDelta, "LEFT", -8, 0)
@@ -1443,8 +2310,9 @@ local function CreateCard(cardIndex)
     card.actionButton:SetSize(88, 22)
     card.actionButton:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -9, 7)
     card.actionButton:RegisterForClicks("LeftButtonUp")
-    card.actionButton:SetAttribute("type", "macro")
-    card.actionButton:SetAttribute("macrotext", QUEUE_MACROS[cardIndex])
+    card.actionButton:SetAttribute("type", nil)
+    card.actionButton:SetAttribute("clickbutton", nil)
+    card.actionButton:SetAttribute("macrotext", nil)
     card.actionButton:SetAttribute("useOnKeyDown", false)
     card.actionButton:SetScript("PostClick", function()
         local state = card.cardState
@@ -1487,7 +2355,7 @@ local function EnsurePanel()
         "WarbandRatingsRatedQueueFrame",
         PANEL_WIDTH,
         1,
-        "Warband Ratings"
+        ns.DISPLAY_NAME .. " - Queues"
     )
     panel:SetMovable(true)
     panel:SetClampedToScreen(true)
@@ -1540,7 +2408,10 @@ local function EnsurePanel()
     end)
     UpdateMinimizeButton()
 
-    panel.title:SetPoint("RIGHT", panel.minimizeButton, "LEFT", -2, 0)
+    CreateHeaderRoleSelector()
+    panel.title:SetPoint("RIGHT", panel.roleButtons[1], "LEFT", -4, 0)
+    panel.title:SetJustifyH("LEFT")
+    CreateQueueTabs()
 
     panel.cards = {}
     for cardIndex = 1, MAX_CARDS do
@@ -1557,9 +2428,11 @@ local function EnsurePanel()
     end)
 end
 
-local function LayoutPanel(cardCount)
+local function LayoutPanel(cardCount, category)
     local minimized = IsPanelMinimized()
-    local cardHeight = minimized and MINIMIZED_CARD_HEIGHT or CARD_HEIGHT
+    local cardHeight = minimized
+        and MINIMIZED_CARD_HEIGHT
+        or (category == QUEUE_CATEGORY_UNRATED and UNRATED_CARD_HEIGHT or CARD_HEIGHT)
     local cardGap = minimized and MINIMIZED_CARD_GAP or CARD_GAP
     local bottomInset = minimized and MINIMIZED_PANEL_BOTTOM_INSET or PANEL_BOTTOM_INSET
     local height = PANEL_TOP_INSET
@@ -1603,10 +2476,11 @@ end
 
 local function UpdateCard(card, state)
     local minimized = IsPanelMinimized()
-    ApplyCardLayout(card, minimized)
+    ApplyCardLayout(card, minimized, state.isRated)
     card.cardState = state
     card.actionButton.cardState = state
     card.modeName:SetText(state.bracket.label)
+    UpdateQueuedRoleIcon(card, state.queue and state.queue.role, minimized, state.isRated)
     card.ratingValue:SetText(state.rating.rating > 0 and state.rating.rating or "—")
     local sessionDelta = state.rating.sessionDelta
     if not minimized and sessionDelta and sessionDelta ~= 0 then
@@ -1641,8 +2515,9 @@ local function UpdateCard(card, state)
     elseif isNoShow then
         compactFailureButtonText = "No-Show"
     end
-    local showQueueInButton = minimized and state.queue ~= nil
+    local showQueueInButton = minimized and state.queue ~= nil and not state.buttonVisible
     local showCompactRating = minimized
+        and state.isRated
         and (showQueueInButton or not state.failureReason or compactFailureButtonText ~= nil)
     local ratingText = state.rating.rating > 0 and state.rating.rating or "—"
     local deltaText = sessionDelta == nil and "—" or ((sessionDelta >= 0 and "+" or "") .. sessionDelta)
@@ -1698,7 +2573,7 @@ UpdatePanel = function()
         return
     end
 
-    LayoutPanel(#state.cards)
+    LayoutPanel(#state.cards, state.category)
     PositionPanel()
     for cardIndex, card in ipairs(panel.cards) do
         local cardState = state.cards[cardIndex]
@@ -1736,6 +2611,12 @@ function ArenaQueue.Show()
     if RequestRatedInfo then
         RequestRatedInfo()
     end
+    if _G.RequestPVPRewards then
+        _G.RequestPVPRewards()
+    end
+    if _G.RequestRandomBattlegroundInstanceInfo then
+        _G.RequestRandomBattlegroundInstanceInfo()
+    end
     RefreshSoon()
 end
 
@@ -1764,6 +2645,7 @@ end
 function ArenaQueue.Attach()
     if eventFrame then return end
 
+    lastGroupSize = GetGroupSize()
     eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_LOGIN")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -1775,7 +2657,12 @@ function ArenaQueue.Attach()
     eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
     eventFrame:RegisterEvent("PLAYER_AVG_ITEM_LEVEL_UPDATE")
     eventFrame:RegisterEvent("PVP_TYPES_ENABLED")
+    eventFrame:RegisterEvent("PVP_ROLE_UPDATE")
     eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
+    eventFrame:RegisterEvent("PVP_REWARDS_UPDATE")
+    eventFrame:RegisterEvent("PVP_BRAWL_INFO_UPDATED")
+    eventFrame:RegisterEvent("PVP_WORLDSTATE_UPDATE")
+    eventFrame:RegisterEvent("PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE")
     eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_STATUS")
     eventFrame:RegisterEvent("LFG_ROLE_CHECK_SHOW")
     eventFrame:RegisterEvent("LFG_ROLE_CHECK_UPDATE")
@@ -1797,6 +2684,40 @@ function ArenaQueue.Attach()
             local wasActive = noShowPenaltyActive
             HasNoShowPenalty()
             if noShowPenaltyActive == wasActive then return end
+        end
+
+        if event == "GROUP_ROSTER_UPDATE" then
+            local groupSize = GetGroupSize()
+            local leftGroup = (lastGroupSize or groupSize) > 1 and groupSize <= 1
+            lastGroupSize = groupSize
+            if leftGroup then
+                CancelAbandonedPVPRoleCheck()
+                pendingRoleCheck = nil
+                activeRoleCheckBracketKey = nil
+                roleCheckTracking = nil
+                roleCheckResponses = {}
+            end
+            RefreshBuiltInQueueStatusSoon()
+        end
+
+        if event == "LFG_ROLE_CHECK_SHOW" then
+            ScanPVPRoleCheck()
+        elseif event == "LFG_ROLE_CHECK_UPDATE" then
+            ScanPVPRoleCheck()
+            if UpdateDynamicCards then
+                UpdateDynamicCards()
+            end
+        elseif event == "LFG_ROLE_CHECK_ROLE_CHOSEN" then
+            MarkRoleCheckPlayerResponded(arg1)
+            if not roleCheckTracking then
+                ScanPVPRoleCheck()
+            end
+            if UpdateDynamicCards then
+                UpdateDynamicCards()
+            end
+        elseif event == "LFG_ROLE_CHECK_HIDE" then
+            roleCheckTracking = nil
+            roleCheckResponses = {}
         end
 
         if event == "PLAYER_LOGIN" then
@@ -1823,6 +2744,14 @@ function ArenaQueue.Attach()
             or event == "PLAYER_SPECIALIZATION_CHANGED")
             and RequestRatedInfo then
             RequestRatedInfo()
+        end
+        if (event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD")
+            and _G.RequestPVPRewards then
+            _G.RequestPVPRewards()
+        end
+        if (event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD")
+            and _G.RequestRandomBattlegroundInstanceInfo then
+            _G.RequestRandomBattlegroundInstanceInfo()
         end
         RefreshSoon()
     end)

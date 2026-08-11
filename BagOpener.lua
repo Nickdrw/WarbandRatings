@@ -4,9 +4,9 @@ local BagOpener = ns.BagOpener
 local Database = ns.Database
 local Utils = ns.Utils
 local HelperPanel = ns.HelperPanel
+local Season = ns.Season
 
 local PANEL_WIDTH = 252
-local PANEL_HEIGHT = 156
 local PANEL_TOP_OFFSET = 72
 local BUTTON_HEIGHT = 28
 local BUTTON_GAP = 6
@@ -36,13 +36,6 @@ local OPENABLE_BOXES = {
         name = Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_NAME,
         buttonLabel = "Contender Strongbox",
     },
-    {
-        key = "galacticEquipmentChest",
-        itemIDs = { Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID },
-        name = Database.GALACTIC_EQUIPMENT_CHEST_NAME,
-        buttonLabel = "Galactic Equipment Chest",
-        hasOpeningCast = true,
-    },
 }
 
 local eventFrame
@@ -57,11 +50,63 @@ local UpdateOpeningBar
 local RefreshSoon
 local SyncOpeningButtonToPlayerCast
 local ScheduleOpeningCastSync
+local CreateBoxButton
+
+local function GetPanelHeight()
+    return FIRST_BUTTON_TOP_OFFSET
+        + (#OPENABLE_BOXES * BUTTON_HEIGHT)
+        + (math.max(#OPENABLE_BOXES - 1, 0) * BUTTON_GAP)
+        + 8
+end
 
 for _, box in ipairs(OPENABLE_BOXES) do
     for _, itemID in ipairs(box.itemIDs or {}) do
         boxByItemID[itemID] = box
     end
+end
+
+local function RefreshConquestEquipmentChestBox()
+    local feature = Season.GetFeature("conquestEquipmentChest")
+    if not feature then return false end
+
+    local box
+    local boxIndex
+    for index, candidate in ipairs(OPENABLE_BOXES) do
+        if candidate.key == "conquestEquipmentChest" then
+            box = candidate
+            boxIndex = index
+            break
+        end
+    end
+
+    if not box then
+        box = { key = "conquestEquipmentChest" }
+        OPENABLE_BOXES[#OPENABLE_BOXES + 1] = box
+        boxIndex = #OPENABLE_BOXES
+    else
+        for _, oldItemID in ipairs(box.itemIDs or {}) do
+            if boxByItemID[oldItemID] == box then
+                boxByItemID[oldItemID] = nil
+            end
+        end
+    end
+
+    box.itemIDs = { feature.itemID }
+    box.name = feature.name
+    box.buttonLabel = feature.name
+    box.hasOpeningCast = feature.hasOpeningCast
+    boxByItemID[feature.itemID] = box
+
+    if panel then
+        panel:SetHeight(GetPanelHeight())
+        panel.buttons = panel.buttons or {}
+        if not panel.buttons[box.key] and CreateBoxButton then
+            panel.buttons[box.key] = CreateBoxButton(panel, box, boxIndex)
+        elseif panel.buttons[box.key] then
+            panel.buttons[box.key].box = box
+        end
+    end
+    return true
 end
 
 local function FormatNumber(value)
@@ -223,6 +268,7 @@ local function GetPlayerBagIDs()
 end
 
 local function ScanOpenableBoxes()
+    RefreshConquestEquipmentChestBox()
     local state = {}
     for _, box in ipairs(OPENABLE_BOXES) do
         state[box.key] = {
@@ -419,7 +465,20 @@ RefreshSoon = function()
 end
 
 function BagOpener.Refresh()
+    RefreshConquestEquipmentChestBox()
     RefreshSoon()
+end
+
+function BagOpener.Hide()
+    if Database and Database.SetSetting then
+        Database.SetSetting("hideBoxesHelper", true)
+    elseif GetSettings() then
+        GetSettings().hideBoxesHelper = true
+    end
+    if ns.UI and ns.UI.RefreshSettingsCheckboxes then
+        ns.UI.RefreshSettingsCheckboxes()
+    end
+    HidePanel()
 end
 
 local function GetStaticPopupText(dialogName)
@@ -802,7 +861,7 @@ local function StartButtonOpening(button)
     ScheduleOpeningCastSync()
 end
 
-local function CreateBoxButton(parent, box, index)
+CreateBoxButton = function(parent, box, index)
     local button = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")
     button:SetPoint("TOPLEFT", parent, "TOPLEFT", 10, -FIRST_BUTTON_TOP_OFFSET - ((index - 1) * (BUTTON_HEIGHT + BUTTON_GAP)))
     button:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -10, -FIRST_BUTTON_TOP_OFFSET - ((index - 1) * (BUTTON_HEIGHT + BUTTON_GAP)))
@@ -929,14 +988,28 @@ local function CreateBoxButton(parent, box, index)
 end
 
 local function EnsurePanel()
+    RefreshConquestEquipmentChestBox()
     if panel then return end
 
-    panel = HelperPanel.CreateShell("WarbandRatingsBagOpenerFrame", PANEL_WIDTH, PANEL_HEIGHT, "Warband Ratings")
+    panel = HelperPanel.CreateShell(
+        "WarbandRatingsBagOpenerFrame",
+        PANEL_WIDTH,
+        GetPanelHeight(),
+        ns.DISPLAY_NAME .. " - Rewards"
+    )
     panel:SetMovable(true)
     panel:SetClampedToScreen(true)
     panel:RegisterForDrag("LeftButton")
     panel:SetScript("OnDragStart", StartPanelMove)
     panel:SetScript("OnDragStop", StopPanelMove)
+
+    panel.closeButton = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+    panel.closeButton:SetSize(20, 20)
+    panel.closeButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1)
+    panel.closeButton:SetFrameLevel(panel:GetFrameLevel() + 5)
+    panel.closeButton:SetScript("OnClick", function()
+        BagOpener.Hide()
+    end)
 
     panel.contentTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     panel.contentTitle:SetPoint("TOPLEFT", panel, "TOPLEFT", 10, -CONTENT_TOP_OFFSET)

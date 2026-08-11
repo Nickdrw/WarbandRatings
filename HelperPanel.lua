@@ -100,7 +100,7 @@ function HelperPanel.CreateShell(name, width, height, titleText)
 
     panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     panel.title:SetPoint("LEFT", panel.headerBg, "LEFT", 8, 0)
-    panel.title:SetText(titleText or "Warband Ratings")
+    panel.title:SetText(titleText or ns.DISPLAY_NAME)
 
     return panel
 end

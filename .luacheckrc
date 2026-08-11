@@ -114,6 +114,8 @@ globals = {
     "WarbandRatingsDB",
     "SLASH_WARBANDRATINGS1",
     "SLASH_WARBANDRATINGS2",
+    "SLASH_WARBANDRATINGS3",
+    "SLASH_WARBANDRATINGS4",
     "SlashCmdList",
     "WarbandRatings_OnAddonCompartmentClick",
     "WarbandRatings_OnAddonCompartmentEnter",

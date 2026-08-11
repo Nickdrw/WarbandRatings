@@ -3,6 +3,7 @@ local Database = ns.Database
 local DataCollection = ns.DataCollection
 local History = ns.History
 local SPEC_RATED_INFO_REQUEST_DELAY = 1
+local databaseReady = false
 
 local function CallUI(method, ...)
     local UI = ns.UI
@@ -16,6 +17,7 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CRITERIA_UPDATE")
 eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
+eventFrame:RegisterEvent("ARENA_SEASON_WORLD_STATE")
 eventFrame:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 eventFrame:RegisterEvent("PVP_MATCH_ACTIVE")
 eventFrame:RegisterEvent("PVP_MATCH_COMPLETE")
@@ -74,8 +76,19 @@ end
 
 eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
+        local initialized, migrationError = History.Init()
+        if not initialized then
+            if DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    ns.DISPLAY_NAME
+                        .. ": season data migration failed; collection was disabled to protect your saved data. "
+                        .. tostring(migrationError or "unknown error")
+                )
+            end
+            return
+        end
         Database.Init()
-        History.Init()
+        databaseReady = true
 
         -- Request PvP data from server; ratings may not be available immediately
         DataCollection.RequestRatedInfo()
@@ -91,6 +104,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         CallUI("CreateMinimapButton")
         CallUI("RegisterAddonSettings")
         CallUI("UpdateCompartmentVisibility")
+
+    elseif not databaseReady then
+        return
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- Request achievement/statistics data from server so GetStatistic() returns real values.
@@ -125,14 +141,19 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
         TryCollectLastMatchMMRWithRetries(true)
 
+    elseif event == "ARENA_SEASON_WORLD_STATE" then
+        DataCollection.MarkRatedStatsStale()
+        DataCollection.RequestRatedInfo()
+        CallUI("RefreshTable")
+
     elseif event == "ACTIVE_TALENT_GROUP_CHANGED" then
         local expectedSpecID = DataCollection.MarkRatedStatsStale()
         DataCollection.UpdateActivePVPContext()
         C_Timer.After(SPEC_RATED_INFO_REQUEST_DELAY, function()
             DataCollection.RequestRatedInfo(expectedSpecID)
         end)
-        -- Re-collect global/currency data immediately; spec PvP ratings stay gated
-        -- until PVP_RATED_STATS_UPDATE confirms the active spec's rated cache.
+        -- Re-collect non-PvP data immediately; cumulative PvP statistics and
+        -- spec ratings stay gated until the active character/spec cache is fresh.
         C_Timer.After(0.5, function()
             DataCollection.CollectCurrentCharacter()
             CallUI("RefreshTable")
@@ -174,17 +195,30 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
     elseif event == "SAVED_VARIABLES_TOO_LARGE" then
         if not arg1 or arg1 == "WarbandRatings" or arg1 == "WarbandRatingsDB" then
-            History.HandleSavedVariablesTooLarge()
+            local trimmedSeasonKey = History.HandleSavedVariablesTooLarge()
             if DEFAULT_CHAT_FRAME then
-                DEFAULT_CHAT_FRAME:AddMessage("Warband Ratings: archived raw history points were trimmed; season summaries were kept.")
+                if trimmedSeasonKey then
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        ns.DISPLAY_NAME
+                            .. ": raw graph points for the oldest archived season ("
+                            .. trimmedSeasonKey
+                            .. ") were trimmed; its summary was kept."
+                    )
+                else
+                    DEFAULT_CHAT_FRAME:AddMessage(
+                        ns.DISPLAY_NAME .. ": no archived raw graph points were available to trim."
+                    )
+                end
             end
         end
     end
 end)
 
--- Slash command for convenience
-SLASH_WARBANDRATINGS1 = "/warbandratings"
-SLASH_WARBANDRATINGS2 = "/wr"
+-- Keep the legacy aliases so existing macros continue to work.
+SLASH_WARBANDRATINGS1 = "/warbandpvpcompanion"
+SLASH_WARBANDRATINGS2 = "/wpc"
+SLASH_WARBANDRATINGS3 = "/warbandratings"
+SLASH_WARBANDRATINGS4 = "/wr"
 SlashCmdList["WARBANDRATINGS"] = function()
     CallUI("Toggle")
 end
@@ -196,7 +230,7 @@ end
 
 function WarbandRatings_OnAddonCompartmentEnter(_, btn)
     GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
-    GameTooltip:AddLine("Warband Ratings")
+    GameTooltip:AddLine(ns.DISPLAY_NAME)
     GameTooltip:AddLine("Click to toggle window", 1, 1, 1)
     GameTooltip:Show()
 end

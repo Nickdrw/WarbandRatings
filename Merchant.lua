@@ -4,6 +4,7 @@ local Merchant = ns.Merchant
 local Database = ns.Database
 local DataCollection = ns.DataCollection
 local HelperPanel = ns.HelperPanel
+local Season = ns.Season
 
 local HONOR_CURRENCY_ID = 1792
 local CONQUEST_CURRENCY_ID = 1602
@@ -12,23 +13,31 @@ local PANEL_HEIGHT = 114
 local ICON_SIZE = 28
 local PANEL_BELOW_OFFSET_Y = -42
 
-local CURRENCY_DUMP_ITEMS = {
-    {
+local function GetCurrencyDumpItems()
+    local items = {
+        {
         itemID = Database.HELIOTROPE_ITEM_ID,
         name = Database.HELIOTROPE_NAME,
         currencyID = HONOR_CURRENCY_ID,
         fallbackCost = Database.HELIOTROPE_FALLBACK_HONOR_COST,
         hideSettingKey = "hideHeliotropeHelper",
-    },
-    {
-        itemID = Database.GALACTIC_EQUIPMENT_CHEST_ITEM_ID,
-        name = Database.GALACTIC_EQUIPMENT_CHEST_NAME,
-        currencyID = CONQUEST_CURRENCY_ID,
-        fallbackCost = Database.GALACTIC_EQUIPMENT_CHEST_FALLBACK_CONQUEST_COST,
-        confirmEachPurchase = true,
-        hideSettingKey = "hideGalacticConquestChestHelper",
-    },
-}
+        },
+    }
+
+    local chest = Season.GetFeature("conquestEquipmentChest")
+    if chest then
+        items[#items + 1] = {
+            itemID = chest.itemID,
+            name = chest.name,
+            currencyID = CONQUEST_CURRENCY_ID,
+            fallbackCost = chest.fallbackCost,
+            confirmEachPurchase = true,
+            requiredPVPRating = chest.requiredPVPRating,
+            hideSettingKey = "hideConquestEquipmentChestPurchaseHelper",
+        }
+    end
+    return items
+end
 
 local eventFrame
 local panel
@@ -124,13 +133,61 @@ local function GetCurrencyCost(index, itemInfo, currencyID)
     return 0
 end
 
+local function EndsWith(value, suffix)
+    return type(value) == "string"
+        and type(suffix) == "string"
+        and suffix ~= ""
+        and value:sub(-#suffix) == suffix
+end
+
+local function NotifySeasonFeatureChanged()
+    if ns.BagOpener and ns.BagOpener.Refresh then
+        ns.BagOpener.Refresh()
+    end
+    if ns.Mailbox and ns.Mailbox.Refresh then
+        ns.Mailbox.Refresh()
+    end
+    if ns.UI and ns.UI.RefreshSettingsCheckboxes then
+        ns.UI.RefreshSettingsCheckboxes()
+    end
+end
+
+local function DiscoverConquestEquipmentChest(index, itemInfo, itemID)
+    if Season.GetFeature("conquestEquipmentChest") then return nil end
+
+    local definition = Season.GetFeatureDefinition("conquestEquipmentChest")
+    local itemName = itemInfo and itemInfo.name
+    if not definition or not definition.discoverAtVendor or not itemID or not itemName then
+        return nil
+    end
+    if itemName ~= definition.expectedName and not EndsWith(itemName, definition.nameSuffix) then
+        return nil
+    end
+
+    local currencyCost = GetCurrencyCost(index, itemInfo, CONQUEST_CURRENCY_ID)
+    if currencyCost <= 0 then return nil end
+
+    local feature = Season.RememberFeature("conquestEquipmentChest", {
+        itemID = itemID,
+        name = itemName,
+        pluralName = itemName .. "s",
+        fallbackCost = currencyCost,
+        hasOpeningCast = definition.hasOpeningCast,
+    })
+    if feature then
+        NotifySeasonFeatureChanged()
+    end
+    return feature
+end
+
 local function FindCurrencyDumpItem()
     local settings = Database.GetSettings() or {}
     local numItems = GetMerchantNumItems and GetMerchantNumItems() or 0
     for index = 1, numItems do
         local itemInfo = GetItemInfo(index)
         local itemID = itemInfo and GetItemID(index)
-        for _, dumpItem in ipairs(CURRENCY_DUMP_ITEMS) do
+        DiscoverConquestEquipmentChest(index, itemInfo, itemID)
+        for _, dumpItem in ipairs(GetCurrencyDumpItems()) do
             if not settings[dumpItem.hideSettingKey]
                 and itemInfo
                 and (itemID == dumpItem.itemID or itemInfo.name == dumpItem.name) then
@@ -143,6 +200,7 @@ local function FindCurrencyDumpItem()
                     cost = currencyCost > 0 and currencyCost or dumpItem.fallbackCost,
                     costDetected = currencyCost > 0,
                     confirmEachPurchase = dumpItem.confirmEachPurchase,
+                    requiredPVPRating = dumpItem.requiredPVPRating,
                     texture = itemInfo.texture,
                     available = tonumber(itemInfo.numAvailable) or -1,
                     purchasable = itemInfo.isPurchasable ~= false,
@@ -199,7 +257,7 @@ end
 
 local function BuyMaxCurrencyDumpItem()
     local state = GetPurchaseState()
-    if not state or state.quantity <= 0 or not BuyMerchantItem then return end
+    if not state or state.quantity <= 0 or not state.purchasable or not BuyMerchantItem then return end
 
     if state.confirmEachPurchase then
         BuyMerchantItem(state.index)
@@ -220,8 +278,20 @@ local function ShowTooltip(self)
 
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine("Warband Ratings")
-    if state.confirmEachPurchase then
+    GameTooltip:AddLine(ns.DISPLAY_NAME)
+    if not state.purchasable then
+        if state.requiredPVPRating then
+            GameTooltip:AddLine(
+                "Requires " .. FormatNumber(state.requiredPVPRating) .. " PvP rating in any bracket.",
+                1,
+                0.25,
+                0.25,
+                true
+            )
+        else
+            GameTooltip:AddLine("The vendor's purchase requirements are not met.", 1, 0.25, 0.25, true)
+        end
+    elseif state.confirmEachPurchase then
         GameTooltip:AddLine("Requests one copy of " .. state.name .. " per click.", 1, 1, 1, true)
     else
         GameTooltip:AddLine("Buys as many copies of " .. state.name .. " as your " .. state.currencyName .. " allows.", 1, 1, 1, true)
@@ -243,7 +313,7 @@ end
 local function EnsurePanel()
     if panel or not MerchantFrame then return end
 
-    panel = HelperPanel.CreateShell("WarbandRatingsMerchantDumpFrame", PANEL_WIDTH, PANEL_HEIGHT, "Warband Ratings")
+    panel = HelperPanel.CreateShell("WarbandRatingsMerchantDumpFrame", PANEL_WIDTH, PANEL_HEIGHT, ns.DISPLAY_NAME)
     panel:SetFrameLevel((MerchantFrame:GetFrameLevel() or 0) + 10)
     panel:SetScript("OnEnter", ShowTooltip)
     panel:SetScript("OnLeave", function()
@@ -325,14 +395,26 @@ UpdatePanel = function()
     PositionPanel()
     panel.icon:SetTexture(state.texture)
 
-    if state.quantity <= 0 or not state.purchasable then
+    if state.quantity <= 0 then
         panel:Hide()
         return
     end
 
     panel:Show()
     ApplyPanelTheme()
-    if state.confirmEachPurchase then
+    if not state.purchasable then
+        if state.requiredPVPRating then
+            panel.body:SetText(FormatNumber(state.requiredPVPRating) .. " PvP rating required")
+            panel.detail:SetText("Reach it in any bracket to buy " .. state.name .. ".")
+            panel.button:SetText("Rating required")
+        else
+            panel.body:SetText(state.name .. " is currently unavailable.")
+            panel.detail:SetText("The vendor's purchase requirements are not met.")
+            panel.button:SetText("Unavailable")
+        end
+        panel.button:Disable()
+        return
+    elseif state.confirmEachPurchase then
         panel.body:SetText("Can spend " .. FormatNumber(state.totalSpend) .. " " .. state.currencyName .. " on " .. state.name .. ".")
         panel.detail:SetText(FormatNumber(state.cost) .. " " .. state.currencyName .. " each. Confirms one purchase at a time.")
         panel.button:SetText(FormatNumber(state.affordableQuantity) .. " remaining")

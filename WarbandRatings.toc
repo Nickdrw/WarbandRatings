@@ -1,15 +1,16 @@
-## Interface: 120007
-## Title: Warband Ratings
+## Interface: 120007, 120100
+## Title: Warband PvP Companion
 ## Notes: Tracks and displays PvP and M+ ratings & currencies for all your characters.
 ## Author: NickDrew
 ## Version: 2.5.1
-## IconTexture: 2022761
+## IconTexture: Interface\AddOns\WarbandRatings\media\warbandratings-icon
 ## Category: PvP
 ## SavedVariables: WarbandRatingsDB
 ## X-Curse-Project-ID: 1517926
 ## X-Wago-ID: EGPeDeN1
 
 Utils.lua
+Season.lua
 Database.lua
 History.lua
 DataProvider.lua
@@ -20,4 +21,5 @@ BagOpener.lua
 Mailbox.lua
 ArenaQueue.lua
 UI.lua
+SeasonUI.lua
 Core.lua

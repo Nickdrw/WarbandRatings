@@ -1,4 +1,5 @@
 local _, ns = ...
+ns.DISPLAY_NAME = "Warband PvP Companion"
 ns.Utils = {}
 local Utils = ns.Utils
 
