@@ -1107,6 +1107,11 @@ function SeasonUI.GetSelectedSeasonKey()
     return selectedSeasonKey
 end
 
+function SeasonUI.GetSelectedSeasonState()
+    EnsureSelection()
+    return GetSelectedSeasonState()
+end
+
 function SeasonUI.Refresh()
     if not seasonBar then return end
     EnsureSelection()

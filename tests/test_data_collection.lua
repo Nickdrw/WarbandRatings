@@ -5,8 +5,14 @@
 
 local now = 1000
 local rating = 1500
+local seasonBest = 0
+local weeklyBest = 0
 local seasonPlayed = 10
+local weeklyPlayed = 0
+local weeklyWon = 0
 local roundsSeasonPlayed = 60
+local roundsWeeklyPlayed = 0
+local roundsWeeklyWon = 0
 local currentName = "Tester"
 local currentRealm = "Realm"
 local scoreInfo = {
@@ -31,8 +37,8 @@ GetMaxLevelForPlayerExpansion = function() return 90 end
 UnitGUID = function() return "Player-1" end
 RequestRatedInfo = function() end
 GetPersonalRatedInfo = function()
-    return rating, 0, 0, seasonPlayed, 0, 0, 0, 0, 0, 0, 0,
-        roundsSeasonPlayed, 0, 0, 0
+    return rating, seasonBest, weeklyBest, seasonPlayed, 0, weeklyPlayed, weeklyWon, 0, 0, 0, 0,
+        roundsSeasonPlayed, 0, roundsWeeklyPlayed, roundsWeeklyWon
 end
 GetBattlefieldWinner = function() return 0 end
 GetBattlefieldTeamInfo = function()
@@ -55,6 +61,9 @@ local globalColumn = { key = "arena3v3", bracketIndex = 2 }
 local ns = {
     Season = {
         GetContentSeasonKey = function() return "pvp-42" end,
+        GetPreviousSeasonKey = function(seasonKey)
+            return seasonKey == "pvp-42" and "pvp-41" or nil
+        end,
         IsRatedSeasonActive = function() return seasonActive end,
     },
     Utils = {
@@ -77,12 +86,17 @@ local ns = {
             if bracketIndex == 7 then return specColumn end
         end,
         IsValidSeasonKey = function(seasonKey)
-            return seasonKey == "pvp-42"
+            return seasonKey == "pvp-42" or seasonKey == "pvp-41"
         end,
         GetSeasonCharacters = function(seasonKey)
-            return WarbandRatingsDB.seasons[seasonKey].characters
+            local season = WarbandRatingsDB.seasons[seasonKey]
+            return season and season.characters or {}
         end,
         SaveCharacter = function(seasonKey, data)
+            WarbandRatingsDB.seasons[seasonKey] = WarbandRatingsDB.seasons[seasonKey] or {
+                seasonKey = seasonKey,
+                characters = {},
+            }
             data.seasonKey = seasonKey
             WarbandRatingsDB.seasons[seasonKey].characters[data.name .. "-" .. data.realm] = data
             return true
@@ -93,6 +107,10 @@ local ns = {
         end,
     },
     History = {
+        ArchiveSeason = function(seasonKey)
+            WarbandRatingsDB.seasons[seasonKey].archived = true
+            return true
+        end,
         RecordDiagnostic = function() end,
         EnrichPendingMMR = function(_, _, _, _, _, mmr, matchSequence)
             enriched = {
@@ -161,6 +179,48 @@ rating = 1964
 local frozenCharacter = DataCollection.CollectCurrentCharacter()
 assert(frozenCharacter == storedCharacter, "offseason collection did not return the frozen snapshot")
 assert(frozenCharacter.ratings.arena3v3 == 1816, "offseason collection changed the table rating")
+local backfilledCharacter, backfilledSeasonKey = DataCollection.CollectPreseasonCharacter()
+assert(backfilledSeasonKey == "pvp-41", "preseason API data was bound to the wrong season")
+assert(backfilledCharacter and backfilledCharacter.seasonKey == "pvp-41",
+    "preseason API data did not create a previous-season character")
+assert(backfilledCharacter.ratings.arena3v3 == 1964,
+    "preseason API rating was not saved in the previous season")
+assert(backfilledCharacter.pvpStats.arena3v3.ownerCharacterKey == "Tester-Realm",
+    "preseason global totals lost their character ownership")
+assert(backfilledCharacter.specPVPStats[71].soloShuffle.ownerSpecID == 71,
+    "preseason specialization totals lost their specialization ownership")
+assert(WarbandRatingsDB.seasons["pvp-41"].archived,
+    "the backfilled previous season was not archived")
+assert(storedCharacter.ratings.arena3v3 == 1816,
+    "preseason backfill contaminated the upcoming-season character")
+rating = 2107
+weeklyBest = 2107
+weeklyPlayed = 1
+weeklyWon = 1
+roundsWeeklyPlayed = 6
+roundsWeeklyWon = 3
+local refreshedBackfill = DataCollection.CollectPreseasonCharacter()
+assert(refreshedBackfill.ratings.arena3v3 == 1964,
+    "a later preseason API refresh changed an imported global rating")
+assert(refreshedBackfill.specRatings[71].soloShuffle == 1964,
+    "a later preseason API refresh changed an imported specialization rating")
+assert(refreshedBackfill.specPVPStats[71].soloShuffle.weeklyPlayed == 0
+        and refreshedBackfill.specPVPStats[71].soloShuffle.roundsWeeklyPlayed == 0,
+    "preseason weekly counters leaked into a completed season")
+
+WarbandRatingsDB.seasons["pvp-41"] = nil
+seasonBest = 2200
+local contaminatedBackfill = DataCollection.CollectPreseasonCharacter()
+assert(contaminatedBackfill.ratings.arena3v3 == 2200
+        and contaminatedBackfill.specRatings[71].soloShuffle == 2200,
+    "a first import after preseason activity did not fall back to season best")
+assert(contaminatedBackfill.pvpStats.arena3v3.preseasonRatingIsSeasonBest
+        and contaminatedBackfill.specPVPStats[71].soloShuffle.preseasonRatingIsSeasonBest,
+    "the season-best fallback source was not recorded")
+assert(contaminatedBackfill.pvpStats.arena3v3.weeklyBest == 0
+        and contaminatedBackfill.pvpStats.arena3v3.weeklyPlayed == 0
+        and contaminatedBackfill.specPVPStats[71].soloShuffle.roundsWeeklyPlayed == 0,
+    "a contaminated first import retained preseason weekly statistics")
 assert(not DataCollection.BeginRatedMatch(true), "offseason match tracking should not start")
 assert(not DataCollection.CollectLastMatchMMR(true), "offseason match history should not be recorded")
 assert(recordCount == 1, "offseason collection added a graph point")

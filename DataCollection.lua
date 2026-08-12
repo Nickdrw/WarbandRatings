@@ -53,6 +53,61 @@ local function CanCollectRatedStats(characterKey, specID, isMaxLevel)
     return ratedStatsCharacterKey == characterKey and ratedStatsSpecID == specID
 end
 
+local function CopyMap(source)
+    local copy = {}
+    for key, value in pairs(source or {}) do
+        copy[key] = value
+    end
+    return copy
+end
+
+local function HasSeasonPVPActivity(rating, stats)
+    if (tonumber(rating) or 0) > 0 then return true end
+    if type(stats) ~= "table" then return false end
+
+    return (tonumber(stats.seasonBest) or 0) > 0
+        or (tonumber(stats.seasonPlayed) or 0) > 0
+        or (tonumber(stats.seasonWon) or 0) > 0
+        or (tonumber(stats.roundsSeasonPlayed) or 0) > 0
+        or (tonumber(stats.roundsSeasonWon) or 0) > 0
+end
+
+local function HasPreseasonWeeklyActivity(stats)
+    if type(stats) ~= "table" then return false end
+    return (tonumber(stats.weeklyBest) or 0) > 0
+        or (tonumber(stats.weeklyPlayed) or 0) > 0
+        or (tonumber(stats.weeklyWon) or 0) > 0
+        or (tonumber(stats.roundsWeeklyPlayed) or 0) > 0
+        or (tonumber(stats.roundsWeeklyWon) or 0) > 0
+end
+
+local function PreparePreseasonPVPStats(apiRating, apiStats, storedRating, storedStats)
+    if type(storedStats) == "table" then
+        return storedRating ~= nil and storedRating or storedStats.rating or apiRating, storedStats
+    end
+    if type(apiStats) ~= "table" then return apiRating, apiStats end
+
+    local importedRating = storedRating ~= nil and storedRating or apiRating
+    if storedRating == nil and HasPreseasonWeeklyActivity(apiStats) then
+        local seasonBest = tonumber(apiStats.seasonBest) or 0
+        if seasonBest > 0 then
+            importedRating = seasonBest
+            apiStats.preseasonRatingIsSeasonBest = true
+        end
+    end
+
+    apiStats.rating = tonumber(importedRating) or 0
+    apiStats.weeklyBest = 0
+    apiStats.weeklyPlayed = 0
+    apiStats.weeklyWon = 0
+    apiStats.roundsWeeklyPlayed = 0
+    apiStats.roundsWeeklyWon = 0
+    apiStats.weeklyMostPlayedSpecID = 0
+    apiStats.weeklyMostPlayedSpecCount = 0
+    apiStats.preseasonAPIBackfilled = true
+    return importedRating, apiStats
+end
+
 local function AddPVPBracketSpecStats(stats, colKey)
     local specStats
     local countField
@@ -348,6 +403,125 @@ function DataCollection.CollectCurrentCharacter(seasonKey)
 
     if not Database.SaveCharacter(seasonKey, data) then return nil end
     return data
+end
+
+-- During the short preseason window, the client is already using the upcoming
+-- content season while GetPersonalRatedInfo() still exposes the completed
+-- season. Import only those retained PvP values into the previous season. This
+-- deliberately leaves currencies, Mythic+ score, HKs, items, and graph history
+-- untouched because those APIs do not provide a trustworthy historical view.
+function DataCollection.CollectPreseasonCharacter()
+    if not IsRatedSeasonInactive() then return nil end
+    if not Season.GetPreviousSeasonKey then return nil end
+
+    local contentSeasonKey = Season.GetContentSeasonKey()
+    local seasonKey = Season.GetPreviousSeasonKey(contentSeasonKey)
+    if not Database.IsValidSeasonKey(seasonKey) then return nil end
+
+    local name, realm = GetCurrentCharacterIdentity()
+    local characterKey = Utils.CharKey(name, realm)
+    local specID = GetCurrentSpecID()
+    local level = UnitLevel("player")
+    local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
+    local isMaxLevel = level >= maxLevel
+    if not CanCollectRatedStats(characterKey, specID, isMaxLevel) then return nil end
+
+    local existing = Database.GetSeasonCharacters(seasonKey)[characterKey]
+    local _, classFilename, classID = UnitClass("player")
+    local ratings = CopyMap(existing and existing.ratings)
+    local currentSpecRatings = CopyMap(
+        existing
+            and existing.specRatings
+            and (existing.specRatings[specID] or existing.specRatings[tostring(specID)])
+    )
+    local pvpStats = {}
+    local specPVPStats = {}
+    local hasActivity = false
+
+    for _, col in ipairs(Database.GetGlobalColumns(seasonKey)) do
+        if col.bracketIndex then
+            local apiRating, apiStats = CollectPVPBracketInfo(
+                col.bracketIndex,
+                isMaxLevel,
+                col.key,
+                true,
+                characterKey
+            )
+            local storedStats = existing and existing.pvpStats and existing.pvpStats[col.key]
+            local rating, stats = PreparePreseasonPVPStats(
+                apiRating,
+                apiStats,
+                ratings[col.key],
+                storedStats
+            )
+            ratings[col.key] = rating
+            pvpStats[col.key] = stats
+            hasActivity = HasSeasonPVPActivity(apiRating, apiStats) or hasActivity
+        end
+    end
+
+    for _, col in ipairs(Database.SPEC_COLUMNS) do
+        if col.bracketIndex then
+            local apiRating, apiStats = CollectPVPBracketInfo(
+                col.bracketIndex,
+                isMaxLevel,
+                col.key,
+                true,
+                characterKey,
+                specID
+            )
+            local storedStats = existing
+                and existing.specPVPStats
+                and (existing.specPVPStats[specID] or existing.specPVPStats[tostring(specID)])
+            storedStats = storedStats and storedStats[col.key]
+            local rating, stats = PreparePreseasonPVPStats(
+                apiRating,
+                apiStats,
+                currentSpecRatings[col.key],
+                storedStats
+            )
+            currentSpecRatings[col.key] = rating
+            specPVPStats[col.key] = stats
+            hasActivity = HasSeasonPVPActivity(apiRating, apiStats) or hasActivity
+        end
+    end
+
+    if not hasActivity then
+        return existing, existing and seasonKey or nil
+    end
+
+    local data = {
+        name = name,
+        realm = realm,
+        classFilename = classFilename,
+        classID = classID,
+        level = level,
+        ratings = ratings,
+        pvpStats = pvpStats,
+        itemCounts = CopyMap(existing and existing.itemCounts),
+        lastMMR = CopyMap(existing and existing.lastMMR),
+        specRatings = { [specID] = currentSpecRatings },
+        specPVPStats = { [specID] = specPVPStats },
+        specLastMMR = {
+            [specID] = CopyMap(
+                existing
+                    and existing.specLastMMR
+                    and (existing.specLastMMR[specID] or existing.specLastMMR[tostring(specID)])
+            ),
+        },
+        currentSpecID = specID,
+        currentSpecRatings = currentSpecRatings,
+        lastUpdated = time(),
+    }
+
+    if not Database.SaveCharacter(seasonKey, data) then return nil end
+
+    local stored = Database.GetSeasonCharacters(seasonKey)[characterKey]
+    if stored then stored.preseasonAPIBackfilledAt = time() end
+    if History and History.ArchiveSeason then
+        History.ArchiveSeason(seasonKey)
+    end
+    return stored or data, seasonKey
 end
 
 local function GetActiveBattlefieldID()

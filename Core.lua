@@ -1,7 +1,11 @@
 local _, ns = ...
+
+-- luacheck: globals GetBuildInfo
+
 local Database = ns.Database
 local DataCollection = ns.DataCollection
 local History = ns.History
+local Season = ns.Season
 local SPEC_RATED_INFO_REQUEST_DELAY = 1
 local databaseReady = false
 
@@ -10,6 +14,91 @@ local function CallUI(method, ...)
     if UI and UI[method] then
         return UI[method](...)
     end
+end
+
+local function ChatMessage(message)
+    local text = ns.DISPLAY_NAME .. ": " .. tostring(message)
+    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+        DEFAULT_CHAT_FRAME:AddMessage(text)
+    elseif print then
+        print(text)
+    end
+end
+
+local function FormatValue(value)
+    if value == nil then
+        return "nil"
+    end
+    return tostring(value)
+end
+
+local function DumpSeasonApiDiagnostics()
+    local buildVersion
+    if GetBuildInfo then
+        buildVersion = select(4, GetBuildInfo())
+    end
+    ChatMessage("api probe start")
+    ChatMessage("build=" .. FormatValue(buildVersion))
+    ChatMessage(
+        "season ids currentArena="
+            .. FormatValue(GetCurrentArenaSeason and GetCurrentArenaSeason())
+            .. " uiDisplay="
+            .. FormatValue(C_PvP and C_PvP.GetUIDisplaySeason and C_PvP.GetUIDisplaySeason())
+            .. " seasonInfo="
+            .. FormatValue(
+                C_SeasonInfo and C_SeasonInfo.GetCurrentDisplaySeasonID
+                    and C_SeasonInfo.GetCurrentDisplaySeasonID()
+            )
+    )
+    ChatMessage(
+        "content season addon="
+            .. FormatValue(Season and Season.GetContentSeasonKey and Season.GetContentSeasonKey())
+            .. " history="
+            .. FormatValue(History and History.GetContentSeasonKey and History.GetContentSeasonKey())
+            .. " ratedActive="
+            .. FormatValue(Season and Season.IsRatedSeasonActive and Season.IsRatedSeasonActive())
+    )
+
+    local availableSeasonKeys = History and History.GetAvailableSeasonKeys and History.GetAvailableSeasonKeys() or {}
+    ChatMessage("available seasons=" .. table.concat(availableSeasonKeys, ", "))
+
+    for _, bracketIndex in ipairs({ 1, 2, 4, 7, 9 }) do
+        local ok, rating, seasonBest, weeklyBest, seasonPlayed, seasonWon, weeklyPlayed, weeklyWon,
+            _, _, _, _, roundsSeasonPlayed, roundsSeasonWon, roundsWeeklyPlayed, roundsWeeklyWon =
+            pcall(GetPersonalRatedInfo, bracketIndex)
+        if ok then
+            ChatMessage(
+                "bracket "
+                    .. bracketIndex
+                    .. " rating="
+                    .. FormatValue(rating)
+                    .. " seasonBest="
+                    .. FormatValue(seasonBest)
+                    .. " seasonPlayed="
+                    .. FormatValue(seasonPlayed)
+                    .. " seasonWon="
+                    .. FormatValue(seasonWon)
+                    .. " weeklyBest="
+                    .. FormatValue(weeklyBest)
+                    .. " weeklyPlayed="
+                    .. FormatValue(weeklyPlayed)
+                    .. " weeklyWon="
+                    .. FormatValue(weeklyWon)
+                    .. " roundsSeasonPlayed="
+                    .. FormatValue(roundsSeasonPlayed)
+                    .. " roundsSeasonWon="
+                    .. FormatValue(roundsSeasonWon)
+                    .. " roundsWeeklyPlayed="
+                    .. FormatValue(roundsWeeklyPlayed)
+                    .. " roundsWeeklyWon="
+                    .. FormatValue(roundsWeeklyWon)
+            )
+        else
+            ChatMessage("bracket " .. bracketIndex .. " error=" .. FormatValue(rating))
+        end
+    end
+
+    ChatMessage("api probe end")
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -66,6 +155,12 @@ local function RefreshHeliotropeCounts()
     CallUI("RefreshHeliotropeCounter")
 end
 
+local function CollectPreseasonCharacter()
+    if DataCollection.CollectPreseasonCharacter then
+        return DataCollection.CollectPreseasonCharacter()
+    end
+end
+
 local function IsPVPMatchActive()
     if not C_PvP or not C_PvP.GetActiveMatchState then return false end
 
@@ -96,6 +191,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         -- Collect after a short delay to let PvP data load
         C_Timer.After(3, function()
             DataCollection.CollectCurrentCharacter()
+            CollectPreseasonCharacter()
             DataCollection.ScanWarbandBankHeliotrope()
             CallUI("RefreshTable")
         end)
@@ -136,6 +232,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         -- Re-collect when PvP stats arrive
         C_Timer.After(0.5, function()
             DataCollection.CollectCurrentCharacter()
+            CollectPreseasonCharacter()
             CallUI("RefreshTable")
         end)
 
@@ -219,7 +316,13 @@ SLASH_WARBANDRATINGS1 = "/warbandpvpcompanion"
 SLASH_WARBANDRATINGS2 = "/wpc"
 SLASH_WARBANDRATINGS3 = "/warbandratings"
 SLASH_WARBANDRATINGS4 = "/wr"
-SlashCmdList["WARBANDRATINGS"] = function()
+SlashCmdList["WARBANDRATINGS"] = function(msg)
+    local command = (msg or ""):match("^%s*(%S+)")
+    command = command and command:lower() or ""
+    if command == "api" or command == "diag" or command == "debug" then
+        DumpSeasonApiDiagnostics()
+        return
+    end
     CallUI("Toggle")
 end
 

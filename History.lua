@@ -837,6 +837,16 @@ function History.GetSeasonCharacters(seasonKey)
     return Database.GetSeasonCharacters(seasonKey)
 end
 
+function History.ArchiveSeason(seasonKey)
+    if not Database.IsValidSeasonKey(seasonKey) then return false end
+    if seasonKey == History.GetContentSeasonKey() then return false end
+
+    local season = Database.EnsureSeason(seasonKey)
+    if not season then return false end
+    ArchiveSeason(season)
+    return true
+end
+
 local function EnsureSeries(charData, col, specID)
     charData.series = charData.series or { global = {}, specs = {} }
     charData.series.global = charData.series.global or {}

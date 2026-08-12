@@ -678,6 +678,8 @@ assert(WarbandRatingsRewindCard.title.text == "Season 2 Rewind",
 
 seasonHasData = false
 ns.SeasonUI.Refresh()
+assert(ns.SeasonUI.GetSelectedSeasonState() == "inactive",
+    "the selected preseason state was not exposed to the table UI")
 assert(seasonBar.statusText.text == "Season not active", "preseason status is missing")
 assert(summaryButton.label.text == "View Statistics", "an upcoming season should not be a Rewind")
 assert(WarbandRatingsRewindCard.period.text == "SEASON NOT ACTIVE",

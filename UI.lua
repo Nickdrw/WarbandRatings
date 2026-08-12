@@ -1270,6 +1270,36 @@ function UI.CreateScrollArea()
         scrollChild:SetWidth(w)
         RefreshScrollAreaLayout()
     end)
+
+    mainFrame.inactiveSeasonOverlay = CreateFrame("Frame", nil, mainFrame)
+    mainFrame.inactiveSeasonOverlay:SetPoint(
+        "TOPLEFT",
+        mainFrame,
+        "TOPLEFT",
+        SURFACE_INSET_X,
+        -CONTENT_TOP_OFFSET
+    )
+    mainFrame.inactiveSeasonOverlay:SetPoint(
+        "BOTTOMRIGHT",
+        mainFrame,
+        "BOTTOMRIGHT",
+        -SURFACE_INSET_X,
+        CONTENT_BOTTOM_INSET
+    )
+    mainFrame.inactiveSeasonOverlay:Hide()
+
+    mainFrame.inactiveSeasonMessage = mainFrame.inactiveSeasonOverlay:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontDisable"
+    )
+    mainFrame.inactiveSeasonMessage:SetPoint("LEFT", mainFrame.inactiveSeasonOverlay, "LEFT", 40, 0)
+    mainFrame.inactiveSeasonMessage:SetPoint("RIGHT", mainFrame.inactiveSeasonOverlay, "RIGHT", -40, 0)
+    mainFrame.inactiveSeasonMessage:SetJustifyH("CENTER")
+    mainFrame.inactiveSeasonMessage:SetJustifyV("MIDDLE")
+    mainFrame.inactiveSeasonMessage:SetText(
+        "This season has not started yet. Character data will be collected once rated PvP becomes active."
+    )
 end
 
 ------------------------------------------------------------
@@ -2491,6 +2521,9 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
     if not Database.IsPVPColumn(col) then return false end
 
     local theme = GetActiveTheme()
+    local selectedSeasonState = ns.SeasonUI
+        and ns.SeasonUI.GetSelectedSeasonState
+        and ns.SeasonUI.GetSelectedSeasonState()
     local stats = UI.PVPTooltip.GetStats(charData, specID, col)
     local characterKey = Utils.CharKey(charData.name, charData.realm)
     local statsAreTrusted = not stats
@@ -2507,12 +2540,20 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
     )
 
     if not Utils.IsEmptyRating(rating) then
+        local ratingIsSeasonBest = stats and stats.preseasonRatingIsSeasonBest
         GameTooltip:AddDoubleLine(
-            "Current Rating:",
+            ratingIsSeasonBest and "Season Best:" or "Current Rating:",
             FormatTooltipNumber(rating),
             theme.muted[1], theme.muted[2], theme.muted[3],
             1, 1, 1
         )
+        if ratingIsSeasonBest then
+            GameTooltip:AddLine(
+                "No rating history was recorded for this season. The API provides the season best, but not the final rating.",
+                theme.muted[1], theme.muted[2], theme.muted[3],
+                true
+            )
+        end
     end
     if not Utils.IsEmptyRating(mmr) then
         local mmrLabel = Database.IsSpecColumn(col) and "Current MMR:" or "Last MMR:"
@@ -2536,16 +2577,18 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
         local mostPlayedSeasonSpecID = not Database.IsSpecColumn(col) and stats.seasonMostPlayedSpecID or nil
         local mostPlayedSeasonCount = not Database.IsSpecColumn(col) and stats.seasonMostPlayedSpecCount or nil
 
-        GameTooltip:AddLine(" ")
-        UI.PVPTooltip.AddStatsBlock(
-            "Weekly",
-            stats.weeklyBest,
-            weeklyWon,
-            weeklyPlayed,
-            unitLabel,
-            mostPlayedWeeklySpecID,
-            mostPlayedWeeklyCount
-        )
+        if selectedSeasonState ~= "ended" and not stats.preseasonAPIBackfilled then
+            GameTooltip:AddLine(" ")
+            UI.PVPTooltip.AddStatsBlock(
+                "Weekly",
+                stats.weeklyBest,
+                weeklyWon,
+                weeklyPlayed,
+                unitLabel,
+                mostPlayedWeeklySpecID,
+                mostPlayedWeeklyCount
+            )
+        end
         GameTooltip:AddLine(" ")
         if statsAreTrusted then
             UI.PVPTooltip.AddStatsBlock(
@@ -3718,6 +3761,21 @@ function UI.RefreshTable()
     UI.TableSort.SortGroups(groups, columns)
     local theme = GetActiveTheme()
     UI.ApplyTheme()
+
+    local seasonState = ns.SeasonUI
+        and ns.SeasonUI.GetSelectedSeasonState
+        and ns.SeasonUI.GetSelectedSeasonState()
+    local showInactiveSeason = seasonState == "inactive"
+    headerRow:SetShown(not showInactiveSeason)
+    scrollFrame:SetShown(not showInactiveSeason)
+    mainFrame.inactiveSeasonOverlay:SetShown(showInactiveSeason)
+
+    if showInactiveSeason then
+        SetFontColor(mainFrame.inactiveSeasonMessage, theme.muted)
+        CenterMainDockFrameAfterInitialLayout()
+        UI.RefreshHistoryGraph()
+        return
+    end
 
     -- Build header
     ResetCells(headerRow)
