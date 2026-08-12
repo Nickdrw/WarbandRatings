@@ -243,12 +243,77 @@ assert(arena3v3.maxRatingClassFilename == "SHAMAN",
 assert(arena3v3.total.games == 574 and arena3v3.total.wins == 291,
     "copied legacy 3v3 totals were counted twice")
 
+SaveSeasonCharacter("VersatileMage-Realm", {
+    name = "VersatileMage",
+    realm = "Realm",
+    classFilename = "MAGE",
+    currentSpecID = 63,
+    ratings = {
+        arena2v2 = 2800,
+        arena3v3 = 2900,
+    },
+    pvpStats = {
+        arena2v2 = {
+            seasonPlayed = 20,
+            seasonWon = 13,
+            seasonBest = 2800,
+            seasonMostPlayedSpecID = 63,
+        },
+        arena3v3 = {
+            seasonPlayed = 30,
+            seasonWon = 19,
+            seasonBest = 2900,
+            seasonMostPlayedSpecID = 63,
+        },
+    },
+    specRatings = {
+        [63] = { soloShuffle = 2700 },
+    },
+    specPVPStats = {
+        [63] = {
+            soloShuffle = { roundsSeasonPlayed = 60, roundsSeasonWon = 37, seasonBest = 2700 },
+        },
+    },
+})
+
+SaveSeasonCharacter("DuplicateRogueOne-Realm", {
+    name = "DuplicateRogueOne",
+    realm = "Realm",
+    classFilename = "ROGUE",
+    specRatings = {
+        [259] = { soloShuffle = 3000, soloBG = 3000 },
+    },
+    specPVPStats = {
+        [259] = {
+            soloShuffle = { roundsSeasonPlayed = 60, roundsSeasonWon = 40, seasonBest = 3000 },
+            soloBG = { seasonPlayed = 20, seasonWon = 14, seasonBest = 3000 },
+        },
+    },
+})
+SaveSeasonCharacter("DuplicateRogueTwo-Realm", {
+    name = "DuplicateRogueTwo",
+    realm = "Realm",
+    classFilename = "ROGUE",
+    specRatings = {
+        [259] = { soloShuffle = 3100 },
+    },
+    specPVPStats = {
+        [259] = {
+            soloShuffle = { roundsSeasonPlayed = 60, roundsSeasonWon = 42, seasonBest = 3100 },
+        },
+    },
+})
+
 local mvSpec = History.GetSeasonMVSpec(seasonKey)
-assert(mvSpec and mvSpec.specID == 262 and mvSpec.classFilename == "SHAMAN",
-    "MV Spec selected the wrong specialization")
-assert(mvSpec.activeBracketCount == 3 and mvSpec.ratingTotal == 6900,
-    "MV Spec should aggregate active solo brackets across characters of the same spec")
-assert(mvSpec.averageRating == 2300,
+assert(mvSpec and mvSpec.specID == 63 and mvSpec.classFilename == "MAGE",
+    "MV Spec should recognize one specialization across solo and global brackets")
+assert(mvSpec.activeBracketCount == 3 and mvSpec.ratingTotal == 8400,
+    "MV Spec should aggregate a character's qualifying solo, 2v2, and 3v3 ratings")
+assert(mvSpec.ratingsByBracket.soloShuffle == 2700
+        and mvSpec.ratingsByBracket.arena2v2 == 2800
+        and mvSpec.ratingsByBracket.arena3v3 == 2900,
+    "MV Spec should expose one best rating per qualifying bracket")
+assert(mvSpec.averageRating == 2800,
     "MV Spec average does not match rating total divided by active brackets")
 
 assert(ns.Season.IsRatedSeasonActive(), "active rated season was not detected")

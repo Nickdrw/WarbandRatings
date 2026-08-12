@@ -1555,13 +1555,19 @@ local MVSPEC_MIN_RATING = 1000
 local MVSPEC_MIN_GAMES = 10
 local MVSPEC_MIN_ACTIVE_BRACKETS = 3
 
-local function AddMVSpecBracket(candidate, rating, games)
+local function AddMVSpecBracket(candidate, bracketKey, rating, games)
     rating = tonumber(rating) or 0
     games = tonumber(games) or 0
     if rating <= MVSPEC_MIN_RATING or games <= MVSPEC_MIN_GAMES then return end
 
-    candidate.ratingTotal = candidate.ratingTotal + rating
-    candidate.activeBracketCount = candidate.activeBracketCount + 1
+    local previousRating = tonumber(candidate.ratingsByBracket[bracketKey]) or 0
+    if rating <= previousRating then return end
+
+    candidate.ratingsByBracket[bracketKey] = rating
+    candidate.ratingTotal = candidate.ratingTotal - previousRating + rating
+    if previousRating == 0 then
+        candidate.activeBracketCount = candidate.activeBracketCount + 1
+    end
 end
 
 local function IsBetterMVSpecCandidate(candidate, current)
@@ -1583,6 +1589,38 @@ local function GetSpecMapValue(map, specID)
     return map[specID] or map[tostring(specID)]
 end
 
+local function EnsureMVSpecCandidate(candidatesBySpecID, specID, classFilename)
+    specID = tonumber(specID) or specID
+    if not specID or specID == 0 then return nil end
+
+    local candidate = candidatesBySpecID[specID]
+    if not candidate then
+        candidate = {
+            specID = specID,
+            classFilename = classFilename,
+            ratingTotal = 0,
+            activeBracketCount = 0,
+            ratingsByBracket = {},
+        }
+        candidatesBySpecID[specID] = candidate
+    elseif not candidate.classFilename then
+        candidate.classFilename = classFilename
+    end
+    return candidate
+end
+
+local function GetMVSpecGlobalSpecID(snapshot, stats, column)
+    local specID = tonumber(stats and stats.seasonMostPlayedSpecID) or 0
+    if specID > 0 then return specID end
+
+    local globalSeries = snapshot.series and snapshot.series.global
+    local summary = GetSeriesSummary(globalSeries and globalSeries[column.key])
+    specID = tonumber(summary and summary.peakSpecID) or 0
+    if specID > 0 then return specID end
+
+    return tonumber(snapshot.currentSpecID or snapshot.specID) or 0
+end
+
 function History.GetSeasonMVSpec(seasonKey)
     seasonKey = seasonKey or History.GetContentSeasonKey()
     local candidatesBySpecID = {}
@@ -1597,18 +1635,11 @@ function History.GetSeasonMVSpec(seasonKey)
         end
 
         for specID in pairs(specIDs) do
-            local candidate = candidatesBySpecID[specID]
-            if not candidate then
-                candidate = {
-                    specID = specID,
-                    classFilename = snapshot.classFilename,
-                    ratingTotal = 0,
-                    activeBracketCount = 0,
-                }
-                candidatesBySpecID[specID] = candidate
-            elseif not candidate.classFilename then
-                candidate.classFilename = snapshot.classFilename
-            end
+            local candidate = EnsureMVSpecCandidate(
+                candidatesBySpecID,
+                specID,
+                snapshot.classFilename
+            )
 
             for _, column in ipairs(Database.SPEC_COLUMNS or {}) do
                 if Database.IsPVPColumn(column) then
@@ -1622,7 +1653,34 @@ function History.GetSeasonMVSpec(seasonKey)
                         charKey,
                         specID
                     )
-                    AddMVSpecBracket(candidate, rating, counts and counts.games)
+                    AddMVSpecBracket(
+                        candidate,
+                        column.key,
+                        rating,
+                        counts and counts.games
+                    )
+                end
+            end
+        end
+
+        for _, column in ipairs(Database.GLOBAL_COLUMNS or {}) do
+            if Database.IsPVPColumn(column) then
+                local stats = snapshot.pvpStats and snapshot.pvpStats[column.key]
+                local specID = GetMVSpecGlobalSpecID(snapshot, stats, column)
+                local candidate = EnsureMVSpecCandidate(
+                    candidatesBySpecID,
+                    specID,
+                    snapshot.classFilename
+                )
+                if candidate then
+                    local counts = GetSeasonStatCounts(stats, false, charKey)
+                    local rating = snapshot.ratings and snapshot.ratings[column.key]
+                    AddMVSpecBracket(
+                        candidate,
+                        column.key,
+                        rating,
+                        counts and counts.games
+                    )
                 end
             end
         end

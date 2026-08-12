@@ -17,8 +17,18 @@ local REWIND_CARD_MIN_HEIGHT = 450
 local REWIND_CONTENT_WIDTH = REWIND_CARD_WIDTH - 40
 local REWIND_METRIC_COUNT = 5
 local REWIND_METRIC_GAP = 10
-local MVSPEC_ACTIVE_RULE_TEXT = "Rating above 1,000\nMore than 10 games or Shuffle rounds\nAt least 3 active brackets across the warband"
-local MVSPEC_SCOPE_TEXT = "Grouped across every character of the same spec. Only Solo Shuffle and Solo BG contribute; team brackets stay spec-agnostic."
+local MVSPEC_ACTIVE_RULE_TEXT = "Rating above 1,000 with more than 10 games or Shuffle rounds, "
+    .. "in at least 3 distinct brackets."
+local MVSPEC_SCOPE_TEXT = "Best qualifying rating per bracket across every character of the spec. "
+    .. "Each bracket counts once; team brackets use the best available spec attribution."
+local MVSPEC_BRACKETS = {
+    { key = "soloShuffle", label = "Solo Shuffle" },
+    { key = "soloBG", label = "Solo BG" },
+    { key = "arena2v2", label = "2v2" },
+    { key = "arena3v3", label = "3v3" },
+    { key = "rbg10v10", label = "10v10" },
+}
+local MVSPEC_RATING_ROW_HEIGHT = 17
 local REWIND_TILE_GAP = 12
 local REWIND_COLUMN_COUNT = 3
 local REWIND_SPEC_ROW_HEIGHT = 21
@@ -317,6 +327,37 @@ end
 
 local function RefreshMVSpecTooltip(mvSpec)
     if not mvpTooltip then return end
+
+    local ratingsByBracket = mvSpec and mvSpec.ratingsByBracket or {}
+    local visibleRatingCount = 0
+    for index, bracket in ipairs(MVSPEC_BRACKETS) do
+        local row = mvpTooltip.ratingRows[index]
+        local rating = tonumber(ratingsByBracket[bracket.key])
+        if rating then
+            visibleRatingCount = visibleRatingCount + 1
+            local offset = -78 - ((visibleRatingCount - 1) * MVSPEC_RATING_ROW_HEIGHT)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, offset)
+            row:SetPoint("TOPRIGHT", mvpTooltip, "TOPRIGHT", -16, offset)
+            row.label:SetText(bracket.label)
+            row.value:SetText(FormatNumber(rating))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    local layoutRatingCount = math.max(visibleRatingCount, 1)
+    local calculationTop = 78 + (layoutRatingCount * MVSPEC_RATING_ROW_HEIGHT) + 10
+    local eligibilityTop = calculationTop + 46
+    local scopeTop = eligibilityTop + 45
+    mvpTooltip.calculationLabel:ClearAllPoints()
+    mvpTooltip.calculationLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -calculationTop)
+    mvpTooltip.eligibilityLabel:ClearAllPoints()
+    mvpTooltip.eligibilityLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -eligibilityTop)
+    mvpTooltip.scope:ClearAllPoints()
+    mvpTooltip.scope:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -scopeTop)
+    mvpTooltip:SetHeight(scopeTop + 58)
 
     if mvSpec then
         local total = tonumber(mvSpec.ratingTotal) or 0
@@ -726,6 +767,11 @@ local function ApplyRewindTheme()
         SetTextureColor(mvpTooltip.separator, activeTheme.border, 0.7)
         SetFontColor(mvpTooltip.title, activeTheme.headerText)
         SetFontColor(mvpTooltip.score, activeTheme.title)
+        SetFontColor(mvpTooltip.ratingsLabel, activeTheme.headerText)
+        for _, row in ipairs(mvpTooltip.ratingRows or {}) do
+            SetFontColor(row.label, activeTheme.text)
+            SetFontColor(row.value, activeTheme.title)
+        end
         SetFontColor(mvpTooltip.calculationLabel, activeTheme.headerText)
         SetFontColor(mvpTooltip.calculation, activeTheme.text)
         SetFontColor(mvpTooltip.eligibilityLabel, activeTheme.headerText)
@@ -1266,7 +1312,7 @@ CreateRewindCard = function()
     }
 
     mvpTooltip = CreateFrame("Frame", nil, UIParent)
-    mvpTooltip:SetSize(330, 224)
+    mvpTooltip:SetSize(350, 340)
     mvpTooltip:SetPoint("LEFT", rewindCard, "RIGHT", 12, 0)
     mvpTooltip:SetFrameStrata("TOOLTIP")
     mvpTooltip:SetFrameLevel(rewindCard:GetFrameLevel() + 20)
@@ -1286,23 +1332,51 @@ CreateRewindCard = function()
     mvpTooltip.separator:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -48)
     mvpTooltip.separator:SetPoint("TOPRIGHT", mvpTooltip, "TOPRIGHT", -16, -48)
     mvpTooltip.separator:SetHeight(1)
+    mvpTooltip.ratingsLabel = mvpTooltip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    mvpTooltip.ratingsLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -63)
+    mvpTooltip.ratingsLabel:SetText("RATINGS USED")
+    mvpTooltip.ratingRows = {}
+    for index = 1, #MVSPEC_BRACKETS do
+        local row = CreateFrame("Frame", nil, mvpTooltip)
+        local offset = -78 - ((index - 1) * MVSPEC_RATING_ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, offset)
+        row:SetPoint("TOPRIGHT", mvpTooltip, "TOPRIGHT", -16, offset)
+        row:SetHeight(16)
+        row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.label:SetPoint("LEFT", row, "LEFT")
+        row.value = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.value:SetPoint("RIGHT", row, "RIGHT")
+        mvpTooltip.ratingRows[index] = row
+    end
     mvpTooltip.calculationLabel = mvpTooltip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    mvpTooltip.calculationLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -63)
+    mvpTooltip.calculationLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -174)
     mvpTooltip.calculationLabel:SetText("CALCULATION")
     mvpTooltip.calculation = mvpTooltip:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     mvpTooltip.calculation:SetPoint("TOPLEFT", mvpTooltip.calculationLabel, "BOTTOMLEFT", 0, -6)
     mvpTooltip.calculation:SetWidth(298)
     mvpTooltip.calculation:SetJustifyH("LEFT")
-    mvpTooltip.eligibilityLabel = mvpTooltip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    mvpTooltip.eligibilityLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -105)
+    mvpTooltip.eligibilityLabel = mvpTooltip:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontHighlightExtraSmall"
+    )
+    mvpTooltip.eligibilityLabel:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -218)
     mvpTooltip.eligibilityLabel:SetText("ELIGIBILITY")
-    mvpTooltip.eligibility = mvpTooltip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    mvpTooltip.eligibility = mvpTooltip:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontHighlightExtraSmall"
+    )
     mvpTooltip.eligibility:SetPoint("TOPLEFT", mvpTooltip.eligibilityLabel, "BOTTOMLEFT", 0, -6)
     mvpTooltip.eligibility:SetWidth(298)
     mvpTooltip.eligibility:SetJustifyH("LEFT")
     mvpTooltip.eligibility:SetText(MVSPEC_ACTIVE_RULE_TEXT)
-    mvpTooltip.scope = mvpTooltip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    mvpTooltip.scope:SetPoint("BOTTOMLEFT", mvpTooltip, "BOTTOMLEFT", 16, 14)
+    mvpTooltip.scope = mvpTooltip:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontHighlightExtraSmall"
+    )
+    mvpTooltip.scope:SetPoint("TOPLEFT", mvpTooltip, "TOPLEFT", 16, -284)
     mvpTooltip.scope:SetWidth(298)
     mvpTooltip.scope:SetJustifyH("LEFT")
     mvpTooltip.scope:SetText(MVSPEC_SCOPE_TEXT)

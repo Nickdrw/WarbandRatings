@@ -184,6 +184,11 @@ local ns = {
                 activeBracketCount = 3,
                 ratingTotal = 5289,
                 averageRating = 1762.5,
+                ratingsByBracket = {
+                    soloShuffle = 1875,
+                    soloBG = 1694,
+                    arena2v2 = 1720,
+                },
             }
         end,
         GetSeasonStatistics = function()
@@ -504,11 +509,29 @@ local mvSpecTooltip = WarbandRatingsRewindCard.mvpTooltip
 assert(mvSpecTooltip:IsShown()
         and mvSpecTooltip.title.text == "MOST VALUABLE SPEC"
         and mvSpecTooltip.score.text == "1763"
+        and mvSpecTooltip.ratingRows[1]:IsShown()
+        and mvSpecTooltip.ratingRows[1].label.text == "Solo Shuffle"
+        and mvSpecTooltip.ratingRows[1].value.text == "1875"
+        and mvSpecTooltip.ratingRows[2]:IsShown()
+        and mvSpecTooltip.ratingRows[2].label.text == "Solo BG"
+        and mvSpecTooltip.ratingRows[2].value.text == "1694"
+        and mvSpecTooltip.ratingRows[3]:IsShown()
+        and mvSpecTooltip.ratingRows[3].label.text == "2v2"
+        and mvSpecTooltip.ratingRows[3].value.text == "1720"
+        and not mvSpecTooltip.ratingRows[4]:IsShown()
+        and not mvSpecTooltip.ratingRows[5]:IsShown()
+        and mvSpecTooltip.ratingRows[2].points[1][5]
+            - mvSpecTooltip.ratingRows[1].points[1][5] == -17
+        and mvSpecTooltip.ratingRows[3].points[1][5]
+            - mvSpecTooltip.ratingRows[2].points[1][5] == -17
         and mvSpecTooltip.calculation.text == "5289 rating  /  3 brackets  =  1763"
-        and mvSpecTooltip.eligibility.text:find("across the warband", 1, true)
-        and mvSpecTooltip.scope.text:find("Grouped across every character", 1, true)
-        and mvSpecTooltip.scope.text:find("team brackets stay spec-agnostic", 1, true),
-    "MV Spec panel should explain the anonymous cross-character spec calculation")
+        and mvSpecTooltip.eligibility.text:find("in at least 3 distinct brackets", 1, true)
+        and mvSpecTooltip.eligibilityLabel.fontTemplate == "GameFontHighlightExtraSmall"
+        and mvSpecTooltip.eligibility.fontTemplate == "GameFontHighlightExtraSmall"
+        and mvSpecTooltip.scope.fontTemplate == "GameFontHighlightExtraSmall"
+        and mvSpecTooltip.scope.text:find("Best qualifying rating per bracket", 1, true)
+        and mvSpecTooltip.scope.text:find("Each bracket counts once", 1, true),
+    "MV Spec panel should list the ratings used by the cross-character calculation")
 local mvSpecTooltipPoint = mvSpecTooltip.points[#mvSpecTooltip.points]
 assert(mvSpecTooltipPoint[1] == "LEFT"
         and mvSpecTooltipPoint[2] == WarbandRatingsRewindCard
