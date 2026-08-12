@@ -1,4 +1,4 @@
--- luacheck: globals Screenshot
+-- luacheck: globals Screenshot StaticPopupDialogs StaticPopup_Show
 
 local _, ns = ...
 
@@ -47,6 +47,16 @@ local REWIND_CARD_BACKGROUND_COLOR = { 0.020, 0.034, 0.046, 1 }
 local REWIND_METRIC_BACKGROUND_ALPHA = 0.76
 local REWIND_TILE_BACKGROUND_ALPHA = 0.70
 local SCREENSHOT_CAPTURE_TIMEOUT = 5
+local SCREENSHOT_BACKDROP_FRAME_LEVEL = 9998
+local SCREENSHOT_CARD_FRAME_LEVEL = 9999
+local PRESEASON_REWIND_POPUP_KEY = "WARBAND_RATINGS_PRESEASON_REWIND"
+local PRESEASON_REWIND_POPUP_ICON =
+    "Interface\\AddOns\\WarbandRatings\\media\\warbandratings-icon"
+local PRESEASON_REWIND_POPUP_TEXT = "|T" .. PRESEASON_REWIND_POPUP_ICON
+    .. ":28:28:0:0|t %s\n\n%s Rewind is available!\n\n"
+    .. "See your warband's rated PvP recap from the completed season.\n\n"
+    .. "New to the addon? Log into every PvP character during this preseason week "
+    .. "so the addon can collect the Season 1 data still available from the game API."
 
 local mainFrame
 local seasonBar
@@ -65,6 +75,7 @@ local captureBackdrop
 local captureInputBlocker
 local captureController
 local captureState
+local pendingPreseasonRewindSeasonKey
 
 local CreateRewindCard
 local RestoreScreenshotCapture
@@ -1039,6 +1050,8 @@ RestoreScreenshotCapture = function()
     end
 
     rewindCard:SetScale(state.scale)
+    rewindCard:SetFrameStrata(state.frameStrata)
+    rewindCard:SetFrameLevel(state.frameLevel)
     rewindCard:SetClampedToScreen(state.clampedToScreen)
     RestoreFramePoints(rewindCard, state.points)
     rewindCard.closeButton:SetShown(state.closeButtonShown)
@@ -1060,6 +1073,8 @@ local function BeginScreenshotCapture()
 
     captureState = {
         scale = rewindCard.GetScale and rewindCard:GetScale() or rewindCard.normalScale or 1,
+        frameStrata = rewindCard:GetFrameStrata(),
+        frameLevel = rewindCard:GetFrameLevel(),
         points = SaveFramePoints(rewindCard),
         clampedToScreen = rewindCard:IsClampedToScreen(),
         closeButtonShown = rewindCard.closeButton:IsShown(),
@@ -1069,8 +1084,10 @@ local function BeginScreenshotCapture()
         elapsed = 0,
     }
 
-    captureBackdrop:SetFrameStrata(rewindCard:GetFrameStrata())
-    captureBackdrop:SetFrameLevel(math.max(rewindCard:GetFrameLevel() - 1, 0))
+    -- Use the highest frame strata during capture so Blizzard aura frames and
+    -- third-party HUD elements cannot render over the opaque backdrop.
+    captureBackdrop:SetFrameStrata("TOOLTIP")
+    captureBackdrop:SetFrameLevel(SCREENSHOT_BACKDROP_FRAME_LEVEL)
     captureBackdrop:EnableMouse(false)
     captureBackdrop:Show()
     HideScreenshotTooltips()
@@ -1078,6 +1095,8 @@ local function BeginScreenshotCapture()
     captureInputBlocker:Show()
     rewindCard.closeButton:Hide()
     rewindCard.captureButton:Hide()
+    rewindCard:SetFrameStrata("TOOLTIP")
+    rewindCard:SetFrameLevel(SCREENSHOT_CARD_FRAME_LEVEL)
     rewindCard:SetClampedToScreen(false)
     rewindCard:ClearAllPoints()
     rewindCard:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -1146,6 +1165,119 @@ local function OpenRewindCard()
     RefreshRewindCard()
     rewindCard:Show()
     rewindCard:Raise()
+end
+
+function SeasonUI.OpenRewindForSeason(seasonKey)
+    if not GetAvailableSeasonSet()[seasonKey] then return false end
+
+    if ns.UI and ns.UI.CreateMainFrame then
+        ns.UI.CreateMainFrame()
+    end
+    SelectSeason(seasonKey)
+    OpenRewindCard()
+    return true
+end
+
+local function DismissPreseasonRewindNotice(dialog, seasonKey)
+    local checkbox = dialog and dialog.preseasonRewindDismissCheckbox
+    if seasonKey and checkbox and checkbox.GetChecked and checkbox:GetChecked() then
+        Database.SetSetting("preseasonRewindNoticeDismissedSeasonKey", seasonKey)
+    end
+end
+
+local function GetPopupSeasonKey(dialog, data)
+    return data
+        or (dialog and dialog.data)
+        or pendingPreseasonRewindSeasonKey
+end
+
+local function ConfigurePreseasonRewindDismissCheckbox(dialog)
+    local checkbox = dialog.preseasonRewindDismissCheckbox
+    if not checkbox then
+        checkbox = CreateFrame("CheckButton", nil, dialog, "UICheckButtonTemplate")
+        checkbox:SetSize(24, 24)
+        checkbox:SetPoint("BOTTOMLEFT", dialog, "BOTTOMLEFT", 18, 28)
+
+        local label = checkbox.Text
+        if not label then
+            label = checkbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        end
+        if label.ClearAllPoints then label:ClearAllPoints() end
+        label:SetPoint("LEFT", checkbox, "RIGHT", 0, 0)
+        label:SetWidth(250)
+        label:SetJustifyH("LEFT")
+        label:SetText("Don't show this again")
+
+        checkbox.preseasonLabel = label
+        dialog.preseasonRewindDismissCheckbox = checkbox
+        dialog.preseasonRewindBaseHeight = dialog:GetHeight()
+    end
+
+    dialog:SetHeight((dialog.preseasonRewindBaseHeight or dialog:GetHeight()) + 52)
+    checkbox:SetChecked(false)
+    checkbox:Show()
+end
+
+local function EnsurePreseasonRewindPopup()
+    if not StaticPopupDialogs then return false end
+    if StaticPopupDialogs[PRESEASON_REWIND_POPUP_KEY] then return true end
+
+    StaticPopupDialogs[PRESEASON_REWIND_POPUP_KEY] = {
+        text = PRESEASON_REWIND_POPUP_TEXT,
+        button1 = "View Rewind",
+        button2 = "Not now",
+        OnAccept = function(dialog, data)
+            local seasonKey = GetPopupSeasonKey(dialog, data)
+            DismissPreseasonRewindNotice(dialog, seasonKey)
+            SeasonUI.OpenRewindForSeason(seasonKey)
+        end,
+        OnCancel = function(dialog, data)
+            DismissPreseasonRewindNotice(dialog, GetPopupSeasonKey(dialog, data))
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        preferredIndex = 3,
+    }
+    return true
+end
+
+function SeasonUI.ShowPreseasonRewindNotice()
+    if not Season.IsRatedSeasonActive or Season.IsRatedSeasonActive() ~= false then
+        return false
+    end
+    if not Season.GetPreviousSeasonKey or not StaticPopup_Show then return false end
+
+    local previousSeasonKey = Season.GetPreviousSeasonKey(History.GetContentSeasonKey())
+    if not previousSeasonKey or not GetAvailableSeasonSet()[previousSeasonKey] then
+        return false
+    end
+
+    local settings = Database.GetSettings()
+    -- Versions that predate the explicit checkbox dismissed the notice when
+    -- either popup button was used. Drop that marker so only an intentional
+    -- checkbox selection can suppress future launches.
+    settings.preseasonRewindNoticeSeasonKey = nil
+    if settings.preseasonRewindNoticeDismissedSeasonKey == previousSeasonKey then
+        return false
+    end
+    if pendingPreseasonRewindSeasonKey == previousSeasonKey then
+        return false
+    end
+    if not EnsurePreseasonRewindPopup() then return false end
+
+    local seasonInfo = Season.GetSeasonInfo(previousSeasonKey)
+    local dialog = StaticPopup_Show(
+        PRESEASON_REWIND_POPUP_KEY,
+        ns.DISPLAY_NAME or "Warband PvP Companion",
+        seasonInfo.label,
+        previousSeasonKey
+    )
+    if dialog then
+        ConfigurePreseasonRewindDismissCheckbox(dialog)
+        pendingPreseasonRewindSeasonKey = previousSeasonKey
+    end
+    return dialog ~= nil
 end
 
 function SeasonUI.GetSelectedSeasonKey()

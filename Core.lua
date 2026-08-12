@@ -161,6 +161,13 @@ local function CollectPreseasonCharacter()
     end
 end
 
+local function ShowPreseasonRewindNotice()
+    local SeasonUI = ns.SeasonUI
+    if SeasonUI and SeasonUI.ShowPreseasonRewindNotice then
+        SeasonUI.ShowPreseasonRewindNotice()
+    end
+end
+
 local function IsPVPMatchActive()
     if not C_PvP or not C_PvP.GetActiveMatchState then return false end
 
@@ -194,6 +201,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             CollectPreseasonCharacter()
             DataCollection.ScanWarbandBankHeliotrope()
             CallUI("RefreshTable")
+            ShowPreseasonRewindNotice()
         end)
 
         CallUI("AttachGroupFinderButtons")
@@ -234,6 +242,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             DataCollection.CollectCurrentCharacter()
             CollectPreseasonCharacter()
             CallUI("RefreshTable")
+            ShowPreseasonRewindNotice()
         end)
 
         TryCollectLastMatchMMRWithRetries(true)

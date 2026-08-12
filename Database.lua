@@ -234,7 +234,10 @@ function Database.Init()
         WarbandRatingsDB.settings.minimapPos = 220
     end
     if WarbandRatingsDB.settings.hiddenColumns == nil then
-        WarbandRatingsDB.settings.hiddenColumns = {}
+        WarbandRatingsDB.settings.hiddenColumns = {
+            mythicPlus = true,
+            crests = true,
+        }
     end
     if WarbandRatingsDB.settings.sortKey == nil then
         WarbandRatingsDB.settings.sortKey = "character"

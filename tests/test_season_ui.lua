@@ -1,6 +1,6 @@
 -- luacheck: globals CreateFrame UIParent UISpecialFrames GetSpecializationInfoByID GameTooltip
 -- luacheck: globals WarbandRatingsRewindCard CLASS_ICON_TCOORDS LOCALIZED_CLASS_NAMES_MALE
--- luacheck: globals Screenshot
+-- luacheck: globals Screenshot StaticPopupDialogs StaticPopup_Show
 
 local frames = {}
 local regions = {}
@@ -20,6 +20,7 @@ local function NewRegion(name, parent)
         scripts = {},
         points = {},
         mouseEnabled = true,
+        checked = false,
     }
     local methods = {}
 
@@ -72,6 +73,8 @@ local function NewRegion(name, parent)
     function methods:SetClampedToScreen(clamped) self.clampedToScreen = clamped end
     function methods:IsClampedToScreen() return self.clampedToScreen end
     function methods:EnableMouse(enabled) self.mouseEnabled = enabled end
+    function methods:SetChecked(checked) self.checked = checked and true or false end
+    function methods:GetChecked() return self.checked end
     function methods:RegisterEvent(event) self.events[event] = true end
     function methods:SetVerticalScroll(value) self.verticalScroll = value end
     function methods:GetVerticalScroll() return self.verticalScroll end
@@ -140,6 +143,20 @@ end
 local screenshotCount = 0
 Screenshot = function()
     screenshotCount = screenshotCount + 1
+end
+local shownPopup
+StaticPopupDialogs = {}
+StaticPopup_Show = function(key, textArgument1, textArgument2, data)
+    local definition = assert(StaticPopupDialogs[key], "unknown static popup")
+    shownPopup = NewRegion(nil, UIParent)
+    shownPopup:SetSize(360, 180)
+    shownPopup.key = key
+    shownPopup.definition = definition
+    shownPopup.data = data
+    shownPopup.textArgument1 = textArgument1
+    shownPopup.textArgument2 = textArgument2
+    shownPopup.renderedText = string.format(definition.text, textArgument1, textArgument2)
+    return shownPopup
 end
 CLASS_ICON_TCOORDS = {
     WARRIOR = { 0, 0.25, 0, 0.25 },
@@ -300,6 +317,9 @@ local ns = {
                 { key = "pvp-41", label = "Season 1", number = 1 },
             }
         end,
+        GetPreviousSeasonKey = function(seasonKey)
+            return seasonKey == "pvp-42" and "pvp-41" or nil
+        end,
     },
     Utils = {
         FormatNumber = function(value) return tostring(value) end,
@@ -310,6 +330,7 @@ local ns = {
         end,
     },
     UI = {
+        CreateMainFrame = function() end,
         GetActiveTheme = function() return theme end,
         SetHistorySeason = function(seasonKey) selectedSeasonKey = seasonKey end,
         RefreshTable = function() end,
@@ -418,11 +439,12 @@ assert(WarbandRatingsRewindCard.captureInputBlocker:IsShown()
         and WarbandRatingsRewindCard.captureInputBlocker.mouseEnabled
         and not GameTooltip.shown,
     "screenshot capture should block mouseovers and hide active tooltips")
-assert(WarbandRatingsRewindCard:GetFrameStrata() == "DIALOG"
+assert(WarbandRatingsRewindCard:GetFrameStrata() == "TOOLTIP"
+        and WarbandRatingsRewindCard.captureBackdrop:GetFrameStrata() == "TOOLTIP"
         and WarbandRatingsRewindCard:GetFrameLevel()
             > WarbandRatingsRewindCard.captureBackdrop:GetFrameLevel()
         and WarbandRatingsRewindCard:GetScale() > normalScale,
-    "screenshot capture should enlarge the card without changing its input layer")
+    "screenshot capture should cover higher-strata HUD elements while keeping the card visible")
 assert(not WarbandRatingsRewindCard.captureBackdrop.mouseEnabled,
     "screenshot backdrop should never capture mouse input")
 assert(not WarbandRatingsRewindCard.closeButton:IsShown()
@@ -447,7 +469,8 @@ assert(not WarbandRatingsRewindCard.captureBackdrop:IsShown()
         and not WarbandRatingsRewindCard.captureInputBlocker:IsShown()
         and not WarbandRatingsRewindCard.captureInputBlocker.mouseEnabled
         and WarbandRatingsRewindCard:GetScale() == normalScale
-        and WarbandRatingsRewindCard:GetFrameStrata() == "DIALOG",
+        and WarbandRatingsRewindCard:GetFrameStrata() == "DIALOG"
+        and WarbandRatingsRewindCard:GetFrameLevel() == 120,
     "successful screenshot capture should restore the normal card presentation")
 assert(restoredPoint[1] == normalPoint[1] and restoredPoint[2] == normalPoint[2]
         and restoredPoint[3] == normalPoint[3] and restoredPoint[4] == normalPoint[4]
@@ -728,5 +751,44 @@ assert(seasonOneButton and seasonOneButton.scripts.OnClick, "past-season dropdow
 seasonOneButton.scripts.OnClick(seasonOneButton)
 assert(selectedSeasonKey == "pvp-41", "past season selection was not propagated")
 assert(WarbandRatingsRewindCard.title.text == "Season 1 Rewind", "past-season Rewind title is incorrect")
+
+settings.preseasonRewindNoticeSeasonKey = "pvp-41"
+settings.preseasonRewindNoticeDismissedSeasonKey = nil
+assert(ns.SeasonUI.ShowPreseasonRewindNotice(),
+    "preseason launch notice should appear while the previous season is available")
+assert(shownPopup
+        and shownPopup.renderedText:find("warbandratings-icon:28:28", 1, true)
+        and shownPopup.renderedText:find("Warband PvP Companion", 1, true)
+        and shownPopup.renderedText:find("Season 1 Rewind is available!", 1, true)
+        and shownPopup.renderedText:find("every PvP character", 1, true)
+        and shownPopup.renderedText:find("during this preseason week", 1, true)
+        and shownPopup.definition.button1 == "View Rewind"
+        and shownPopup.definition.button2 == "Not now",
+    "preseason notice should explain new-user collection and offer direct Rewind access")
+local dismissCheckbox = shownPopup.preseasonRewindDismissCheckbox
+assert(dismissCheckbox
+        and dismissCheckbox.preseasonLabel.text == "Don't show this again"
+        and not dismissCheckbox:GetChecked()
+        and dismissCheckbox.points[1][1] == "BOTTOMLEFT"
+        and dismissCheckbox.points[1][2] == shownPopup
+        and dismissCheckbox.points[1][3] == "BOTTOMLEFT"
+        and dismissCheckbox.points[1][5] == 28
+        and shownPopup.height == shownPopup.preseasonRewindBaseHeight + 52
+        and settings.preseasonRewindNoticeSeasonKey == nil,
+    "preseason notice should place its explicit dismissal checkbox below the buttons")
+assert(not ns.SeasonUI.ShowPreseasonRewindNotice(),
+    "preseason notice should not be duplicated while it is already visible")
+shownPopup.definition.OnAccept(shownPopup, shownPopup.data)
+assert(settings.preseasonRewindNoticeDismissedSeasonKey == nil,
+    "opening Rewind without the checkbox should not dismiss future launch notices")
+assert(WarbandRatingsRewindCard:IsShown()
+        and WarbandRatingsRewindCard.renderedSeasonKey == "pvp-41",
+    "preseason notice action should open the previous season Rewind directly")
+dismissCheckbox:SetChecked(true)
+shownPopup.definition.OnCancel(shownPopup, shownPopup.data)
+assert(settings.preseasonRewindNoticeDismissedSeasonKey == "pvp-41",
+    "checked preseason notice should be dismissed for the completed season")
+assert(not ns.SeasonUI.ShowPreseasonRewindNotice(),
+    "dismissed preseason notice should not reappear for the same season")
 
 print("season UI tests passed")

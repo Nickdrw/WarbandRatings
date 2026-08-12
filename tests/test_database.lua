@@ -72,6 +72,10 @@ assert(loadfile("Database.lua"))("WarbandRatings", ns)
 local Database = ns.Database
 Database.Init()
 
+assert(WarbandRatingsDB.settings.hiddenColumns.mythicPlus
+        and WarbandRatingsDB.settings.hiddenColumns.crests,
+    "new table filters should hide PvE columns by default")
+
 Database.SaveCharacter("pvp-42", {
     name = "Tester",
     realm = "Realm",
