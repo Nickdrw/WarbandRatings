@@ -54,19 +54,34 @@ local STATUS_COLORS = {
 }
 local SESSION_LOSS_COLOR = { 1.00, 0.32, 0.32, 1 }
 
-local SECURE_PROXY_NAMES = {}
-local SECURE_BUTTON_NAMES = {}
+local SECURE_PROXY_NAMES = {
+    [QUEUE_CATEGORY_RATED] = {},
+    [QUEUE_CATEGORY_UNRATED] = {},
+}
+local SECURE_BUTTON_NAMES = {
+    [QUEUE_CATEGORY_RATED] = {},
+    [QUEUE_CATEGORY_UNRATED] = {},
+}
+local SECURE_TAB_NAMES = {
+    [QUEUE_CATEGORY_RATED] = "WarbandRatingsRatedQueueTab",
+    [QUEUE_CATEGORY_UNRATED] = "WarbandRatingsUnratedQueueTab",
+}
+local SECURE_CLOSE_BUTTON_NAME = "WarbandRatingsQueueCloseButton"
 local QUEUE_MACROS = {
     [QUEUE_CATEGORY_RATED] = {},
     [QUEUE_CATEGORY_UNRATED] = {},
 }
 for cardIndex = 1, MAX_CARDS do
-    SECURE_PROXY_NAMES[cardIndex] = "WarbandRatingsRatedQueueProxy" .. cardIndex
-    SECURE_BUTTON_NAMES[cardIndex] = "WarbandRatingsRatedQueueButton" .. cardIndex
+    SECURE_PROXY_NAMES[QUEUE_CATEGORY_RATED][cardIndex] = "WarbandRatingsRatedQueueProxy" .. cardIndex
+    SECURE_PROXY_NAMES[QUEUE_CATEGORY_UNRATED][cardIndex] = "WarbandRatingsUnratedQueueProxy" .. cardIndex
+    SECURE_BUTTON_NAMES[QUEUE_CATEGORY_RATED][cardIndex] = "WarbandRatingsRatedQueueButton" .. cardIndex
+    SECURE_BUTTON_NAMES[QUEUE_CATEGORY_UNRATED][cardIndex] = "WarbandRatingsUnratedQueueButton" .. cardIndex
     QUEUE_MACROS[QUEUE_CATEGORY_RATED][cardIndex] =
-        "/click " .. SECURE_PROXY_NAMES[cardIndex] .. " LeftButton\n/click ConquestJoinButton LeftButton"
+        "/click " .. SECURE_PROXY_NAMES[QUEUE_CATEGORY_RATED][cardIndex]
+        .. " LeftButton\n/click ConquestJoinButton LeftButton"
     QUEUE_MACROS[QUEUE_CATEGORY_UNRATED][cardIndex] =
-        "/click " .. SECURE_PROXY_NAMES[cardIndex] .. " LeftButton\n/click HonorFrameQueueButton LeftButton"
+        "/click " .. SECURE_PROXY_NAMES[QUEUE_CATEGORY_UNRATED][cardIndex]
+        .. " LeftButton\n/click HonorFrameQueueButton LeftButton"
 end
 
 local BRACKETS = {
@@ -168,8 +183,12 @@ local ratingSessionInitialized
 local ratingSessionResumeSaved
 local ratingSessionRecord
 local sessionRatingBaselines = {}
-local bracketProxies = {}
-local configuredBracketKeys = {}
+local bracketProxies = {
+    [QUEUE_CATEGORY_RATED] = {},
+    [QUEUE_CATEGORY_UNRATED] = {},
+}
+local secureQueueTabs = {}
+local secureCloseButton
 local queueStatusOriginalLayout
 local queueStatusRelocated
 local queueStatusHooked
@@ -181,6 +200,9 @@ local noShowPenaltyActive = false
 local queueBracketKeysByIndex = {}
 local UpdatePanel
 local UpdateDynamicCards
+local PrimeSecureQueueBrackets
+local SyncSecureQueueControls
+local HideSecureQueueControls
 
 local function IsHelperHidden()
     local settings = WarbandRatingsDB and WarbandRatingsDB.settings
@@ -329,6 +351,7 @@ end
 local function StartPanelMove()
     if not panel or (InCombatLockdown and InCombatLockdown()) then return end
 
+    HideSecureQueueControls()
     isPanelMoving = true
     panel:StartMoving()
 end
@@ -341,6 +364,7 @@ local function StopPanelMove()
     ClampPanelToScreen()
     HelperPanel.SnapFrameToPixelGrid(panel)
     SavePanelPosition()
+    SyncSecureQueueControls()
 end
 
 local function IsPVPUIReady()
@@ -376,19 +400,23 @@ local function LoadPVPUI()
     return IsPVPUIReady()
 end
 
-local function EnsureBracketProxy(cardIndex)
-    if bracketProxies[cardIndex] then return true end
+local function EnsureBracketProxy(category, cardIndex)
+    local categoryProxies = bracketProxies[category]
+    local proxyNames = SECURE_PROXY_NAMES[category]
+    if not categoryProxies or not proxyNames then return false end
+    if categoryProxies[cardIndex] then return true end
     if not IsPVPUISettingUpAllowed() then return false end
 
     local proxy = CreateFrame(
         "Button",
-        SECURE_PROXY_NAMES[cardIndex],
+        proxyNames[cardIndex],
         UIParent,
-        "InsecureActionButtonTemplate"
+        "SecureActionButtonTemplate"
     )
+    proxy:RegisterForClicks("LeftButtonUp")
     proxy:SetAttribute("type", "click")
     proxy:SetAttribute("useOnKeyDown", false)
-    bracketProxies[cardIndex] = proxy
+    categoryProxies[cardIndex] = proxy
     return true
 end
 
@@ -405,43 +433,59 @@ end
 
 local function ConfigureSecureBracket(cardIndex, bracket)
     local card = panel and panel.cards and panel.cards[cardIndex]
-    local button = card and card.actionButton
+    local category = bracket and bracket.category
+    local button = card and card.secureActionButtons and card.secureActionButtons[category]
+    local categoryProxies = category and bracketProxies[category]
+    local proxy = categoryProxies and categoryProxies[cardIndex]
     if not bracket or not button then return false end
-    local queueMacros = QUEUE_MACROS[bracket.category]
+    local queueMacros = QUEUE_MACROS[category]
     local queueMacro = queueMacros and queueMacros[cardIndex]
     if not queueMacro then return false end
-    if configuredBracketKeys[cardIndex] == bracket.key
-        and bracketProxies[cardIndex]
+    local target = GetBracketTarget(bracket)
+    if target
+        and button:GetAttribute("configuredBracketKey") == bracket.key
+        and proxy
+        and proxy:GetAttribute("configuredBracketKey") == bracket.key
+        and proxy:GetAttribute("clickbutton") == target
         and button:GetAttribute("type") == "macro"
         and button:GetAttribute("macrotext") == queueMacro then
         return true
     end
     if not IsPVPUISettingUpAllowed() then return false end
-    if not LoadPVPUI() or not EnsureBracketProxy(cardIndex) then return false end
+    if not LoadPVPUI() or not EnsureBracketProxy(category, cardIndex) then return false end
+    proxy = bracketProxies[category][cardIndex]
 
-    local target = GetBracketTarget(bracket)
+    target = GetBracketTarget(bracket)
     if not target then return false end
 
-    if configuredBracketKeys[cardIndex] ~= bracket.key then
-        bracketProxies[cardIndex]:SetAttribute("clickbutton", target)
-        configuredBracketKeys[cardIndex] = bracket.key
+    if proxy:GetAttribute("configuredBracketKey") ~= bracket.key
+        or proxy:GetAttribute("clickbutton") ~= target then
+        proxy:SetAttribute("clickbutton", target)
+        proxy:SetAttribute("configuredBracketKey", bracket.key)
     end
 
     button:SetAttribute("type", "macro")
     button:SetAttribute("clickbutton", nil)
     button:SetAttribute("macrotext", queueMacro)
+    button:SetAttribute("configuredBracketKey", bracket.key)
     return true
 end
 
-local function ClearSecureAction(cardIndex)
+local function ClearSecureAction(cardIndex, category)
     local card = panel and panel.cards and panel.cards[cardIndex]
-    local button = card and card.actionButton
-    if not button or not IsPVPUISettingUpAllowed() then return false end
+    if not card or not card.secureActionButtons or not IsPVPUISettingUpAllowed() then return false end
 
-    button:SetAttribute("type", nil)
-    button:SetAttribute("clickbutton", nil)
-    button:SetAttribute("macrotext", nil)
-    return true
+    local cleared = false
+    for buttonCategory, button in pairs(card.secureActionButtons) do
+        if not category or category == buttonCategory then
+            button:SetAttribute("type", nil)
+            button:SetAttribute("clickbutton", nil)
+            button:SetAttribute("macrotext", nil)
+            button:SetAttribute("configuredBracketKey", nil)
+            cleared = true
+        end
+    end
+    return cleared
 end
 
 local function GetRatedQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue)
@@ -1394,7 +1438,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
                 state.buttonEnabled = true
             else
                 state.buttonVisible = false
-                ClearSecureAction(cardIndex)
+                ClearSecureAction(cardIndex, bracket.category)
             end
         elseif queue.status == "queued" then
             state.buttonVisible = false
@@ -1404,22 +1448,22 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             else
                 state.statusText = "IN QUEUE"
             end
-            ClearSecureAction(cardIndex)
+            ClearSecureAction(cardIndex, bracket.category)
         elseif queue.status == "confirm" then
             state.buttonText = "Match ready"
             state.visualState = "ready"
             state.statusText = "MATCH READY"
-            ClearSecureAction(cardIndex)
+            ClearSecureAction(cardIndex, bracket.category)
         elseif queue.status == "active" then
             state.buttonText = "In match"
             state.visualState = "active"
             state.statusText = "MATCH IN PROGRESS"
-            ClearSecureAction(cardIndex)
+            ClearSecureAction(cardIndex, bracket.category)
         else
             state.buttonText = "Unavailable"
             state.visualState = "active"
             state.statusText = "QUEUE LOCKED"
-            ClearSecureAction(cardIndex)
+            ClearSecureAction(cardIndex, bracket.category)
         end
         return state
     end
@@ -1456,9 +1500,10 @@ local function GetPanelState()
     end
     local category = GetQueueCategory()
     local queues = category == QUEUE_CATEGORY_UNRATED and unratedQueues or ratedQueues
-    local brackets = category == QUEUE_CATEGORY_UNRATED
-        and GetDisplayedUnratedBrackets(queues)
-        or GetDisplayedBrackets(queues)
+    local ratedBrackets = GetDisplayedBrackets(ratedQueues)
+    local unratedBrackets = GetDisplayedUnratedBrackets(unratedQueues)
+    PrimeSecureQueueBrackets(ratedBrackets, unratedBrackets)
+    local brackets = category == QUEUE_CATEGORY_UNRATED and unratedBrackets or ratedBrackets
     if #brackets == 0 then return nil end
 
     local groupSize = GetGroupSize()
@@ -1760,6 +1805,217 @@ local function CreateQueueTabs()
         panel.queueTabs[tabIndex] = button
         anchor = button
     end
+end
+
+-- Secure queue buttons cannot be parented or anchored to the dynamic cards:
+-- doing so would protect the whole panel and prevent its combat-time refreshes.
+-- Each category therefore owns a separate set of detached controls. They are
+-- configured before combat and a secure tab click only swaps which set is
+-- visible; it never changes what a combat-clickable button will queue.
+local SECURE_QUEUE_TAB_ON_CLICK = [=[
+    local category = self:GetAttribute("category")
+    local count = self:GetAttribute(category .. "Count") or 0
+    for cardIndex = 1, self:GetAttribute("maxCards") do
+        local ratedAction = self:GetFrameRef("ratedAction" .. cardIndex)
+        local unratedAction = self:GetFrameRef("unratedAction" .. cardIndex)
+        if ratedAction then
+            if category == "rated" and cardIndex <= count then
+                ratedAction:Show()
+            else
+                ratedAction:Hide()
+            end
+        end
+        if unratedAction then
+            if category == "unrated" and cardIndex <= count then
+                unratedAction:Show()
+            else
+                unratedAction:Hide()
+            end
+        end
+    end
+]=]
+
+local SECURE_QUEUE_CLOSE_ON_CLICK = [=[
+    for cardIndex = 1, self:GetAttribute("maxCards") do
+        local ratedAction = self:GetFrameRef("ratedAction" .. cardIndex)
+        local unratedAction = self:GetFrameRef("unratedAction" .. cardIndex)
+        if ratedAction then ratedAction:Hide() end
+        if unratedAction then unratedAction:Hide() end
+    end
+    local ratedTab = self:GetFrameRef("ratedTab")
+    local unratedTab = self:GetFrameRef("unratedTab")
+    if ratedTab then ratedTab:Hide() end
+    if unratedTab then unratedTab:Hide() end
+    self:Hide()
+]=]
+
+local function CreateSecureQueueControls()
+    if secureCloseButton or not panel or not panel.cards or not panel.queueTabs then return end
+    if not IsPVPUISettingUpAllowed() then return end
+
+    for tabIndex, visualTab in ipairs(panel.queueTabs) do
+        local secureTab = CreateFrame(
+            "Button",
+            SECURE_TAB_NAMES[visualTab.category],
+            UIParent,
+            "SecureHandlerClickTemplate"
+        )
+        secureTab:SetSize(visualTab:GetSize())
+        secureTab:RegisterForClicks("LeftButtonUp")
+        secureTab:SetAttribute("category", visualTab.category)
+        secureTab:SetAttribute("maxCards", MAX_CARDS)
+        secureTab:SetAttribute("_onclick", SECURE_QUEUE_TAB_ON_CLICK)
+        secureTab.category = visualTab.category
+        secureTab:SetScript("PostClick", function(button)
+            if GetQueueCategory() == button.category then return end
+            SetQueueCategory(button.category)
+            UpdatePanel()
+        end)
+        secureTab:Hide()
+        secureQueueTabs[visualTab.category] = secureTab
+        visualTab:EnableMouse(false)
+        visualTab.secureTab = secureTab
+        panel.queueTabs[tabIndex] = visualTab
+    end
+
+    for cardIndex, card in ipairs(panel.cards) do
+        for category, secureActionButton in pairs(card.secureActionButtons) do
+            EnsureBracketProxy(category, cardIndex)
+            for _, secureTab in pairs(secureQueueTabs) do
+                secureTab:SetFrameRef(category .. "Action" .. cardIndex, secureActionButton)
+            end
+        end
+    end
+
+    secureCloseButton = CreateFrame(
+        "Button",
+        SECURE_CLOSE_BUTTON_NAME,
+        UIParent,
+        "SecureHandlerClickTemplate"
+    )
+    secureCloseButton:SetSize(panel.closeButton:GetSize())
+    secureCloseButton:RegisterForClicks("LeftButtonUp")
+    secureCloseButton:SetAttribute("maxCards", MAX_CARDS)
+    secureCloseButton:SetAttribute("_onclick", SECURE_QUEUE_CLOSE_ON_CLICK)
+    for cardIndex, card in ipairs(panel.cards) do
+        for category, secureActionButton in pairs(card.secureActionButtons) do
+            secureCloseButton:SetFrameRef(category .. "Action" .. cardIndex, secureActionButton)
+        end
+    end
+    secureCloseButton:SetFrameRef("ratedTab", secureQueueTabs[QUEUE_CATEGORY_RATED])
+    secureCloseButton:SetFrameRef("unratedTab", secureQueueTabs[QUEUE_CATEGORY_UNRATED])
+    secureCloseButton:SetScript("PostClick", function()
+        ArenaQueue.Hide()
+    end)
+    secureCloseButton:Hide()
+    panel.closeButton:EnableMouse(false)
+end
+
+PrimeSecureQueueBrackets = function(ratedBrackets, unratedBrackets)
+    if not secureCloseButton or not IsPVPUISettingUpAllowed() then return end
+
+    local bracketGroups = {
+        [QUEUE_CATEGORY_RATED] = ratedBrackets,
+        [QUEUE_CATEGORY_UNRATED] = unratedBrackets,
+    }
+    for category, brackets in pairs(bracketGroups) do
+        local count = math.min(#brackets, MAX_CARDS)
+        for _, secureTab in pairs(secureQueueTabs) do
+            secureTab:SetAttribute(category .. "Count", count)
+        end
+        for cardIndex = 1, MAX_CARDS do
+            local bracket = brackets[cardIndex]
+            if bracket then
+                ConfigureSecureBracket(cardIndex, bracket)
+            else
+                ClearSecureAction(cardIndex, category)
+            end
+        end
+    end
+end
+
+local function GetSecureActionPosition(category, cardIndex)
+    local panelLeft = panel and panel:GetLeft()
+    local panelTop = panel and panel:GetTop()
+    if not panelLeft or not panelTop then return nil end
+
+    local minimized = IsPanelMinimized()
+    local cardHeight = minimized
+        and MINIMIZED_CARD_HEIGHT
+        or (category == QUEUE_CATEGORY_UNRATED and UNRATED_CARD_HEIGHT or CARD_HEIGHT)
+    local cardGap = minimized and MINIMIZED_CARD_GAP or CARD_GAP
+    local cardTop = panelTop - PANEL_TOP_INSET - (cardIndex - 1) * (cardHeight + cardGap)
+    local x = panelLeft + CARD_SIDE_INSET + CARD_WIDTH - 9 - 88
+    local y = minimized and (cardTop - (cardHeight + 22) / 2) or (cardTop - cardHeight + 7)
+    return x, y
+end
+
+SyncSecureQueueControls = function()
+    if not secureCloseButton or not panel or not IsPVPUISettingUpAllowed() then return end
+
+    for _, visualTab in ipairs(panel.queueTabs) do
+        local secureTab = visualTab.secureTab
+        local left = visualTab:GetLeft()
+        local bottom = visualTab:GetBottom()
+        if secureTab and left and bottom then
+            secureTab:SetFrameStrata(panel:GetFrameStrata())
+            secureTab:SetFrameLevel(visualTab:GetFrameLevel() + 10)
+            secureTab:ClearAllPoints()
+            secureTab:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
+        end
+    end
+
+    for category in pairs(secureQueueTabs) do
+        for cardIndex = 1, MAX_CARDS do
+            local x, y = GetSecureActionPosition(category, cardIndex)
+            local card = panel.cards[cardIndex]
+            local secureActionButton = card.secureActionButtons[category]
+            if x and y and secureActionButton then
+                secureActionButton:SetFrameStrata(panel:GetFrameStrata())
+                secureActionButton:SetFrameLevel(card.actionButton:GetFrameLevel() + 1)
+                secureActionButton:ClearAllPoints()
+                secureActionButton:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x, y)
+                card.actionBlocker:SetFrameLevel(card.actionButton:GetFrameLevel() + 2)
+            end
+        end
+    end
+
+    local closeLeft = panel.closeButton:GetLeft()
+    local closeBottom = panel.closeButton:GetBottom()
+    if closeLeft and closeBottom then
+        secureCloseButton:SetFrameStrata(panel:GetFrameStrata())
+        secureCloseButton:SetFrameLevel(panel.closeButton:GetFrameLevel() + 10)
+        secureCloseButton:ClearAllPoints()
+        secureCloseButton:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", closeLeft, closeBottom)
+    end
+
+    for _, secureTab in pairs(secureQueueTabs) do
+        secureTab:SetShown(panel:IsShown())
+    end
+    local selectedCategory = GetQueueCategory()
+    for cardIndex, card in ipairs(panel.cards) do
+        for category, secureActionButton in pairs(card.secureActionButtons) do
+            local secureTab = secureQueueTabs[category]
+            local count = secureTab and secureTab:GetAttribute(category .. "Count") or 0
+            secureActionButton:SetShown(
+                panel:IsShown() and category == selectedCategory and cardIndex <= count
+            )
+        end
+    end
+    secureCloseButton:SetShown(panel:IsShown())
+end
+
+HideSecureQueueControls = function()
+    if not secureCloseButton or not IsPVPUISettingUpAllowed() then return end
+    for _, secureTab in pairs(secureQueueTabs) do
+        secureTab:Hide()
+    end
+    for _, card in ipairs(panel.cards) do
+        for _, secureActionButton in pairs(card.secureActionButtons) do
+            secureActionButton:Hide()
+        end
+    end
+    secureCloseButton:Hide()
 end
 
 local function GetBuiltInPVPRoleCheckButton(frameKey)
@@ -2129,6 +2385,7 @@ local function UpdateMinimizeButton()
     local minimized = IsPanelMinimized()
     button.verticalLine:SetShown(minimized)
     button.tooltipText = minimized and "Expand queue helper" or "Minimize queue helper"
+    button:SetEnabled(IsPVPUISettingUpAllowed())
 end
 
 local function ApplyCardLayout(card, minimized, isRated)
@@ -2206,6 +2463,22 @@ local function UpdateQueuedRoleIcon(card, role, minimized, isRated)
     else
         card.modeName:SetPoint("RIGHT", card, "RIGHT", -10, 0)
     end
+end
+
+local function RunVisualActionButtonScript(card, scriptName, mouseButton)
+    local actionButton = card and card.actionButton
+    local script = actionButton and actionButton:GetScript(scriptName)
+    if script then
+        script(actionButton, mouseButton)
+    end
+end
+
+local function ResetVisualActionButton(card)
+    local actionButton = card and card.actionButton
+    if not actionButton then return end
+
+    actionButton:UnlockHighlight()
+    RunVisualActionButtonScript(card, "OnMouseUp", "LeftButton")
 end
 
 local function CreateCard(cardIndex)
@@ -2303,28 +2576,72 @@ local function CreateCard(cardIndex)
 
     card.actionButton = CreateFrame(
         "Button",
-        SECURE_BUTTON_NAMES[cardIndex],
+        nil,
         card,
-        "InsecureActionButtonTemplate,UIPanelButtonTemplate"
+        "UIPanelButtonTemplate"
     )
     card.actionButton:SetSize(88, 22)
     card.actionButton:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -9, 7)
-    card.actionButton:RegisterForClicks("LeftButtonUp")
-    card.actionButton:SetAttribute("type", nil)
-    card.actionButton:SetAttribute("clickbutton", nil)
-    card.actionButton:SetAttribute("macrotext", nil)
-    card.actionButton:SetAttribute("useOnKeyDown", false)
-    card.actionButton:SetScript("PostClick", function()
-        local state = card.cardState
-        if state and state.bracket then
-            local now = GetTime and GetTime() or 0
-            pendingRoleCheck = {
-                bracketKey = state.bracket.key,
-                expiresAt = now + 5,
-            }
-        end
-        RefreshSoon()
-    end)
+    card.actionButton:EnableMouse(false)
+
+    card.actionBlocker = CreateFrame("Frame", nil, card)
+    card.actionBlocker:SetAllPoints(card.actionButton)
+    card.actionBlocker:SetFrameLevel(card.actionButton:GetFrameLevel() + 2)
+    card.actionBlocker:EnableMouse(true)
+
+    card.secureActionButtons = {}
+    for _, category in ipairs({ QUEUE_CATEGORY_RATED, QUEUE_CATEGORY_UNRATED }) do
+        local buttonCategory = category
+        local secureActionButton = CreateFrame(
+            "Button",
+            SECURE_BUTTON_NAMES[buttonCategory][cardIndex],
+            UIParent,
+            "SecureActionButtonTemplate"
+        )
+        secureActionButton:SetSize(88, 22)
+        secureActionButton:RegisterForClicks("LeftButtonUp")
+        secureActionButton:SetAttribute("type", nil)
+        secureActionButton:SetAttribute("macrotext", nil)
+        secureActionButton:SetAttribute("useOnKeyDown", false)
+        secureActionButton:SetScript("OnEnter", function()
+            if card.actionButton:IsShown() and card.actionButton:IsEnabled() then
+                card.actionButton:LockHighlight()
+            end
+        end)
+        secureActionButton:SetScript("OnLeave", function()
+            ResetVisualActionButton(card)
+        end)
+        secureActionButton:SetScript("OnMouseDown", function(_, mouseButton)
+            if mouseButton == "LeftButton"
+                and card.actionButton:IsShown()
+                and card.actionButton:IsEnabled()
+            then
+                RunVisualActionButtonScript(card, "OnMouseDown", mouseButton)
+            end
+        end)
+        secureActionButton:SetScript("OnMouseUp", function(_, mouseButton)
+            if mouseButton == "LeftButton" then
+                RunVisualActionButtonScript(card, "OnMouseUp", mouseButton)
+            end
+        end)
+        secureActionButton:SetScript("OnHide", function()
+            ResetVisualActionButton(card)
+        end)
+        secureActionButton:SetScript("PostClick", function()
+            local state = card.cardState
+            if state and state.category == buttonCategory and state.bracket then
+                local now = GetTime and GetTime() or 0
+                pendingRoleCheck = {
+                    bracketKey = state.bracket.key,
+                    expiresAt = now + 5,
+                }
+            end
+            RefreshSoon()
+        end)
+        secureActionButton:Hide()
+        card.secureActionButtons[buttonCategory] = secureActionButton
+        EnsureBracketProxy(buttonCategory, cardIndex)
+    end
 
     card.queueText = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 13)
@@ -2342,7 +2659,6 @@ local function CreateCard(cardIndex)
     card.compactDelta:SetJustifyH("LEFT")
     card.compactDelta:Hide()
 
-    EnsureBracketProxy(cardIndex)
     card:Hide()
     return card
 end
@@ -2364,6 +2680,7 @@ local function EnsurePanel()
     panel:SetScript("OnDragStop", StopPanelMove)
     panel:SetScript("OnHide", function()
         StopPanelMove()
+        HideSecureQueueControls()
         RestoreQueueStatusButton()
     end)
 
@@ -2402,6 +2719,7 @@ local function EnsurePanel()
         if GameTooltip then GameTooltip:Hide() end
     end)
     panel.minimizeButton:SetScript("OnClick", function()
+        if not IsPVPUISettingUpAllowed() then return end
         SetPanelMinimized(not IsPanelMinimized())
         UpdateMinimizeButton()
         UpdatePanel()
@@ -2417,6 +2735,7 @@ local function EnsurePanel()
     for cardIndex = 1, MAX_CARDS do
         panel.cards[cardIndex] = CreateCard(cardIndex)
     end
+    CreateSecureQueueControls()
 
     panel.dynamicElapsed = 0
     panel:SetScript("OnUpdate", function(_, elapsed)
@@ -2529,6 +2848,7 @@ local function UpdateCard(card, state)
     card.actionButton:SetText(minimized and compactFailureButtonText or state.buttonText)
     card.actionButton:SetEnabled(state.buttonEnabled)
     card.actionButton:SetShown(state.buttonVisible and not showQueueInButton)
+    card.actionBlocker:SetShown(not (state.buttonEnabled and state.buttonVisible and not showQueueInButton))
     card.queueText:ClearAllPoints()
     if showQueueInButton then
         card.queueText:SetAllPoints(card.actionButton)
@@ -2583,11 +2903,12 @@ UpdatePanel = function()
             card.cardState = nil
             card.actionButton.cardState = nil
             card:Hide()
-            ClearSecureAction(cardIndex)
+            ClearSecureAction(cardIndex, state.category)
         end
     end
 
     panel:Show()
+    SyncSecureQueueControls()
     RelocateQueueStatusButton()
     ApplyPanelTheme()
 end
