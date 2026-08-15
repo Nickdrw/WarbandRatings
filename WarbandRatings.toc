@@ -21,6 +21,7 @@ Merchant.lua
 BagOpener.lua
 Mailbox.lua
 ArenaQueue.lua
+HonorAlert.lua
 UI.lua
 SeasonUI.lua
 Core.lua

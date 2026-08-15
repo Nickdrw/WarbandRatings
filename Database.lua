@@ -12,6 +12,15 @@ Database.FIELD_MEDIC_HAZARD_PAYOUT_ITEM_IDS = { 258620, 224557, 203724 }
 Database.FIELD_MEDIC_HAZARD_PAYOUT_NAME = "Field Medic's Hazard Payout"
 Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_ITEM_ID = 258534
 Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_NAME = "Illustrious Contender's Strongbox"
+Database.DEFAULT_HONOR_ALERT_THRESHOLD = 12000
+
+function Database.NormalizeHonorAlertThreshold(value)
+    value = tonumber(value)
+    if not value or value < 1 then
+        return Database.DEFAULT_HONOR_ALERT_THRESHOLD
+    end
+    return math.floor(value)
+end
 
 -- Rating column definitions.
 -- bracketIndex: index passed to GetPersonalRatedInfo().
@@ -181,6 +190,8 @@ function Database.Init()
             arenaQueueCategory = "rated",
             arenaQueueRatingSessions = {},
             conquestEquipmentChestMailRecipient = "",
+            honorAlertThreshold = Database.DEFAULT_HONOR_ALERT_THRESHOLD,
+            hideHonorAlertIcon = false,
             themeKey = "obsidian",
             windowHeight = 450,
             sortKey = "character",
@@ -243,6 +254,12 @@ function Database.Init()
     if WarbandRatingsDB.settings.conquestEquipmentChestMailRecipient == nil then
         WarbandRatingsDB.settings.conquestEquipmentChestMailRecipient =
             WarbandRatingsDB.settings.galacticEquipmentMailRecipient or ""
+    end
+    WarbandRatingsDB.settings.honorAlertThreshold = Database.NormalizeHonorAlertThreshold(
+        WarbandRatingsDB.settings.honorAlertThreshold
+    )
+    if WarbandRatingsDB.settings.hideHonorAlertIcon == nil then
+        WarbandRatingsDB.settings.hideHonorAlertIcon = false
     end
     WarbandRatingsDB.settings.galacticEquipmentMailRecipient = nil
     if WarbandRatingsDB.settings.windowHeight == nil then

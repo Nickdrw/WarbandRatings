@@ -25,6 +25,7 @@ Crests
 - Themed expansion and season dropdowns with historical seasonal character data
 - Shareable current-season statistics and completed-season Rewind cards
 - Season-aware crests and helper features
+- Customizable Honor alert (12,000 by default) with yellow/orange warnings on Honor gains in range, coalescing rapid currency updates and deferring instanced-PvP alerts until after the exit loading screen, plus a red threshold notice and movable bouncing icon
 - Column filters and display options
 
 ## How it works

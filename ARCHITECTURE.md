@@ -56,6 +56,7 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
   - Stormglass
   - Verdant
   - Ember
+- Honor alert threshold, defaulting to 12,000. Chat warnings appear at login and on Honor gains within range, escalating from yellow at 2,000 remaining to orange at 1,000 remaining and red at the threshold. Rapid currency snapshots are briefly coalesced so only the newest, closest warning is shown. Alerts earned in Arena or Battleground instances are deferred until `PLAYER_ENTERING_WORLD` after leaving; outdoor gains alert normally. Reaching the threshold shows a movable bouncing Honor icon while outside combat and instances; right-clicking it hides it until re-enabled in settings.
 - Per-column visibility filter window.
 - History graph `Games` slider defaults to the maximum visible game count, capped at 200 points.
 
@@ -152,6 +153,7 @@ Files load in `.toc` order. Each file receives the addon namespace via `local _,
 | `Merchant.lua` | `ns.Merchant` | Vendor helper for buying currency dump items such as Infused Heliotrope and the active seasonal Equipment Chest. |
 | `BagOpener.lua` | `ns.BagOpener` | Bag scanner and secure helper buttons for opening Field Medic payouts, Contender strongboxes, and the active seasonal Equipment Chest. |
 | `Mailbox.lua` | `ns.Mailbox` | Mail helper for attaching and sending the active seasonal Equipment Chest. |
+| `HonorAlert.lua` | `ns.HonorAlert` | Escalating Honor-threshold chat alerts and a movable bouncing icon with combat/instance suppression. |
 | `UI.lua` | `ns.UI` | Main table, settings panel, filters, themes, graph panel, tooltips, minimap button, Group Finder buttons, addon settings panel. |
 | `SeasonUI.lua` | `ns.SeasonUI` | Themed expansion/season dropdowns and the detached, screenshot-friendly statistics / Rewind card. |
 | `Core.lua` | entry point | Event registration, initialization orchestration, slash commands, addon compartment callbacks. |
@@ -249,6 +251,9 @@ WarbandRatingsDB.settings = {
     selectionContentSeasonKey = "pvp-42",
     hideMinimapIcon = false,
     hideCompartmentIcon = false,
+    honorAlertThreshold = 12000,
+    hideHonorAlertIcon = false,
+    honorAlertPosition = { x = 0, y = 0 }, -- saved after the alert icon is moved
     minimapPos = 220,
     hiddenColumns = {},
     themeKey = "obsidian",

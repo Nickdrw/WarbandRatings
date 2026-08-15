@@ -86,6 +86,14 @@ assert(WarbandRatingsDB.characterSettingsDefaults.hideArenaQueueHelper == true,
 assert(WarbandRatingsDB.settings.hiddenColumns.mythicPlus
         and WarbandRatingsDB.settings.hiddenColumns.crests,
     "new table filters should hide PvE columns by default")
+assert(WarbandRatingsDB.settings.honorAlertThreshold == 12000,
+    "the default Honor alert threshold should be 12,000")
+assert(WarbandRatingsDB.settings.hideHonorAlertIcon == false,
+    "the bouncing Honor alert icon should be visible by default")
+assert(Database.NormalizeHonorAlertThreshold("13500") == 13500,
+    "a custom Honor alert threshold was not normalized")
+assert(Database.NormalizeHonorAlertThreshold(0) == 12000,
+    "an invalid Honor alert threshold should use the default")
 
 Database.SaveCharacter("pvp-42", {
     name = "Tester",

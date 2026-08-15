@@ -191,6 +191,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         end
         Database.Init()
         databaseReady = true
+        if ns.HonorAlert and ns.HonorAlert.Init then
+            ns.HonorAlert.Init()
+        end
 
         -- Request PvP data from server; ratings may not be available immediately
         DataCollection.RequestRatedInfo()

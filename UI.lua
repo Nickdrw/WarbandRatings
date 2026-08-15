@@ -998,6 +998,12 @@ function UI.ApplyTheme()
                 SetFontColor(label, theme.headerText)
             end
         end
+        if settingsPanel.settingsSeparators then
+            for _, separator in ipairs(settingsPanel.settingsSeparators) do
+                SetTextureColor(separator, theme.border, 0.42)
+            end
+        end
+        SetFontColor(settingsPanel.honorAlertThresholdLabel, theme.text)
         if UpdateSettingsTabs then
             UpdateSettingsTabs()
         end
@@ -1488,6 +1494,68 @@ function UI.CreateSettingsSectionLabel(parent, label, yOffset)
     return fontString
 end
 
+function UI.CreateSettingsSeparator(parent, yOffset)
+    local owner = parent.settingsWindow or parent
+    owner.settingsSeparators = owner.settingsSeparators or {}
+
+    local separator = parent:CreateTexture(nil, "ARTWORK")
+    separator:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, yOffset)
+    separator:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -14, yOffset)
+    separator:SetHeight(1)
+    SetTextureColor(separator, GetActiveTheme().border, 0.42)
+    owner.settingsSeparators[#owner.settingsSeparators + 1] = separator
+    return separator
+end
+
+function UI.RefreshHonorAlertThresholdInput()
+    if not settingsPanel or not settingsPanel.honorAlertThresholdEditBox then return end
+
+    local editBox = settingsPanel.honorAlertThresholdEditBox
+    if editBox.HasFocus and editBox:HasFocus() then return end
+    editBox:SetText(tostring(Database.GetSettings().honorAlertThreshold))
+end
+
+function UI.CreateHonorAlertThresholdInput(parent, yOffset)
+    local owner = parent.settingsWindow or parent
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 12, yOffset)
+    row:SetSize(196, 26)
+
+    local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("LEFT", row, "LEFT", 2, 0)
+    label:SetText("Threshold")
+    SetFontColor(label, GetActiveTheme().text)
+    owner.honorAlertThresholdLabel = label
+
+    local editBox = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+    editBox:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+    editBox:SetSize(76, 22)
+    editBox:SetAutoFocus(false)
+    editBox:SetNumeric(true)
+    editBox:SetMaxLetters(6)
+    editBox:SetJustifyH("RIGHT")
+    editBox:SetText(tostring(Database.GetSettings().honorAlertThreshold))
+    owner.honorAlertThresholdEditBox = editBox
+
+    editBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+    end)
+    editBox:SetScript("OnEscapePressed", function(self)
+        self:SetText(tostring(Database.GetSettings().honorAlertThreshold))
+        self:ClearFocus()
+    end)
+    editBox:SetScript("OnEditFocusLost", function(self)
+        local threshold = Database.NormalizeHonorAlertThreshold(self:GetText())
+        Database.SetSetting("honorAlertThreshold", threshold)
+        self:SetText(tostring(threshold))
+        if ns.HonorAlert and ns.HonorAlert.Refresh then
+            ns.HonorAlert.Refresh()
+        end
+    end)
+
+    return row
+end
+
 function UI.CreateSettingsPanel()
     if settingsPanel then return settingsPanel end
 
@@ -1534,6 +1602,7 @@ function UI.CreateSettingsPanel()
     settingsPanel.filterCheckboxes = {}
     settingsPanel.filterPresetButtons = {}
     settingsPanel.sectionLabels = {}
+    settingsPanel.settingsSeparators = {}
 
     local settingsPage = CreateFrame("Frame", nil, settingsPanel)
     settingsPage:SetAllPoints(settingsPanel)
@@ -1561,7 +1630,21 @@ function UI.CreateSettingsPanel()
     UI.CreateCheckbox(settingsPage, "Hide characters with no rating", "hideNoRating", yOffset)
     yOffset = yOffset - 30
     UI.CreateCheckbox(settingsPage, "Hide brackets with no rating", "hideEmptyColumns", yOffset)
-    yOffset = yOffset - 42
+    yOffset = yOffset - 34
+    UI.CreateSettingsSeparator(settingsPage, yOffset)
+    yOffset = yOffset - 16
+    UI.CreateSettingsSectionLabel(settingsPage, "Honor alert", yOffset)
+    yOffset = yOffset - 26
+    UI.CreateHonorAlertThresholdInput(settingsPage, yOffset)
+    yOffset = yOffset - 30
+    UI.CreateCheckbox(settingsPage, "Hide bouncing Honor icon", "hideHonorAlertIcon", yOffset, function()
+        if ns.HonorAlert and ns.HonorAlert.Refresh then
+            ns.HonorAlert.Refresh()
+        end
+    end)
+    yOffset = yOffset - 34
+    UI.CreateSettingsSeparator(settingsPage, yOffset)
+    yOffset = yOffset - 16
     UI.CreateSettingsSectionLabel(settingsPage, "Interface settings", yOffset)
     yOffset = yOffset - 26
     UI.CreateCheckbox(settingsPage, "Hide minimap icon", "hideMinimapIcon", yOffset, function()
@@ -1571,7 +1654,9 @@ function UI.CreateSettingsPanel()
     UI.CreateCheckbox(settingsPage, "Hide compartment icon", "hideCompartmentIcon", yOffset, function()
         UI.UpdateCompartmentVisibility()
     end)
-    yOffset = yOffset - 42
+    yOffset = yOffset - 34
+    UI.CreateSettingsSeparator(settingsPage, yOffset)
+    yOffset = yOffset - 16
     UI.CreateThemeSelector(settingsPage, yOffset)
 
     local helperYOffset = -38
@@ -1699,6 +1784,7 @@ function UI.RefreshSettingsCheckboxes()
             cb:SetChecked(settings[cb.settingKey])
         end
     end
+    UI.RefreshHonorAlertThresholdInput()
 
     local featureAvailable = ns.Season.IsFeatureAvailable("conquestEquipmentChest")
     for _, cb in ipairs(settingsPanel.seasonFeatureCheckboxes or {}) do
