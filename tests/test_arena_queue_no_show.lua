@@ -3,6 +3,7 @@
 local epoch = 100000
 local monotonic = 5000
 local activeAura
+local activeAuraSpellID = 1311694
 
 WarbandRatingsDB = { settings = {} }
 GetServerTime = function() return epoch end
@@ -13,7 +14,7 @@ C_Spell = {
 }
 C_UnitAuras = {
     GetPlayerAuraBySpellID = function(spellID)
-        if spellID == 1311694 then return activeAura end
+        if spellID == activeAuraSpellID then return activeAura end
     end,
 }
 
@@ -51,6 +52,8 @@ assert(WarbandRatingsDB.settings.arenaQueueNoShowPenalty.duration == 10 * 60,
     "observed penalty tier should be persisted")
 assert(noShow.GetActiveText():find("|T1234", 1, true),
     "active message should use the aura icon")
+assert(noShow.GetActiveText():find("No-Show penalty active", 1, true),
+    "missed-queue aura should retain the No-Show label")
 assert(not noShow.GetActiveText():find("10:00", 1, true),
     "active message should not duplicate the button countdown")
 assert(noShow.GetActiveButtonText() == "10:00",
@@ -65,6 +68,21 @@ epoch = epoch + 10 * 60
 monotonic = monotonic + 10 * 60
 activeAura = nil
 assert(not noShow.ScanActivePenalty(), "expired aura should no longer block queueing")
+
+activeAuraSpellID = 368798
+activeAura = {
+    duration = 15 * 60,
+    expirationTime = monotonic + 15 * 60,
+    icon = 4321,
+}
+assert(noShow.ScanActivePenalty(), "match-leaving aura should be detected")
+assert(noShow.GetActiveText():find("Match-leaving penalty active", 1, true),
+    "match-leaving aura should use a distinct penalty label")
+assert(not noShow.GetActiveText():find("No-Show penalty active", 1, true),
+    "match-leaving aura should not use the missed-queue label")
+activeAura = nil
+activeAuraSpellID = 1311694
+noShow.ScanActivePenalty()
 
 local warning = noShow.GetWarning()
 assert(warning and warning.remainingSeconds == 50 * 60,

@@ -22,9 +22,10 @@ local FALLBACK_BADGE_TEXTURE = 2022761
 local NoShow = {
     -- Missed invitations stack until one hour after the resulting aura was applied.
     -- The aura's full duration identifies the current step in the penalty ladder.
+    matchLeavingSpellID = 368798,
     missedQueueSpellID = 1311694,
     spellIDs = {
-        368798, -- Leaving an active Solo Shuffle match.
+        368798, -- Leaving an active Solo Shuffle or Battleground Blitz match.
         1311694, -- Missing a Solo Shuffle or Battleground Blitz invitation.
     },
     resetSeconds = 60 * 60,
@@ -1188,7 +1189,10 @@ function NoShow.GetActiveText()
         NoShow.icon or NoShow.GetSpellIcon(NoShow.missedQueueSpellID),
         NoShow.activeIconSize
     )
-    local text = (icon ~= "" and (icon .. " ") or "") .. "No-Show penalty active"
+    local penaltyLabel = NoShow.activeSpellID == NoShow.matchLeavingSpellID
+        and "Match-leaving penalty active"
+        or "No-Show penalty active"
+    local text = (icon ~= "" and (icon .. " ") or "") .. penaltyLabel
     return text .. "."
 end
 
@@ -1200,16 +1204,19 @@ function NoShow.ScanActivePenalty()
     noShowPenaltyActive = false
     NoShow.icon = nil
     NoShow.expirationTime = nil
+    NoShow.activeSpellID = nil
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         for _, spellID in ipairs(NoShow.spellIDs) do
             local auraData = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
             if auraData then
                 noShowPenaltyActive = true
                 if spellID == NoShow.missedQueueSpellID then
+                    NoShow.activeSpellID = spellID
                     NoShow.icon = auraData.icon or NoShow.GetSpellIcon(spellID)
                     NoShow.expirationTime = auraData.expirationTime
                     NoShow.TrackMissedQueue(auraData)
                 elseif not NoShow.icon then
+                    NoShow.activeSpellID = spellID
                     NoShow.icon = auraData.icon or NoShow.GetSpellIcon(spellID)
                     NoShow.expirationTime = auraData.expirationTime
                 end
@@ -3358,8 +3365,13 @@ function ArenaQueue.Attach()
 
         if event == "UNIT_AURA" then
             local wasActive = noShowPenaltyActive
+            local previousSpellID = NoShow.activeSpellID
             NoShow.ScanActivePenalty()
-            if noShowPenaltyActive == wasActive then return end
+            if noShowPenaltyActive == wasActive
+                and NoShow.activeSpellID == previousSpellID
+            then
+                return
+            end
         end
 
         if event == "GROUP_ROSTER_UPDATE" then
