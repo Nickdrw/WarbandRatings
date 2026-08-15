@@ -19,9 +19,20 @@ local CARD_WIDTH = PANEL_WIDTH - CARD_SIDE_INSET * 2
 local CARD_PROGRESS_WIDTH = CARD_WIDTH - 20
 local MAX_CARDS = 4
 local FALLBACK_BADGE_TEXTURE = 2022761
-local NO_SHOW_SPELL_IDS = {
-    368798, -- Leaving an active Solo Shuffle match.
-    1311694, -- Missing a Solo Shuffle or Battleground Blitz invitation.
+local NoShow = {
+    -- Missed invitations stack until one hour after the resulting aura was applied.
+    -- The aura's full duration identifies the current step in the penalty ladder.
+    missedQueueSpellID = 1311694,
+    spellIDs = {
+        368798, -- Leaving an active Solo Shuffle match.
+        1311694, -- Missing a Solo Shuffle or Battleground Blitz invitation.
+    },
+    resetSeconds = 60 * 60,
+    penaltySeconds = { 60, 5 * 60, 10 * 60, 15 * 60, 20 * 60 },
+    durationTolerance = 5,
+    alertTexture = "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew",
+    activeIconSize = 16,
+    alertIconSize = 14,
 }
 local QUEUE_EYE_TOP_PADDING = 6
 local QUEUE_EYE_FLARE_SCALE = 1.15
@@ -1051,17 +1062,302 @@ local function FormatPVPItemLevelFailure(requiredItemLevel, currentItemLevel, pl
     return ("PvP ilvl %d/%d required."):format(currentItemLevel, requiredItemLevel)
 end
 
-local function HasNoShowPenalty()
+function NoShow.GetCurrentEpoch()
+    local getServerTime = _G.GetServerTime
+    if getServerTime then
+        local serverTime = tonumber(getServerTime())
+        if serverTime and serverTime > 0 then
+            return serverTime
+        end
+    end
+    return time and tonumber(time()) or nil
+end
+
+function NoShow.NormalizeDuration(duration)
+    duration = tonumber(duration)
+    if not duration then return nil end
+
+    for tierIndex, tierDuration in ipairs(NoShow.penaltySeconds) do
+        if math.abs(duration - tierDuration) <= NoShow.durationTolerance then
+            return tierDuration, tierIndex
+        end
+    end
+end
+
+function NoShow.SaveRecord(record)
+    local settings = GetSettings()
+    if settings then
+        settings.arenaQueueNoShowPenalty = record
+    end
+end
+
+function NoShow.GetSavedRecord()
+    local settings = GetSettings()
+    local record = settings and settings.arenaQueueNoShowPenalty
+    if type(record) ~= "table" then return nil end
+
+    local appliedAt = tonumber(record.appliedAt)
+    local duration, tierIndex = NoShow.NormalizeDuration(record.duration)
+    if not appliedAt or not duration then
+        NoShow.SaveRecord(nil)
+        return nil
+    end
+
+    record.appliedAt = appliedAt
+    record.duration = duration
+    return record, tierIndex
+end
+
+function NoShow.GetAuraAppliedAt(auraData)
+    local currentEpoch = NoShow.GetCurrentEpoch()
+    if not currentEpoch then return nil end
+
+    local auraDuration = auraData and tonumber(auraData.duration)
+    local expirationTime = auraData and tonumber(auraData.expirationTime)
+    local currentTime = GetTime and tonumber(GetTime())
+    if not auraDuration or auraDuration <= 0 or not expirationTime or not currentTime then
+        return currentEpoch
+    end
+
+    local remaining = math.max(0, expirationTime - currentTime)
+    local elapsed = math.max(0, math.min(auraDuration, auraDuration - remaining))
+    return math.floor(currentEpoch - elapsed + 0.5)
+end
+
+function NoShow.TrackMissedQueue(auraData)
+    local duration = NoShow.NormalizeDuration(auraData and auraData.duration)
+    local appliedAt = duration and NoShow.GetAuraAppliedAt(auraData)
+    if not duration or not appliedAt then return end
+
+    local currentRecord = NoShow.GetSavedRecord()
+    if currentRecord
+        and currentRecord.duration == duration
+        and math.abs(currentRecord.appliedAt - appliedAt) <= 2
+    then
+        return
+    end
+
+    NoShow.SaveRecord({
+        appliedAt = appliedAt,
+        duration = duration,
+    })
+end
+
+function NoShow.GetSpellIcon(spellID)
+    local spellAPI = _G.C_Spell
+    if spellAPI and spellAPI.GetSpellTexture then
+        local icon = spellAPI.GetSpellTexture(spellID)
+        if icon then return icon end
+    end
+
+    local getSpellTexture = _G.GetSpellTexture
+    return getSpellTexture and getSpellTexture(spellID) or nil
+end
+
+function NoShow.FormatInlineIcon(texture, size)
+    if not texture then return "" end
+    size = tonumber(size) or NoShow.activeIconSize
+    return ("|T%s:%d:%d:0:0|t"):format(tostring(texture), size, size)
+end
+
+function NoShow.FormatCountdown(seconds)
+    seconds = tonumber(seconds)
+    if not seconds then return nil end
+
+    seconds = math.max(0, math.ceil(seconds))
+    return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
+end
+
+function NoShow.GetActiveCountdown()
+    local expirationTime = tonumber(NoShow.expirationTime)
+    local currentTime = GetTime and tonumber(GetTime())
+    if not noShowPenaltyActive or not expirationTime or not currentTime then return nil end
+    return NoShow.FormatCountdown(expirationTime - currentTime)
+end
+
+function NoShow.GetActiveText()
+    local icon = NoShow.FormatInlineIcon(
+        NoShow.icon or NoShow.GetSpellIcon(NoShow.missedQueueSpellID),
+        NoShow.activeIconSize
+    )
+    local text = (icon ~= "" and (icon .. " ") or "") .. "No-Show penalty active"
+    return text .. "."
+end
+
+function NoShow.GetActiveButtonText()
+    return NoShow.GetActiveCountdown() or "--:--"
+end
+
+function NoShow.ScanActivePenalty()
     noShowPenaltyActive = false
+    NoShow.icon = nil
+    NoShow.expirationTime = nil
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        for _, spellID in ipairs(NO_SHOW_SPELL_IDS) do
-            if C_UnitAuras.GetPlayerAuraBySpellID(spellID) then
+        for _, spellID in ipairs(NoShow.spellIDs) do
+            local auraData = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
+            if auraData then
                 noShowPenaltyActive = true
-                break
+                if spellID == NoShow.missedQueueSpellID then
+                    NoShow.icon = auraData.icon or NoShow.GetSpellIcon(spellID)
+                    NoShow.expirationTime = auraData.expirationTime
+                    NoShow.TrackMissedQueue(auraData)
+                elseif not NoShow.icon then
+                    NoShow.icon = auraData.icon or NoShow.GetSpellIcon(spellID)
+                    NoShow.expirationTime = auraData.expirationTime
+                end
             end
         end
     end
     return noShowPenaltyActive
+end
+
+function NoShow.GetWarning()
+    if noShowPenaltyActive then return nil end
+
+    local record, tierIndex = NoShow.GetSavedRecord()
+    local currentEpoch = record and NoShow.GetCurrentEpoch()
+    if not record or not currentEpoch then return nil end
+    if record.appliedAt > currentEpoch + NoShow.durationTolerance then
+        NoShow.SaveRecord(nil)
+        return nil
+    end
+
+    local remainingSeconds = record.appliedAt + NoShow.resetSeconds - currentEpoch
+    if remainingSeconds <= 0 then
+        NoShow.SaveRecord(nil)
+        return nil
+    end
+
+    local nextTierIndex = math.min(tierIndex + 1, #NoShow.penaltySeconds)
+    return {
+        remainingSeconds = remainingSeconds,
+        nextPenaltySeconds = NoShow.penaltySeconds[nextTierIndex],
+    }
+end
+
+function NoShow.FormatWarningSentence(warning)
+    if not warning then return nil end
+
+    local remainingText = NoShow.FormatCountdown(warning.remainingSeconds)
+    local nextPenaltyMinutes = math.floor(warning.nextPenaltySeconds / 60)
+    return ("Next missed queue within %s triggers a %d min penalty."):format(
+        remainingText,
+        nextPenaltyMinutes
+    )
+end
+
+function NoShow.FormatWarning(warning, minimized)
+    if not warning then return nil end
+
+    local remainingText = NoShow.FormatCountdown(warning.remainingSeconds)
+    local nextPenaltyMinutes = math.floor(warning.nextPenaltySeconds / 60)
+    local icon = NoShow.FormatInlineIcon(
+        NoShow.alertTexture,
+        minimized and 12 or NoShow.alertIconSize
+    )
+    if minimized then
+        return ("%s Miss: %dm (%s left)"):format(
+            icon,
+            nextPenaltyMinutes,
+            remainingText
+        )
+    end
+    return icon .. " " .. NoShow.FormatWarningSentence(warning)
+end
+
+function NoShow.ShowQueueWarningTooltip(button)
+    local tooltip = _G.GameTooltip
+    if not tooltip or not button or not button.tooltipText then return end
+
+    tooltip:SetOwner(button, "ANCHOR_RIGHT")
+    tooltip:SetText(button.tooltipText, 1, 0.82, 0, 1, true)
+    tooltip:Show()
+end
+
+function NoShow.HideQueueWarningTooltip(button)
+    local tooltip = _G.GameTooltip
+    if tooltip and (not tooltip.IsOwned or tooltip:IsOwned(button)) then
+        tooltip:Hide()
+    end
+end
+
+function NoShow.UpdateQueueWarningDisplay(card, state, warning)
+    local button = card and card.noShowWarningButton
+    if not button then return end
+
+    if warning then
+        button.tooltipText = NoShow.FormatWarningSentence(warning)
+        button:Show()
+        local tooltip = _G.GameTooltip
+        if tooltip and tooltip.IsOwned and tooltip:IsOwned(button) then
+            NoShow.ShowQueueWarningTooltip(button)
+        end
+    else
+        button.tooltipText = nil
+        button:Hide()
+        NoShow.HideQueueWarningTooltip(button)
+    end
+
+    if not state then return end
+
+    local showWarning = warning ~= nil
+    local showQueueInButton = card.minimizedLayout
+        and state.queue ~= nil
+        and (not state.buttonVisible or showWarning)
+    local showActionButton = state.buttonVisible and not showQueueInButton and not showWarning
+    card.actionButton:SetShown(showActionButton)
+    card.actionBlocker:SetShown(
+        showWarning or not (state.buttonEnabled and showActionButton)
+    )
+
+    local compactFailureShowsRating = state.failureKind == "notLeader"
+        or state.failureKind == "noShow"
+    local showCompactRating = card.minimizedLayout
+        and state.isRated
+        and not state.noShowWarning
+        and (showQueueInButton or not state.failureReason or compactFailureShowsRating)
+    card.compactRating:SetShown(showCompactRating)
+    card.compactDelta:SetShown(showCompactRating)
+    card.queueText:SetShown(showWarning or showQueueInButton or not showCompactRating)
+
+    card.queueText:ClearAllPoints()
+    if showWarning and showQueueInButton then
+        card.queueText:SetPoint("TOPLEFT", card.actionButton, "TOPLEFT", 0, 0)
+        card.queueText:SetPoint("BOTTOMRIGHT", button, "BOTTOMLEFT", -2, 0)
+        card.queueText:SetJustifyH("CENTER")
+    elseif showWarning then
+        card.queueText:SetPoint(
+            "BOTTOMLEFT",
+            card,
+            "BOTTOMLEFT",
+            10,
+            card.minimizedLayout and 7 or 13
+        )
+        card.queueText:SetPoint("RIGHT", button, "LEFT", -8, 0)
+        card.queueText:SetJustifyH("LEFT")
+    elseif showQueueInButton then
+        card.queueText:SetAllPoints(card.actionButton)
+        card.queueText:SetJustifyH("CENTER")
+    else
+        card.queueText:SetPoint(
+            "BOTTOMLEFT",
+            card,
+            "BOTTOMLEFT",
+            10,
+            card.minimizedLayout and 7 or 13
+        )
+        if state.buttonVisible then
+            card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
+        else
+            card.queueText:SetPoint("RIGHT", card, "RIGHT", -10, 0)
+        end
+        card.queueText:SetJustifyH("LEFT")
+    end
+end
+
+function NoShow.IsBracket(bracket)
+    return bracket
+        and (bracket.key == "soloShuffle" or bracket.key == "ratedBGBlitz")
 end
 
 local function GetSoloShuffleFailure()
@@ -1071,8 +1367,8 @@ local function GetSoloShuffleFailure()
         return "Waiting for rated PvP availability."
     end
 
-    if HasNoShowPenalty() then
-        return "No-Show penalty active.", "noShow"
+    if noShowPenaltyActive then
+        return NoShow.GetActiveText(), "noShow"
     end
 
     if C_PvP and C_PvP.GetRatedSoloShuffleMinItemLevel then
@@ -1126,8 +1422,8 @@ local function GetBlitzFailure(groupSize)
         return "Waiting for rated PvP availability."
     end
 
-    if HasNoShowPenalty() then
-        return "No-Show penalty active.", "noShow"
+    if noShowPenaltyActive then
+        return NoShow.GetActiveText(), "noShow"
     end
 
     local lfgFailure = GetLFGListFailure()
@@ -1423,6 +1719,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
         buttonEnabled = false,
         buttonVisible = true,
         visualState = "available",
+        noShowWarningEligible = NoShow.IsBracket(bracket),
     }
 
     if queue then
@@ -1480,6 +1777,14 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             and "Rated PvP queue controls are not ready."
             or "Unrated PvP queue controls are not ready."
     end
+    if not state.failureReason and state.noShowWarningEligible then
+        local warning = NoShow.GetWarning()
+        if warning then
+            state.noShowWarning = true
+            state.noShowWarningText = NoShow.FormatWarning(warning, false)
+            state.noShowWarningCompactText = NoShow.FormatWarning(warning, true)
+        end
+    end
     state.buttonEnabled = not state.failureReason
     state.statusText = state.failureReason and "UNAVAILABLE" or "READY TO QUEUE"
     return state
@@ -1488,6 +1793,7 @@ end
 local function GetPanelState()
     if IsHelperHidden() or not GetObjectiveTracker() then return nil end
 
+    NoShow.ScanActivePenalty()
     local queueGroups = ScanPVPQueues()
     local ratedQueues = queueGroups[QUEUE_CATEGORY_RATED]
     local unratedQueues = queueGroups[QUEUE_CATEGORY_UNRATED]
@@ -1573,11 +1879,46 @@ local function UpdateDynamicCard(card)
     local state = card.cardState
     local queue = state and state.queue
     if not state or not queue then
+        NoShow.UpdateQueueWarningDisplay(card, state, nil)
         card.readyGlow:Hide()
         card.progressBg:Hide()
         card.progressFill:Hide()
+        if state and state.failureKind == "noShow" then
+            state.failureReason = NoShow.GetActiveText()
+            card.queueText:SetText(state.failureReason)
+            card.actionButton:SetText(NoShow.GetActiveButtonText())
+        elseif state and state.noShowWarning and not state.failureReason then
+            local warning = NoShow.GetWarning()
+            if warning then
+                state.noShowWarningText = NoShow.FormatWarning(warning, false)
+                state.noShowWarningCompactText = NoShow.FormatWarning(warning, true)
+                SetQueueDisplayText(
+                    card,
+                    state.noShowWarningText,
+                    state.noShowWarningCompactText
+                )
+            else
+                state.noShowWarning = false
+                state.noShowWarningText = nil
+                state.noShowWarningCompactText = nil
+                card.queueText:SetText(state.bracket.description)
+                if card.minimizedLayout and state.isRated then
+                    card.queueText:Hide()
+                    card.compactRating:Show()
+                    card.compactDelta:Show()
+                end
+            end
+        end
         return
     end
+
+    local queueWarning
+    if state.noShowWarningEligible
+        and (queue.status == "queued" or queue.status == "confirm")
+    then
+        queueWarning = NoShow.GetWarning()
+    end
+    NoShow.UpdateQueueWarningDisplay(card, state, queueWarning)
 
     if queue.status == "rolecheck" then
         card.readyGlow:Hide()
@@ -2589,6 +2930,26 @@ local function CreateCard(cardIndex)
     card.actionBlocker:SetFrameLevel(card.actionButton:GetFrameLevel() + 2)
     card.actionBlocker:EnableMouse(true)
 
+    card.noShowWarningButton = CreateFrame("Button", nil, card)
+    card.noShowWarningButton:SetSize(22, 22)
+    card.noShowWarningButton:SetPoint("RIGHT", card.actionButton, "RIGHT", 0, 0)
+    card.noShowWarningButton:SetFrameLevel(card.actionBlocker:GetFrameLevel() + 1)
+    card.noShowWarningButton:EnableMouse(true)
+    card.noShowWarningButton.icon = card.noShowWarningButton:CreateTexture(nil, "ARTWORK")
+    card.noShowWarningButton.icon:SetSize(18, 18)
+    card.noShowWarningButton.icon:SetPoint("CENTER")
+    card.noShowWarningButton.icon:SetTexture(NoShow.alertTexture)
+    card.noShowWarningButton:SetScript("OnEnter", function(button)
+        NoShow.ShowQueueWarningTooltip(button)
+    end)
+    card.noShowWarningButton:SetScript("OnLeave", function(button)
+        NoShow.HideQueueWarningTooltip(button)
+    end)
+    card.noShowWarningButton:SetScript("OnHide", function(button)
+        NoShow.HideQueueWarningTooltip(button)
+    end)
+    card.noShowWarningButton:Hide()
+
     card.secureActionButtons = {}
     for _, category in ipairs({ QUEUE_CATEGORY_RATED, QUEUE_CATEGORY_UNRATED }) do
         local buttonCategory = category
@@ -2825,43 +3186,29 @@ local function UpdateCard(card, state)
     end
 
     card.statusText:SetText(state.statusText)
-    card.queueText:SetText(state.failureReason or state.bracket.description)
+    local idleText = state.failureReason or state.bracket.description
+    if state.noShowWarning then
+        idleText = minimized and state.noShowWarningCompactText or state.noShowWarningText
+    end
+    card.queueText:SetText(idleText)
     local isLeaderOnly = state.failureKind == "notLeader"
     local isNoShow = state.failureKind == "noShow"
     local compactFailureButtonText
     if isLeaderOnly then
         compactFailureButtonText = "Leader only"
     elseif isNoShow then
-        compactFailureButtonText = "No-Show"
+        compactFailureButtonText = NoShow.GetActiveButtonText()
     end
-    local showQueueInButton = minimized and state.queue ~= nil and not state.buttonVisible
-    local showCompactRating = minimized
-        and state.isRated
-        and (showQueueInButton or not state.failureReason or compactFailureButtonText ~= nil)
     local ratingText = state.rating.rating > 0 and state.rating.rating or "—"
     local deltaText = sessionDelta == nil and "—" or ((sessionDelta >= 0 and "+" or "") .. sessionDelta)
     card.compactRating:SetText("Rating " .. ratingText)
-    card.compactRating:SetShown(showCompactRating)
     card.compactDelta:SetText("Session " .. deltaText)
-    card.compactDelta:SetShown(showCompactRating)
-    card.queueText:SetShown(showQueueInButton or not showCompactRating)
-    card.actionButton:SetText(minimized and compactFailureButtonText or state.buttonText)
+    card.actionButton:SetText(
+        isNoShow and NoShow.GetActiveButtonText()
+            or (minimized and compactFailureButtonText or state.buttonText)
+    )
     card.actionButton:SetEnabled(state.buttonEnabled)
-    card.actionButton:SetShown(state.buttonVisible and not showQueueInButton)
-    card.actionBlocker:SetShown(not (state.buttonEnabled and state.buttonVisible and not showQueueInButton))
-    card.queueText:ClearAllPoints()
-    if showQueueInButton then
-        card.queueText:SetAllPoints(card.actionButton)
-        card.queueText:SetJustifyH("CENTER")
-    else
-        card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, minimized and 7 or 13)
-        if state.buttonVisible then
-            card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
-        else
-            card.queueText:SetPoint("RIGHT", card, "RIGHT", -10, 0)
-        end
-        card.queueText:SetJustifyH("LEFT")
-    end
+    NoShow.UpdateQueueWarningDisplay(card, state, nil)
     card:Show()
     UpdateDynamicCard(card)
 end
@@ -3003,7 +3350,7 @@ function ArenaQueue.Attach()
 
         if event == "UNIT_AURA" then
             local wasActive = noShowPenaltyActive
-            HasNoShowPenalty()
+            NoShow.ScanActivePenalty()
             if noShowPenaltyActive == wasActive then return end
         end
 
@@ -3048,6 +3395,7 @@ function ArenaQueue.Attach()
             ratingSessionRecord = nil
             sessionRatingBaselines = {}
         elseif event == "PLAYER_ENTERING_WORLD" then
+            NoShow.ScanActivePenalty()
             ratedStatsReady = false
             if ratingSessionResumeSaved == nil then
                 ratingSessionResumeSaved = arg2 == true
