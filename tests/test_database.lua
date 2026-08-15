@@ -1,4 +1,4 @@
--- luacheck: globals WarbandRatingsDB time
+-- luacheck: globals WarbandRatingsDB WarbandRatingsCharacterDB time
 
 time = function() return 2200 end
 
@@ -19,7 +19,7 @@ local ns = {
 
 WarbandRatingsDB = {
     schemaVersion = 2,
-    settings = {},
+    settings = { hideArenaQueueHelper = true },
     seasons = {
         ["pvp-42"] = {
             seasonKey = "pvp-42",
@@ -67,10 +67,21 @@ WarbandRatingsDB = {
         },
     },
 }
+WarbandRatingsCharacterDB = nil
 
 assert(loadfile("Database.lua"))("WarbandRatings", ns)
 local Database = ns.Database
 Database.Init()
+
+assert(Database.GetCharacterSetting("hideArenaQueueHelper") == true,
+    "the former account-wide queue-helper choice was not migrated to the character")
+assert(WarbandRatingsDB.settings.hideArenaQueueHelper == nil,
+    "the queue-helper choice should no longer remain in account-wide settings")
+Database.SetCharacterSetting("hideArenaQueueHelper", false)
+assert(Database.GetCharacterSetting("hideArenaQueueHelper") == false,
+    "the character-specific queue-helper choice was not saved")
+assert(WarbandRatingsDB.characterSettingsDefaults.hideArenaQueueHelper == true,
+    "changing one character should not alter the migration default for other characters")
 
 assert(WarbandRatingsDB.settings.hiddenColumns.mythicPlus
         and WarbandRatingsDB.settings.hiddenColumns.crests,

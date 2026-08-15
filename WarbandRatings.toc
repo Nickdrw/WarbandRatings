@@ -6,6 +6,7 @@
 ## IconTexture: Interface\AddOns\WarbandRatings\media\warbandratings-icon
 ## Category: PvP
 ## SavedVariables: WarbandRatingsDB
+## SavedVariablesPerCharacter: WarbandRatingsCharacterDB
 ## X-Curse-Project-ID: 1517926
 ## X-Wago-ID: EGPeDeN1
 

@@ -177,7 +177,6 @@ function Database.Init()
             hideHeliotropeHelper = false,
             hideConquestEquipmentChestPurchaseHelper = false,
             hideConquestEquipmentChestMailHelper = false,
-            hideArenaQueueHelper = false,
             arenaQueueMinimized = false,
             arenaQueueCategory = "rated",
             arenaQueueRatingSessions = {},
@@ -210,8 +209,27 @@ function Database.Init()
     end
     WarbandRatingsDB.settings.hideGalacticConquestChestHelper = nil
     WarbandRatingsDB.settings.hideGalacticEquipmentMailHelper = nil
-    if WarbandRatingsDB.settings.hideArenaQueueHelper == nil then
-        WarbandRatingsDB.settings.hideArenaQueueHelper = false
+
+    -- Preserve the former account-wide choice as the initial value for each
+    -- character, while keeping all subsequent changes character-specific.
+    if type(WarbandRatingsDB.characterSettingsDefaults) ~= "table" then
+        WarbandRatingsDB.characterSettingsDefaults = {}
+    end
+    if WarbandRatingsDB.characterSettingsDefaults.hideArenaQueueHelper == nil then
+        WarbandRatingsDB.characterSettingsDefaults.hideArenaQueueHelper =
+            WarbandRatingsDB.settings.hideArenaQueueHelper == true
+    end
+    WarbandRatingsDB.settings.hideArenaQueueHelper = nil
+
+    if type(WarbandRatingsCharacterDB) ~= "table" then
+        WarbandRatingsCharacterDB = {}
+    end
+    if type(WarbandRatingsCharacterDB.settings) ~= "table" then
+        WarbandRatingsCharacterDB.settings = {}
+    end
+    if WarbandRatingsCharacterDB.settings.hideArenaQueueHelper == nil then
+        WarbandRatingsCharacterDB.settings.hideArenaQueueHelper =
+            WarbandRatingsDB.characterSettingsDefaults.hideArenaQueueHelper == true
     end
     if WarbandRatingsDB.settings.arenaQueueMinimized == nil then
         WarbandRatingsDB.settings.arenaQueueMinimized = false
@@ -363,6 +381,18 @@ end
 
 function Database.SetSetting(key, value)
     WarbandRatingsDB.settings[key] = value
+end
+
+function Database.GetCharacterSettings()
+    return WarbandRatingsCharacterDB.settings
+end
+
+function Database.GetCharacterSetting(key)
+    return WarbandRatingsCharacterDB.settings[key]
+end
+
+function Database.SetCharacterSetting(key, value)
+    WarbandRatingsCharacterDB.settings[key] = value
 end
 
 local function PreserveKnownStatValue(existingRatings, newRatings, key)

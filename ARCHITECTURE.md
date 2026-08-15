@@ -261,6 +261,16 @@ WarbandRatingsDB.settings = {
 
 Missing settings are filled during `Database.Init()` without overwriting existing user choices.
 
+Queue-helper visibility is character-specific and stored separately by WoW:
+
+```lua
+WarbandRatingsCharacterDB.settings = {
+    hideArenaQueueHelper = false,
+}
+```
+
+On upgrade, the former account-wide choice seeds each character's initial value. Changing it afterward affects only the current character.
+
 ### PvP History
 
 Graph series live inside the same canonical seasonal character record as the table and Rewind data. `WarbandRatingsDB.history` contains only coordination metadata and diagnostics.

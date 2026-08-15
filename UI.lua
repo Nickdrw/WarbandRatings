@@ -1601,7 +1601,14 @@ function UI.CreateSettingsPanel()
             UI.RefreshFeatureHelpers
         )
     helperYOffset = helperYOffset - 26
-    settingsPanel.queueHelperCheckbox = UI.CreateCheckbox(helpersPage, "Hide queue helper", "hideArenaQueueHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    settingsPanel.queueHelperCheckbox = UI.CreateCheckbox(
+        helpersPage,
+        "Hide queue helper (this character)",
+        "hideArenaQueueHelper",
+        helperYOffset,
+        UI.RefreshFeatureHelpers,
+        true
+    )
     settingsPanel.queueHelperYOffsetWithFeature = helperYOffset
 
     local presetLabel = filtersPage:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1657,7 +1664,7 @@ function UI.CreateSettingsPanel()
     return settingsPanel
 end
 
-function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
+function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange, characterSpecific)
     local cb = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
     cb:SetPoint("TOPLEFT", parent.checkboxXOffset or 12, yOffset)
     cb.Text:SetText(label)
@@ -1668,9 +1675,15 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange)
     owner.checkboxes[#owner.checkboxes + 1] = cb
 
     cb.settingKey = settingKey
-    cb:SetChecked(Database.GetSettings()[settingKey])
+    cb.characterSpecific = characterSpecific == true
+    local settings = cb.characterSpecific and Database.GetCharacterSettings() or Database.GetSettings()
+    cb:SetChecked(settings[settingKey])
     cb:SetScript("OnClick", function(self)
-        Database.SetSetting(settingKey, self:GetChecked())
+        if self.characterSpecific then
+            Database.SetCharacterSetting(settingKey, self:GetChecked())
+        else
+            Database.SetSetting(settingKey, self:GetChecked())
+        end
         UI.RefreshTable()
         if onChange then onChange() end
     end)
@@ -1680,9 +1693,9 @@ end
 function UI.RefreshSettingsCheckboxes()
     if not settingsPanel or not settingsPanel.checkboxes then return end
 
-    local settings = Database.GetSettings()
     for _, cb in ipairs(settingsPanel.checkboxes) do
         if cb.settingKey then
+            local settings = cb.characterSpecific and Database.GetCharacterSettings() or Database.GetSettings()
             cb:SetChecked(settings[cb.settingKey])
         end
     end
@@ -4188,12 +4201,11 @@ local pvpQueueHelperButton
 function UI.UpdateQueueHelperPvPButton()
     if not pvpQueueHelperButton then return end
 
-    local settings = Database.GetSettings()
     local available = not ns.ArenaQueue
         or not ns.ArenaQueue.IsAvailable
         or ns.ArenaQueue.IsAvailable()
     pvpQueueHelperButton:SetShown(
-        settings.hideArenaQueueHelper == true and available
+        Database.GetCharacterSetting("hideArenaQueueHelper") == true and available
     )
 end
 

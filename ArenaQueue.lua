@@ -215,8 +215,16 @@ local PrimeSecureQueueBrackets
 local SyncSecureQueueControls
 local HideSecureQueueControls
 
+local function GetCharacterSettings()
+    if Database and Database.GetCharacterSettings then
+        return Database.GetCharacterSettings()
+    end
+    local characterDB = _G.WarbandRatingsCharacterDB
+    return characterDB and characterDB.settings
+end
+
 local function IsHelperHidden()
-    local settings = WarbandRatingsDB and WarbandRatingsDB.settings
+    local settings = GetCharacterSettings()
     return settings and settings.hideArenaQueueHelper
 end
 
@@ -3265,10 +3273,10 @@ function ArenaQueue.Refresh()
 end
 
 function ArenaQueue.Show()
-    if Database and Database.SetSetting then
-        Database.SetSetting("hideArenaQueueHelper", false)
-    elseif GetSettings() then
-        GetSettings().hideArenaQueueHelper = false
+    if Database and Database.SetCharacterSetting then
+        Database.SetCharacterSetting("hideArenaQueueHelper", false)
+    elseif GetCharacterSettings() then
+        GetCharacterSettings().hideArenaQueueHelper = false
     end
     if ns.UI and ns.UI.RefreshSettingsCheckboxes then
         ns.UI.RefreshSettingsCheckboxes()
@@ -3289,10 +3297,10 @@ function ArenaQueue.Show()
 end
 
 function ArenaQueue.Hide()
-    if Database and Database.SetSetting then
-        Database.SetSetting("hideArenaQueueHelper", true)
-    elseif GetSettings() then
-        GetSettings().hideArenaQueueHelper = true
+    if Database and Database.SetCharacterSetting then
+        Database.SetCharacterSetting("hideArenaQueueHelper", true)
+    elseif GetCharacterSettings() then
+        GetCharacterSettings().hideArenaQueueHelper = true
     end
     if ns.UI and ns.UI.RefreshSettingsCheckboxes then
         ns.UI.RefreshSettingsCheckboxes()

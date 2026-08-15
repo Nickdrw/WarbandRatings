@@ -112,6 +112,7 @@ read_globals = {
 -- Globals we define
 globals = {
     "WarbandRatingsDB",
+    "WarbandRatingsCharacterDB",
     "SLASH_WARBANDRATINGS1",
     "SLASH_WARBANDRATINGS2",
     "SLASH_WARBANDRATINGS3",
