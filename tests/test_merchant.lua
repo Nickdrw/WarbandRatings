@@ -3,7 +3,13 @@
 
 local merchantPurchasable = false
 local currencyQuantity = 3450
+local currencyName = "Conquest"
+local merchantItemID = 256553
+local merchantItemName = "Galactic Equipment Chest"
+local merchantItemPrice = 375
+local merchantCurrencyID = 1602
 local buyCount = 0
+local lastBuyQuantity
 local helperPanel
 
 local function NewWidget()
@@ -45,26 +51,29 @@ MerchantFrame.shown = true
 
 C_CurrencyInfo = {
     GetCurrencyInfo = function()
-        return { name = "Conquest", quantity = currencyQuantity }
+        return { name = currencyName, quantity = currencyQuantity }
     end,
 }
 
 C_MerchantFrame = {
     GetItemInfo = function()
         return {
-            name = "Galactic Equipment Chest",
+            name = merchantItemName,
             texture = 12345,
-            price = 375,
+            price = merchantItemPrice,
             numAvailable = -1,
             isPurchasable = merchantPurchasable,
-            currencyID = 1602,
+            currencyID = merchantCurrencyID,
         }
     end,
 }
 
 GetMerchantNumItems = function() return 1 end
-GetMerchantItemID = function() return 256553 end
-BuyMerchantItem = function() buyCount = buyCount + 1 end
+GetMerchantItemID = function() return merchantItemID end
+BuyMerchantItem = function(_, quantity)
+    buyCount = buyCount + 1
+    lastBuyQuantity = quantity
+end
 C_Timer = { After = function(_, callback) callback() end }
 CreateFrame = function() return NewWidget() end
 
@@ -120,6 +129,7 @@ ns.Merchant.Refresh()
 
 assert(helperPanel.shown, "rating-restricted affordable chest should keep the helper visible")
 assert(not helperPanel.button.enabled, "rating-restricted chest should disable the purchase button")
+assert(not helperPanel.singleButton.shown, "the chest helper should keep its single full-width button")
 assert(helperPanel.body.text == "1,400 PvP rating required", "rating warning headline is incorrect")
 assert(helperPanel.detail.text == "Reach it in any bracket to buy Galactic Equipment Chest.",
     "rating warning detail is incorrect")
@@ -137,6 +147,30 @@ ns.Merchant.Refresh()
 assert(helperPanel.shown and helperPanel.button.enabled, "eligible chest should restore the active purchase helper")
 assert(helperPanel.button.text == "9 remaining", "eligible chest quantity is incorrect")
 
+merchantItemID = 210729
+merchantItemName = "Infused Heliotrope"
+merchantItemPrice = 2500
+merchantCurrencyID = 1792
+currencyName = "Honor"
+currencyQuantity = 7500
+ns.Merchant.Refresh()
+
+assert(helperPanel.shown, "affordable Heliotrope should show the helper")
+assert(helperPanel.singleButton.shown and helperPanel.singleButton.enabled,
+    "Heliotrope should show an enabled single-purchase button")
+assert(helperPanel.singleButton.text == "Buy 1", "single-purchase button label is incorrect")
+assert(helperPanel.button.text == "Buy 3", "bulk-purchase button label is incorrect")
+
+helperPanel.singleButton.scripts.OnClick()
+assert(buyCount == 1 and lastBuyQuantity == 1, "single-purchase button should buy exactly one Heliotrope")
+
+helperPanel.button.scripts.OnClick()
+assert(buyCount == 2 and lastBuyQuantity == 3, "bulk-purchase button should preserve the maximum purchase")
+
+helperPanel.singleButton.scripts.OnEnter(helperPanel.singleButton)
+assert(GameTooltip.lines[2] == "Buys one copy of Infused Heliotrope.",
+    "single-purchase button tooltip is incorrect")
+
 currencyQuantity = 0
 ns.Merchant.Refresh()
-assert(not helperPanel.shown, "unaffordable chest should preserve the existing hidden-helper behavior")
+assert(not helperPanel.shown, "unaffordable Heliotrope should preserve the existing hidden-helper behavior")

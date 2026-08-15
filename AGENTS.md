@@ -3,6 +3,7 @@
 ## Git And Releases
 
 - Before preparing a commit message, inspect recent history and match the existing style.
+- Prefer feature-oriented commit subjects that describe the user-facing behavior or outcome over subjects that only name technical implementation details.
 - Before creating a tag, inspect existing tags and match the repository convention.
 - Use this project-specific version-bump vocabulary, even though it differs from standard Semantic Versioning terminology:
   - **Major bump** increments the first component and resets the others: `2.3.0` -> `3.0.0`.

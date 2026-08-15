@@ -255,6 +255,29 @@ local function RefreshCharacterData()
     UpdatePanel()
 end
 
+local function RefreshAfterPurchase()
+    RefreshSoon()
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.3, RefreshCharacterData)
+    else
+        RefreshCharacterData()
+    end
+end
+
+local function BuySingleCurrencyDumpItem()
+    local state = GetPurchaseState()
+    if not state
+        or state.confirmEachPurchase
+        or state.quantity <= 0
+        or not state.purchasable
+        or not BuyMerchantItem then
+        return
+    end
+
+    BuyMerchantItem(state.index, 1)
+    RefreshAfterPurchase()
+end
+
 local function BuyMaxCurrencyDumpItem()
     local state = GetPurchaseState()
     if not state or state.quantity <= 0 or not state.purchasable or not BuyMerchantItem then return end
@@ -264,12 +287,7 @@ local function BuyMaxCurrencyDumpItem()
     else
         BuyMerchantItem(state.index, state.quantity)
     end
-    RefreshSoon()
-    if C_Timer and C_Timer.After then
-        C_Timer.After(0.3, RefreshCharacterData)
-    else
-        RefreshCharacterData()
-    end
+    RefreshAfterPurchase()
 end
 
 local function ShowTooltip(self)
@@ -291,6 +309,8 @@ local function ShowTooltip(self)
         else
             GameTooltip:AddLine("The vendor's purchase requirements are not met.", 1, 0.25, 0.25, true)
         end
+    elseif self.buySingle then
+        GameTooltip:AddLine("Buys one copy of " .. state.name .. ".", 1, 1, 1, true)
     elseif state.confirmEachPurchase then
         GameTooltip:AddLine("Requests one copy of " .. state.name .. " per click.", 1, 1, 1, true)
     else
@@ -298,7 +318,9 @@ local function ShowTooltip(self)
     end
     GameTooltip:AddDoubleLine(state.currencyName .. ":", FormatNumber(state.currencyAmount), 1, 0.82, 0, 1, 1, 1)
     GameTooltip:AddDoubleLine("Cost each:", FormatNumber(state.cost), 1, 0.82, 0, 1, 1, 1)
-    if state.confirmEachPurchase then
+    if self.buySingle then
+        GameTooltip:AddDoubleLine("Will buy:", "1", 1, 0.82, 0, 1, 1, 1)
+    elseif state.confirmEachPurchase then
         GameTooltip:AddDoubleLine("Can spend:", FormatNumber(state.totalSpend), 1, 0.82, 0, 1, 1, 1)
         GameTooltip:AddDoubleLine("Remaining:", FormatNumber(state.affordableQuantity), 1, 0.82, 0, 1, 1, 1)
     else
@@ -360,9 +382,16 @@ local function EnsurePanel()
     panel.detail:SetPoint("RIGHT", panel, "RIGHT", -10, 0)
     panel.detail:SetJustifyH("LEFT")
 
+    panel.singleButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    panel.singleButton.buySingle = true
+    panel.singleButton:SetHeight(22)
+    panel.singleButton:SetScript("OnClick", BuySingleCurrencyDumpItem)
+    panel.singleButton:SetScript("OnEnter", ShowTooltip)
+    panel.singleButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
     panel.button = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    panel.button:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 10, 7)
-    panel.button:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 7)
     panel.button:SetHeight(22)
     panel.button:SetScript("OnClick", BuyMaxCurrencyDumpItem)
     panel.button:SetScript("OnEnter", ShowTooltip)
@@ -371,6 +400,22 @@ local function EnsurePanel()
     end)
 
     ApplyPanelTheme()
+end
+
+local function LayoutPurchaseButtons(showSingleButton)
+    panel.singleButton:ClearAllPoints()
+    panel.button:ClearAllPoints()
+
+    if showSingleButton then
+        panel.singleButton:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 10, 7)
+        panel.singleButton:SetPoint("BOTTOMRIGHT", panel, "BOTTOM", -2, 7)
+        panel.singleButton:Show()
+        panel.button:SetPoint("BOTTOMLEFT", panel, "BOTTOM", 2, 7)
+    else
+        panel.singleButton:Hide()
+        panel.button:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 10, 7)
+    end
+    panel.button:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 7)
 end
 
 local function PositionPanel()
@@ -394,6 +439,7 @@ UpdatePanel = function()
 
     PositionPanel()
     panel.icon:SetTexture(state.texture)
+    LayoutPurchaseButtons(not state.confirmEachPurchase)
 
     if state.quantity <= 0 then
         panel:Hide()
@@ -402,6 +448,7 @@ UpdatePanel = function()
 
     panel:Show()
     ApplyPanelTheme()
+    panel.singleButton:SetText("Buy 1")
     if not state.purchasable then
         if state.requiredPVPRating then
             panel.body:SetText(FormatNumber(state.requiredPVPRating) .. " PvP rating required")
@@ -412,6 +459,7 @@ UpdatePanel = function()
             panel.detail:SetText("The vendor's purchase requirements are not met.")
             panel.button:SetText("Unavailable")
         end
+        panel.singleButton:Disable()
         panel.button:Disable()
         return
     elseif state.confirmEachPurchase then
@@ -423,6 +471,7 @@ UpdatePanel = function()
         panel.detail:SetText("Buys " .. FormatNumber(state.quantity) .. " at " .. FormatNumber(state.cost) .. " " .. state.currencyName .. " each.")
         panel.button:SetText("Buy " .. FormatNumber(state.quantity))
     end
+    panel.singleButton:Enable()
     panel.button:Enable()
 end
 
