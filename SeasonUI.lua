@@ -1218,6 +1218,18 @@ local function ConfigurePreseasonRewindDismissCheckbox(dialog)
     checkbox:Show()
 end
 
+local function HidePreseasonRewindDismissCheckbox(dialog)
+    if not dialog then return end
+
+    local checkbox = dialog.preseasonRewindDismissCheckbox
+    if checkbox then
+        checkbox:Hide()
+    end
+    if dialog.preseasonRewindBaseHeight then
+        dialog:SetHeight(dialog.preseasonRewindBaseHeight)
+    end
+end
+
 local function EnsurePreseasonRewindPopup()
     if not StaticPopupDialogs then return false end
     if StaticPopupDialogs[PRESEASON_REWIND_POPUP_KEY] then return true end
@@ -1234,6 +1246,7 @@ local function EnsurePreseasonRewindPopup()
         OnCancel = function(dialog, data)
             DismissPreseasonRewindNotice(dialog, GetPopupSeasonKey(dialog, data))
         end,
+        OnHide = HidePreseasonRewindDismissCheckbox,
         timeout = 0,
         whileDead = true,
         hideOnEscape = true,

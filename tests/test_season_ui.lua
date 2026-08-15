@@ -788,6 +788,10 @@ dismissCheckbox:SetChecked(true)
 shownPopup.definition.OnCancel(shownPopup, shownPopup.data)
 assert(settings.preseasonRewindNoticeDismissedSeasonKey == "pvp-41",
     "checked preseason notice should be dismissed for the completed season")
+shownPopup.definition.OnHide(shownPopup)
+assert(not dismissCheckbox:IsShown()
+        and shownPopup.height == shownPopup.preseasonRewindBaseHeight,
+    "preseason notice controls should be removed before the popup frame is reused")
 assert(not ns.SeasonUI.ShowPreseasonRewindNotice(),
     "dismissed preseason notice should not reappear for the same season")
 
