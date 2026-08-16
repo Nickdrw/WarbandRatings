@@ -67,6 +67,22 @@ local function CreateTextureMock()
     }
 end
 
+local function CreateFontStringMock(owner)
+    local fontString = {
+        owner = owner,
+        SetShadowColor = Noop,
+        SetShadowOffset = Noop,
+    }
+    fontString.SetTextColor = function(self, red, green, blue)
+        self.textColor = { red, green, blue }
+    end
+    fontString.SetPoint = function(self, ...)
+        self.point = { ... }
+    end
+    fontString.SetText = function(self, text) self.text = text end
+    return fontString
+end
+
 local function CreateAnimationGroupMock()
     local group = { playing = false }
     group.CreateAnimation = function()
@@ -103,6 +119,7 @@ CreateFrame = function()
     frame.StartMoving = Noop
     frame.StopMovingOrSizing = Noop
     frame.CreateTexture = CreateTextureMock
+    frame.CreateFontString = CreateFontStringMock
     frame.CreateAnimationGroup = CreateAnimationGroupMock
     frame.GetCenter = function() return 500, 400 end
     frame.Hide = function(self) self.shown = false end
@@ -190,6 +207,16 @@ alertEvents()
 local icon = frames[2]
 assert(icon and icon.shown, "the Honor icon did not appear at the threshold")
 assert(icon.bounce and icon.bounce.playing, "the Honor icon did not start bouncing")
+assert(icon.amount and icon.amount.text == "12,000",
+    "the Honor icon did not show the current Honor amount")
+assert(icon.amount.point[1] == "TOP" and icon.amount.point[3] == "BOTTOM"
+        and icon.amount.point[4] == 0 and icon.amount.point[5] == -2,
+    "the Honor amount was not positioned just below the icon")
+assert(icon.amount.owner == icon,
+    "the Honor amount was attached to the bouncing icon instead of the stationary alert frame")
+assert(icon.amount.textColor[1] == 1 and icon.amount.textColor[2] == 0.08
+        and icon.amount.textColor[3] == 0.08,
+    "the Honor amount did not use the red alert color")
 assert(#messages == 2, "the red alert was not held for deduplication")
 scheduledCallbacks[3]()
 assert(#messages == 3, "the threshold crossing did not produce a red chat alert")
@@ -213,6 +240,7 @@ assert(icon.shown and #messages == 3,
 
 honor = 12050
 alertEvents()
+assert(icon.amount.text == "12,050", "the Honor amount on the icon did not update")
 assert(#messages == 3, "the later red alert was not held for deduplication")
 scheduledCallbacks[4]()
 assert(#messages == 4, "an Honor gain above the threshold did not produce another red alert")

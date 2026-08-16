@@ -27,6 +27,15 @@ local function GetHonorInfo()
     return C_CurrencyInfo.GetCurrencyInfo(HONOR_CURRENCY_ID)
 end
 
+local function FormatExactNumber(value)
+    local formatted = tostring(math.floor((tonumber(value) or 0) + 0.5))
+    while true do
+        local updated, replacements = formatted:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        formatted = updated
+        if replacements == 0 then return formatted end
+    end
+end
+
 local function IsPlayerInCombat()
     return (_G.InCombatLockdown and _G.InCombatLockdown())
         or (_G.UnitAffectingCombat and _G.UnitAffectingCombat("player"))
@@ -86,6 +95,12 @@ local function EnsureIconFrame()
 
     frame.icon = bounceFrame:CreateTexture(nil, "ARTWORK")
     frame.icon:SetAllPoints(bounceFrame)
+
+    frame.amount = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.amount:SetPoint("TOP", frame, "BOTTOM", 0, -2)
+    frame.amount:SetTextColor(1, 0.08, 0.08)
+    frame.amount:SetShadowColor(0, 0, 0, 1)
+    frame.amount:SetShadowOffset(1, -1)
 
     frame.bounce = bounceFrame:CreateAnimationGroup()
     local bounceUp = frame.bounce:CreateAnimation("Translation")
@@ -161,15 +176,6 @@ local function GetThemedAddonName()
     local green = math.floor(math.max(0, math.min(1, color[2] or 1)) * 255 + 0.5)
     local blue = math.floor(math.max(0, math.min(1, color[3] or 1)) * 255 + 0.5)
     return string.format("|cff%02x%02x%02x%s|r", red, green, blue, ns.DISPLAY_NAME)
-end
-
-local function FormatExactNumber(value)
-    local formatted = tostring(math.floor((tonumber(value) or 0) + 0.5))
-    while true do
-        local updated, replacements = formatted:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
-        formatted = updated
-        if replacements == 0 then return formatted end
-    end
 end
 
 local function ShowChatNotice(quantity, threshold, level)
@@ -308,6 +314,7 @@ function HonorAlert.Refresh(event)
     if info and info.iconFileID then
         frame.icon:SetTexture(info.iconFileID)
     end
+    frame.amount:SetText(FormatExactNumber(currentHonor))
     SetPosition(frame)
     frame:Show()
     if frame.bounce and not frame.bounce:IsPlaying() then
