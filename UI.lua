@@ -25,8 +25,8 @@ local ICON_SIZE = 22
 local SPEC_ICON_SIZE = 20
 local COL_NAME_WIDTH = 220
 local COL_RATING_WIDTH = 80
-local SETTINGS_WIDTH = 220
-local SETTINGS_HEIGHT = WINDOW_HEIGHT
+local SETTINGS_WIDTH = 300
+local SETTINGS_HEIGHT = 560
 local SETTINGS_WINDOW_OFFSET = 8
 local SETTINGS_TAB_WIDTH = 64
 local SETTINGS_TAB_HEIGHT = 24
@@ -164,6 +164,8 @@ local HISTORY_FIELD_RATING_DELTA = 4
 local HISTORY_FIELD_MMR_IS_POSTMATCH = 7
 
 local mainDockFrame, mainFrame, settingsPanel, scrollFrame, scrollChild, headerRow, graphPanel
+UI.petHealthAlertCollapsed = true
+UI.petCrowdControlAlertCollapsed = true
 local selectedGraph
 local heliotropeCounter
 local rowFrames = {}
@@ -894,8 +896,13 @@ local function SetSettingsTab(tabKey)
     if settingsPanel.helpersPage then
         settingsPanel.helpersPage:SetShown(tabKey == "helpers")
     end
+    if settingsPanel.classPage then
+        settingsPanel.classPage:SetShown(tabKey == "class")
+    end
     if tabKey == "filters" then
         RefreshSettingsFilterCheckboxes()
+    elseif tabKey == "class" and UI.RefreshClassSettings then
+        UI.RefreshClassSettings()
     end
     if UpdateSettingsTabs then
         UpdateSettingsTabs()
@@ -1002,6 +1009,31 @@ function UI.ApplyTheme()
             for _, separator in ipairs(settingsPanel.settingsSeparators) do
                 SetTextureColor(separator, theme.border, 0.42)
             end
+        end
+        if settingsPanel.classCategoryButtons then
+            for _, button in ipairs(settingsPanel.classCategoryButtons) do
+                SetTextureColor(button.bg, theme.surfaceRaised)
+                SetTextureColor(button.hover, theme.rowHover)
+                SetTextureColor(button.accent, theme.accent, 0.75)
+                SetFontColor(button.arrow, theme.text)
+            end
+        end
+        if settingsPanel.classSliders then
+            for _, slider in ipairs(settingsPanel.classSliders) do
+                SetFontColor(slider.settingLabel, theme.text)
+                SetFontColor(slider.valueLabel, theme.muted)
+            end
+        end
+        if settingsPanel.petHealthAlertCategory then
+            SetTextureColor(settingsPanel.petHealthAlertCategory.hover, theme.rowHover)
+            SetFontColor(settingsPanel.petHealthAlertCategory.arrow, theme.text)
+        end
+        if settingsPanel.petCrowdControlAlertCategory then
+            SetTextureColor(settingsPanel.petCrowdControlAlertCategory.hover, theme.rowHover)
+            SetFontColor(settingsPanel.petCrowdControlAlertCategory.arrow, theme.text)
+        end
+        if UI.UpdatePetHealthThresholdTabs then
+            UI.UpdatePetHealthThresholdTabs()
         end
         SetFontColor(settingsPanel.honorAlertThresholdLabel, theme.text)
         if UpdateSettingsTabs then
@@ -1556,6 +1588,555 @@ function UI.CreateHonorAlertThresholdInput(parent, yOffset)
     return row
 end
 
+function UI.CreateSettingsSlider(parent, labelText, settingKey, minimum, maximum, step, yOffset, normalize, formatValue, onChange)
+    local owner = parent.settingsWindow or parent
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, yOffset)
+    row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -14, yOffset)
+    row:SetHeight(42)
+
+    local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    label:SetText(labelText)
+    SetFontColor(label, GetActiveTheme().text)
+
+    local valueLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    valueLabel:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, 0)
+    SetFontColor(valueLabel, GetActiveTheme().muted)
+
+    local slider = CreateFrame("Slider", nil, row, "OptionsSliderTemplate")
+    slider:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -18)
+    slider:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, -18)
+    slider:SetHeight(17)
+    slider:SetMinMaxValues(minimum, maximum)
+    slider:SetValueStep(step)
+    if slider.SetObeyStepOnDrag then
+        slider:SetObeyStepOnDrag(true)
+    end
+    if slider.Text then slider.Text:SetText("") end
+    if slider.Low then slider.Low:SetText("") end
+    if slider.High then slider.High:SetText("") end
+
+    slider.settingKey = settingKey
+    slider.settingLabel = label
+    slider.valueLabel = valueLabel
+    slider.normalize = normalize
+    slider.formatValue = formatValue
+    slider.refreshing = true
+    local initialValue = normalize(Database.GetSettings()[settingKey])
+    slider:SetValue(initialValue)
+    valueLabel:SetText(formatValue(initialValue))
+    slider.refreshing = nil
+
+    slider:SetScript("OnValueChanged", function(self, value)
+        if self.refreshing then return end
+
+        local normalized = self.normalize(value)
+        if normalized ~= value then
+            self.refreshing = true
+            self:SetValue(normalized)
+            self.refreshing = nil
+        end
+        Database.SetSetting(self.settingKey, normalized)
+        self.valueLabel:SetText(self.formatValue(normalized))
+        if onChange then onChange(normalized) end
+    end)
+
+    owner.classSliders = owner.classSliders or {}
+    owner.classSliders[#owner.classSliders + 1] = slider
+    return slider
+end
+
+function UI.RefreshPetHealthAlertSettings()
+    if ns.PetHealthAlert and ns.PetHealthAlert.ApplySettings then
+        ns.PetHealthAlert.ApplySettings()
+    end
+end
+
+function UI.RefreshPetCrowdControlAlertSettings()
+    if ns.PetCrowdControlAlert and ns.PetCrowdControlAlert.ApplySettings then
+        ns.PetCrowdControlAlert.ApplySettings()
+    end
+end
+
+function UI.UpdatePetHealthThresholdTabs()
+    if not settingsPanel or not settingsPanel.petHealthThresholdTabs then return end
+
+    local theme = GetActiveTheme()
+    local activeKey = settingsPanel.activePetHealthThreshold or "warning"
+    for _, button in ipairs(settingsPanel.petHealthThresholdTabs) do
+        local selected = button.thresholdKey == activeKey
+        SetTextureColor(button.bg, selected and theme.header or theme.surfaceRaised)
+        SetTextureColor(button.hover, theme.rowHover)
+        SetTextureColor(button.accent, selected and theme.accent or theme.border, selected and 1 or 0.55)
+        SetFontColor(button.label, selected and theme.title or theme.text)
+        button.hover:SetShown(button.hovered and not selected)
+    end
+end
+
+function UI.CreateHunterClassCategory(parent)
+    local owner = parent.settingsWindow or parent
+    local category = CreateFrame("Button", nil, parent)
+    category:SetPoint("TOPLEFT", parent, "TOPLEFT", 12, -38)
+    category:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -12, -38)
+    category:SetHeight(28)
+
+    category.bg = category:CreateTexture(nil, "BACKGROUND")
+    category.bg:SetAllPoints()
+    SetTextureColor(category.bg, GetActiveTheme().surfaceRaised)
+
+    category.hover = category:CreateTexture(nil, "BORDER")
+    category.hover:SetAllPoints()
+    SetTextureColor(category.hover, GetActiveTheme().rowHover)
+    category.hover:Hide()
+
+    category.accent = category:CreateTexture(nil, "ARTWORK")
+    category.accent:SetPoint("TOPLEFT", category, "TOPLEFT", 0, 0)
+    category.accent:SetPoint("BOTTOMLEFT", category, "BOTTOMLEFT", 0, 0)
+    category.accent:SetWidth(3)
+    SetTextureColor(category.accent, GetActiveTheme().accent, 0.75)
+
+    category.arrow = category:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    category.arrow:SetPoint("LEFT", category, "LEFT", 10, 0)
+    SetFontColor(category.arrow, GetActiveTheme().text)
+
+    category.label = category:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    category.label:SetPoint("LEFT", category.arrow, "RIGHT", 8, 0)
+    category.label:SetText("Hunter")
+    local classRed, classGreen, classBlue = Utils.GetClassColor("HUNTER")
+    category.label:SetTextColor(classRed, classGreen, classBlue)
+
+    local content = CreateFrame("Frame", nil, parent)
+    content:SetPoint("TOPLEFT", category, "BOTTOMLEFT", 0, -8)
+    content:SetPoint("TOPRIGHT", category, "BOTTOMRIGHT", 0, -8)
+    content:SetHeight(466)
+    content.settingsWindow = owner
+    category.content = content
+
+    local petCategory = CreateFrame("Button", nil, content)
+    petCategory:SetPoint("TOPLEFT", content, "TOPLEFT", 18, 0)
+    petCategory:SetSize(132, 24)
+
+    petCategory.hover = petCategory:CreateTexture(nil, "BACKGROUND")
+    petCategory.hover:SetAllPoints()
+    SetTextureColor(petCategory.hover, GetActiveTheme().rowHover)
+    petCategory.hover:Hide()
+
+    petCategory.arrow = petCategory:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    petCategory.arrow:SetPoint("LEFT", petCategory, "LEFT", 4, 0)
+    SetFontColor(petCategory.arrow, GetActiveTheme().text)
+
+    petCategory.label = petCategory:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    petCategory.label:SetPoint("LEFT", petCategory.arrow, "RIGHT", 7, 0)
+    petCategory.label:SetText("Pet Health Alert")
+    SetFontColor(petCategory.label, GetActiveTheme().headerText)
+    owner.sectionLabels[#owner.sectionLabels + 1] = petCategory.label
+
+    petCategory:SetScript("OnEnter", function(self)
+        self.hover:Show()
+    end)
+    petCategory:SetScript("OnLeave", function(self)
+        self.hover:Hide()
+    end)
+    petCategory:SetScript("OnClick", function()
+        UI.petHealthAlertCollapsed = not UI.petHealthAlertCollapsed
+        UI.RefreshClassSettings()
+    end)
+    owner.petHealthAlertCategory = petCategory
+
+    owner.petHealthAlertEnabledCheckbox = UI.CreateCheckbox(
+        content,
+        "Enable",
+        "petHealthAlertEnabled",
+        4,
+        UI.RefreshPetHealthAlertSettings
+    )
+    owner.petHealthAlertEnabledCheckbox:ClearAllPoints()
+    owner.petHealthAlertEnabledCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 198, 4)
+
+    local petContent = CreateFrame("Frame", nil, content)
+    petContent:SetPoint("TOPLEFT", content, "TOPLEFT", 18, -26)
+    petContent:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -26)
+    petContent:SetHeight(214)
+    petContent.settingsWindow = owner
+    owner.petHealthAlertContent = petContent
+
+    local hierarchyGuide = petContent:CreateTexture(nil, "ARTWORK")
+    hierarchyGuide:SetPoint("TOPLEFT", petContent, "TOPLEFT", -10, 0)
+    hierarchyGuide:SetPoint("BOTTOMLEFT", petContent, "BOTTOMLEFT", -10, 0)
+    hierarchyGuide:SetWidth(1)
+    SetTextureColor(hierarchyGuide, GetActiveTheme().border, 0.42)
+    owner.settingsSeparators[#owner.settingsSeparators + 1] = hierarchyGuide
+
+    owner.petHealthThresholdOptions = {
+        {
+            key = "warning",
+            label = "70%",
+            opacityKey = "petHealthWarningOpacity",
+            sizeKey = "petHealthWarningSize",
+        },
+        {
+            key = "danger",
+            label = "50%",
+            opacityKey = "petHealthDangerOpacity",
+            sizeKey = "petHealthDangerSize",
+        },
+        {
+            key = "critical",
+            label = "30%",
+            opacityKey = "petHealthCriticalOpacity",
+            sizeKey = "petHealthCriticalSize",
+        },
+    }
+    owner.activePetHealthThreshold = owner.activePetHealthThreshold or "warning"
+    owner.petHealthThresholdTabs = {}
+    for index, option in ipairs(owner.petHealthThresholdOptions) do
+        local button = CreateFrame("Button", nil, petContent)
+        button:SetPoint("TOPLEFT", petContent, "TOPLEFT", 14 + (index - 1) * 78, -2)
+        button:SetSize(72, 22)
+        button.thresholdKey = option.key
+        button.hovered = false
+
+        button.bg = button:CreateTexture(nil, "BACKGROUND")
+        button.bg:SetAllPoints()
+        button.hover = button:CreateTexture(nil, "BORDER")
+        button.hover:SetAllPoints()
+        button.hover:Hide()
+        button.accent = button:CreateTexture(nil, "OVERLAY")
+        button.accent:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+        button.accent:SetPoint("TOPRIGHT", button, "TOPRIGHT", 0, 0)
+        button.accent:SetHeight(2)
+        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+        button.label:SetText(option.label)
+
+        button:SetScript("OnEnter", function(self)
+            self.hovered = true
+            UI.UpdatePetHealthThresholdTabs()
+        end)
+        button:SetScript("OnLeave", function(self)
+            self.hovered = false
+            UI.UpdatePetHealthThresholdTabs()
+        end)
+        button:SetScript("OnClick", function(self)
+            owner.activePetHealthThreshold = self.thresholdKey
+            UI.RefreshClassSettings()
+        end)
+        owner.petHealthThresholdTabs[#owner.petHealthThresholdTabs + 1] = button
+    end
+
+    owner.petHealthAlertTestCheckbox = UI.CreateCheckbox(
+        petContent,
+        "Test / Unlock",
+        nil,
+        -34,
+        function(checked)
+            if ns.PetHealthAlert and ns.PetHealthAlert.SetTestMode then
+                ns.PetHealthAlert.SetTestMode(checked)
+            end
+        end
+    )
+    owner.petHealthAlertBouncingCheckbox = UI.CreateCheckbox(
+        petContent,
+        "Bouncing",
+        "petHealthAlertBouncing",
+        -34,
+        UI.RefreshPetHealthAlertSettings
+    )
+    owner.petHealthAlertBouncingCheckbox:ClearAllPoints()
+    owner.petHealthAlertBouncingCheckbox:SetPoint("TOPLEFT", petContent, "TOPLEFT", 140, -34)
+
+    owner.petHealthAlertOpacitySlider = UI.CreateSettingsSlider(
+        petContent,
+        "Opacity",
+        "petHealthWarningOpacity",
+        0.10,
+        1,
+        0.05,
+        -76,
+        Database.NormalizePetHealthAlertOpacity,
+        function(value) return tostring(math.floor(value * 100 + 0.5)) .. "%" end,
+        UI.RefreshPetHealthAlertSettings
+    )
+    owner.petHealthAlertSizeSlider = UI.CreateSettingsSlider(
+        petContent,
+        "Size",
+        "petHealthWarningSize",
+        32,
+        168,
+        1,
+        -130,
+        Database.NormalizePetHealthAlertSize,
+        function(value) return tostring(value) .. " px" end,
+        UI.RefreshPetHealthAlertSettings
+    )
+
+    local recenterButton = CreateFrame("Button", nil, petContent, "UIPanelButtonTemplate")
+    recenterButton:SetPoint("TOPLEFT", petContent, "TOPLEFT", 14, -184)
+    recenterButton:SetSize(96, 22)
+    recenterButton:SetText("Recenter")
+    recenterButton:SetScript("OnClick", function()
+        if ns.PetHealthAlert and ns.PetHealthAlert.Recenter then
+            ns.PetHealthAlert.Recenter()
+        end
+    end)
+    owner.petHealthAlertRecenterButton = recenterButton
+
+    local crowdControlCategory = CreateFrame("Button", nil, content)
+    crowdControlCategory:SetPoint("TOPLEFT", content, "TOPLEFT", 18, -248)
+    crowdControlCategory:SetSize(176, 24)
+
+    crowdControlCategory.hover = crowdControlCategory:CreateTexture(nil, "BACKGROUND")
+    crowdControlCategory.hover:SetAllPoints()
+    SetTextureColor(crowdControlCategory.hover, GetActiveTheme().rowHover)
+    crowdControlCategory.hover:Hide()
+
+    crowdControlCategory.arrow = crowdControlCategory:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontHighlightSmall"
+    )
+    crowdControlCategory.arrow:SetPoint("LEFT", crowdControlCategory, "LEFT", 4, 0)
+    SetFontColor(crowdControlCategory.arrow, GetActiveTheme().text)
+
+    crowdControlCategory.label = crowdControlCategory:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontNormalSmall"
+    )
+    crowdControlCategory.label:SetPoint("LEFT", crowdControlCategory.arrow, "RIGHT", 7, 0)
+    crowdControlCategory.label:SetText("Pet Crowd Control Alert")
+    SetFontColor(crowdControlCategory.label, GetActiveTheme().headerText)
+    owner.sectionLabels[#owner.sectionLabels + 1] = crowdControlCategory.label
+
+    crowdControlCategory:SetScript("OnEnter", function(self)
+        self.hover:Show()
+    end)
+    crowdControlCategory:SetScript("OnLeave", function(self)
+        self.hover:Hide()
+    end)
+    crowdControlCategory:SetScript("OnClick", function()
+        UI.petCrowdControlAlertCollapsed = not UI.petCrowdControlAlertCollapsed
+        UI.RefreshClassSettings()
+    end)
+    owner.petCrowdControlAlertCategory = crowdControlCategory
+
+    owner.petCrowdControlAlertEnabledCheckbox = UI.CreateCheckbox(
+        content,
+        "Enable",
+        "petCrowdControlAlertEnabled",
+        -244,
+        UI.RefreshPetCrowdControlAlertSettings
+    )
+    owner.petCrowdControlAlertEnabledCheckbox:ClearAllPoints()
+    owner.petCrowdControlAlertEnabledCheckbox:SetPoint("TOPLEFT", content, "TOPLEFT", 198, -244)
+
+    local crowdControlContent = CreateFrame("Frame", nil, content)
+    crowdControlContent:SetPoint("TOPLEFT", content, "TOPLEFT", 18, -274)
+    crowdControlContent:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -274)
+    crowdControlContent:SetHeight(188)
+    crowdControlContent.settingsWindow = owner
+    owner.petCrowdControlAlertContent = crowdControlContent
+
+    local crowdControlHierarchyGuide = crowdControlContent:CreateTexture(nil, "ARTWORK")
+    crowdControlHierarchyGuide:SetPoint("TOPLEFT", crowdControlContent, "TOPLEFT", -10, 0)
+    crowdControlHierarchyGuide:SetPoint("BOTTOMLEFT", crowdControlContent, "BOTTOMLEFT", -10, 0)
+    crowdControlHierarchyGuide:SetWidth(1)
+    SetTextureColor(crowdControlHierarchyGuide, GetActiveTheme().border, 0.42)
+    owner.settingsSeparators[#owner.settingsSeparators + 1] = crowdControlHierarchyGuide
+
+    owner.petCrowdControlAlertTestCheckbox = UI.CreateCheckbox(
+        crowdControlContent,
+        "Test / Unlock",
+        nil,
+        -8,
+        function(checked)
+            if ns.PetCrowdControlAlert and ns.PetCrowdControlAlert.SetTestMode then
+                ns.PetCrowdControlAlert.SetTestMode(checked)
+            end
+        end
+    )
+    owner.petCrowdControlAlertBouncingCheckbox = UI.CreateCheckbox(
+        crowdControlContent,
+        "Bouncing",
+        "petCrowdControlAlertBouncing",
+        -8,
+        UI.RefreshPetCrowdControlAlertSettings
+    )
+    owner.petCrowdControlAlertBouncingCheckbox:ClearAllPoints()
+    owner.petCrowdControlAlertBouncingCheckbox:SetPoint(
+        "TOPLEFT",
+        crowdControlContent,
+        "TOPLEFT",
+        140,
+        -8
+    )
+
+    owner.petCrowdControlAlertOpacitySlider = UI.CreateSettingsSlider(
+        crowdControlContent,
+        "Opacity",
+        "petCrowdControlAlertOpacity",
+        0.10,
+        1,
+        0.05,
+        -50,
+        Database.NormalizePetCrowdControlAlertOpacity,
+        function(value) return tostring(math.floor(value * 100 + 0.5)) .. "%" end,
+        UI.RefreshPetCrowdControlAlertSettings
+    )
+    owner.petCrowdControlAlertSizeSlider = UI.CreateSettingsSlider(
+        crowdControlContent,
+        "Size",
+        "petCrowdControlAlertSize",
+        32,
+        168,
+        1,
+        -104,
+        Database.NormalizePetCrowdControlAlertSize,
+        function(value) return tostring(value) .. " px" end,
+        UI.RefreshPetCrowdControlAlertSettings
+    )
+
+    local crowdControlRecenterButton = CreateFrame(
+        "Button",
+        nil,
+        crowdControlContent,
+        "UIPanelButtonTemplate"
+    )
+    crowdControlRecenterButton:SetPoint("TOPLEFT", crowdControlContent, "TOPLEFT", 14, -158)
+    crowdControlRecenterButton:SetSize(96, 22)
+    crowdControlRecenterButton:SetText("Recenter")
+    crowdControlRecenterButton:SetScript("OnClick", function()
+        if ns.PetCrowdControlAlert and ns.PetCrowdControlAlert.Recenter then
+            ns.PetCrowdControlAlert.Recenter()
+        end
+    end)
+    owner.petCrowdControlAlertRecenterButton = crowdControlRecenterButton
+
+    category:SetScript("OnEnter", function(self)
+        self.hovered = true
+        self.hover:Show()
+    end)
+    category:SetScript("OnLeave", function(self)
+        self.hovered = nil
+        self.hover:Hide()
+    end)
+    category:SetScript("OnClick", function()
+        local settings = Database.GetSettings()
+        Database.SetSetting("classHunterCollapsed", not settings.classHunterCollapsed)
+        UI.RefreshClassSettings()
+    end)
+
+    owner.classCategoryButtons = owner.classCategoryButtons or {}
+    owner.classCategoryButtons[#owner.classCategoryButtons + 1] = category
+    owner.hunterCategory = category
+    return category
+end
+
+function UI.RefreshClassSettings()
+    if not settingsPanel then return end
+
+    local settings = Database.GetSettings()
+    local category = settingsPanel.hunterCategory
+    if category then
+        local collapsed = settings.classHunterCollapsed == true
+        category.arrow:SetText(collapsed and ">" or "v")
+        category.content:SetShown(not collapsed)
+    end
+    if settingsPanel.petHealthAlertCategory and settingsPanel.petHealthAlertContent then
+        settingsPanel.petHealthAlertCategory.arrow:SetText(
+            UI.petHealthAlertCollapsed and ">" or "v"
+        )
+        settingsPanel.petHealthAlertContent:SetShown(not UI.petHealthAlertCollapsed)
+    end
+    if settingsPanel.petCrowdControlAlertCategory
+            and settingsPanel.petCrowdControlAlertContent then
+        settingsPanel.petCrowdControlAlertCategory.arrow:SetText(
+            UI.petCrowdControlAlertCollapsed and ">" or "v"
+        )
+        settingsPanel.petCrowdControlAlertContent:SetShown(
+            not UI.petCrowdControlAlertCollapsed
+        )
+
+        local crowdControlTop = UI.petHealthAlertCollapsed and -32 or -248
+        settingsPanel.petCrowdControlAlertCategory:ClearAllPoints()
+        settingsPanel.petCrowdControlAlertCategory:SetPoint(
+            "TOPLEFT",
+            settingsPanel.hunterCategory.content,
+            "TOPLEFT",
+            18,
+            crowdControlTop
+        )
+        settingsPanel.petCrowdControlAlertEnabledCheckbox:ClearAllPoints()
+        settingsPanel.petCrowdControlAlertEnabledCheckbox:SetPoint(
+            "TOPLEFT",
+            settingsPanel.hunterCategory.content,
+            "TOPLEFT",
+            198,
+            crowdControlTop + 4
+        )
+        settingsPanel.petCrowdControlAlertContent:ClearAllPoints()
+        settingsPanel.petCrowdControlAlertContent:SetPoint(
+            "TOPLEFT",
+            settingsPanel.hunterCategory.content,
+            "TOPLEFT",
+            18,
+            crowdControlTop - 26
+        )
+        settingsPanel.petCrowdControlAlertContent:SetPoint(
+            "TOPRIGHT",
+            settingsPanel.hunterCategory.content,
+            "TOPRIGHT",
+            0,
+            crowdControlTop - 26
+        )
+    end
+
+    local activeKey = settingsPanel.activePetHealthThreshold or "warning"
+    local activeOption
+    for _, option in ipairs(settingsPanel.petHealthThresholdOptions or {}) do
+        if option.key == activeKey then
+            activeOption = option
+            break
+        end
+    end
+    activeOption = activeOption or (settingsPanel.petHealthThresholdOptions or {})[1]
+    if activeOption then
+        settingsPanel.activePetHealthThreshold = activeOption.key
+        if settingsPanel.petHealthAlertOpacitySlider then
+            settingsPanel.petHealthAlertOpacitySlider.settingKey = activeOption.opacityKey
+        end
+        if settingsPanel.petHealthAlertSizeSlider then
+            settingsPanel.petHealthAlertSizeSlider.settingKey = activeOption.sizeKey
+        end
+        if ns.PetHealthAlert and ns.PetHealthAlert.SetTestThreshold then
+            ns.PetHealthAlert.SetTestThreshold(activeOption.key)
+        end
+    end
+
+    if settingsPanel.petHealthAlertTestCheckbox then
+        local unlocked = ns.PetHealthAlert
+            and ns.PetHealthAlert.IsTestMode
+            and ns.PetHealthAlert.IsTestMode()
+        settingsPanel.petHealthAlertTestCheckbox:SetChecked(unlocked == true)
+    end
+    if settingsPanel.petCrowdControlAlertTestCheckbox then
+        local unlocked = ns.PetCrowdControlAlert
+            and ns.PetCrowdControlAlert.IsTestMode
+            and ns.PetCrowdControlAlert.IsTestMode()
+        settingsPanel.petCrowdControlAlertTestCheckbox:SetChecked(unlocked == true)
+    end
+
+    for _, slider in ipairs(settingsPanel.classSliders or {}) do
+        local value = slider.normalize(settings[slider.settingKey])
+        slider.refreshing = true
+        slider:SetValue(value)
+        slider.valueLabel:SetText(slider.formatValue(value))
+        slider.refreshing = nil
+    end
+    UI.UpdatePetHealthThresholdTabs()
+end
+
 function UI.CreateSettingsPanel()
     if settingsPanel then return settingsPanel end
 
@@ -1581,6 +2162,18 @@ function UI.CreateSettingsPanel()
         if self.themeDropdown and self.themeDropdown.menu then
             self.themeDropdown.menu:Hide()
         end
+        if ns.PetHealthAlert
+                and ns.PetHealthAlert.IsTestMode
+                and ns.PetHealthAlert.IsTestMode()
+                and ns.PetHealthAlert.SetTestMode then
+            ns.PetHealthAlert.SetTestMode(false)
+        end
+        if ns.PetCrowdControlAlert
+                and ns.PetCrowdControlAlert.IsTestMode
+                and ns.PetCrowdControlAlert.IsTestMode()
+                and ns.PetCrowdControlAlert.SetTestMode then
+            ns.PetCrowdControlAlert.SetTestMode(false)
+        end
     end)
     settingsPanel:SetScript("OnShow", function()
         UI.RefreshSettingsCheckboxes()
@@ -1603,6 +2196,8 @@ function UI.CreateSettingsPanel()
     settingsPanel.filterPresetButtons = {}
     settingsPanel.sectionLabels = {}
     settingsPanel.settingsSeparators = {}
+    settingsPanel.classCategoryButtons = {}
+    settingsPanel.classSliders = {}
 
     local settingsPage = CreateFrame("Frame", nil, settingsPanel)
     settingsPage:SetAllPoints(settingsPanel)
@@ -1621,6 +2216,13 @@ function UI.CreateSettingsPanel()
     helpersPage.checkboxXOffset = 4
     helpersPage:Hide()
     settingsPanel.helpersPage = helpersPage
+
+    local classPage = CreateFrame("Frame", nil, settingsPanel)
+    classPage:SetAllPoints(settingsPanel)
+    classPage.settingsWindow = settingsPanel
+    classPage:Hide()
+    settingsPanel.classPage = classPage
+    UI.CreateHunterClassCategory(classPage)
 
     local yOffset = -38
     UI.CreateSettingsSectionLabel(settingsPage, "Table settings", yOffset)
@@ -1740,6 +2342,7 @@ function UI.CreateSettingsPanel()
         CreateSettingsTabButton(settingsPanel, "settings", "Settings", 1),
         CreateSettingsTabButton(settingsPanel, "helpers", "Helpers", 2),
         CreateSettingsTabButton(settingsPanel, "filters", "Filters", 3),
+        CreateSettingsTabButton(settingsPanel, "class", "Class", 4),
     }
     settingsPanel.activeTab = "settings"
     SetSettingsTab("settings")
@@ -1761,16 +2364,22 @@ function UI.CreateCheckbox(parent, label, settingKey, yOffset, onChange, charact
 
     cb.settingKey = settingKey
     cb.characterSpecific = characterSpecific == true
-    local settings = cb.characterSpecific and Database.GetCharacterSettings() or Database.GetSettings()
-    cb:SetChecked(settings[settingKey])
+    if settingKey then
+        local settings = cb.characterSpecific and Database.GetCharacterSettings() or Database.GetSettings()
+        cb:SetChecked(settings[settingKey])
+    else
+        cb:SetChecked(false)
+    end
     cb:SetScript("OnClick", function(self)
-        if self.characterSpecific then
-            Database.SetCharacterSetting(settingKey, self:GetChecked())
-        else
-            Database.SetSetting(settingKey, self:GetChecked())
+        if settingKey then
+            if self.characterSpecific then
+                Database.SetCharacterSetting(settingKey, self:GetChecked())
+            else
+                Database.SetSetting(settingKey, self:GetChecked())
+            end
         end
         UI.RefreshTable()
-        if onChange then onChange() end
+        if onChange then onChange(self:GetChecked()) end
     end)
     return cb
 end
@@ -1801,6 +2410,7 @@ function UI.RefreshSettingsCheckboxes()
             queueYOffset
         )
     end
+    UI.RefreshClassSettings()
 end
 
 function UI.ToggleSettings()

@@ -19,7 +19,17 @@ local ns = {
 
 WarbandRatingsDB = {
     schemaVersion = 2,
-    settings = { hideArenaQueueHelper = true },
+    settings = {
+        hideArenaQueueHelper = true,
+        petHealthAlertTestMode = true,
+        petHealthAlertOpacity = 0.8,
+        petHealthAlertSize = 80,
+        petHealthAlertCollapsed = false,
+        petHealthAlertEnabled = true,
+        petCrowdControlAlertTestMode = true,
+        petCrowdControlAlertCollapsed = false,
+        petCrowdControlAlertEnabled = true,
+    },
     seasons = {
         ["pvp-42"] = {
             seasonKey = "pvp-42",
@@ -90,10 +100,74 @@ assert(WarbandRatingsDB.settings.honorAlertThreshold == 12000,
     "the default Honor alert threshold should be 12,000")
 assert(WarbandRatingsDB.settings.hideHonorAlertIcon == false,
     "the bouncing Honor alert icon should be visible by default")
+assert(WarbandRatingsDB.settings.petHealthAlertTestMode == nil,
+    "the transient Test / Unlock state should not remain in saved settings")
+assert(WarbandRatingsDB.settings.petHealthAlertEnabled == false,
+    "the existing pet-health alert was not migrated to opt-in")
+assert(WarbandRatingsDB.settings.petHealthAlertBouncing == true,
+    "the pet-health alert should bounce by default")
+assert(WarbandRatingsDB.settings.petHealthAlertCollapsed == nil,
+    "the transient Pet Health Alert collapse state should not remain saved")
+assert(WarbandRatingsDB.settings.petHealthWarningOpacity == 0.4
+        and WarbandRatingsDB.settings.petHealthDangerOpacity == 0.8
+        and WarbandRatingsDB.settings.petHealthCriticalOpacity == 0.8,
+    "the shared pet-health opacity was not migrated to the three thresholds")
+assert(WarbandRatingsDB.settings.petHealthWarningSize == 80
+        and WarbandRatingsDB.settings.petHealthDangerSize == 80
+        and WarbandRatingsDB.settings.petHealthCriticalSize == 104,
+    "the shared pet-health size was not migrated to the three thresholds")
+assert(WarbandRatingsDB.settings.petHealthAlertOpacity == nil
+        and WarbandRatingsDB.settings.petHealthAlertSize == nil,
+    "the obsolete shared pet-health settings were not removed after migration")
+assert(WarbandRatingsDB.settings.petCrowdControlAlertTestMode == nil,
+    "the transient pet-CC Test / Unlock state should not remain in saved settings")
+assert(WarbandRatingsDB.settings.petCrowdControlAlertEnabled == false,
+    "the existing pet crowd-control alert was not migrated to opt-in")
+assert(WarbandRatingsDB.settings.petCrowdControlAlertBouncing == true,
+    "the pet crowd-control alert should bounce by default")
+assert(WarbandRatingsDB.settings.petCrowdControlAlertCollapsed == nil,
+    "the transient Pet Crowd Control Alert collapse state should not remain saved")
+assert(WarbandRatingsDB.settings.classModuleCollapseDefaultsVersion == nil,
+    "the obsolete collapsed-module migration marker should not remain saved")
+assert(WarbandRatingsDB.settings.petCrowdControlAlertOpacity == 1
+        and WarbandRatingsDB.settings.petCrowdControlAlertSize == 64,
+    "the pet crowd-control alert did not receive its default appearance")
+assert(WarbandRatingsDB.settings.classHunterCollapsed == false,
+    "the Hunter settings category should start expanded")
+assert(WarbandRatingsDB.settings.classModuleOptInDefaultsVersion == 1,
+    "the class-module opt-in migration was not recorded")
+
+WarbandRatingsDB.settings.petHealthAlertEnabled = true
+WarbandRatingsDB.settings.petCrowdControlAlertEnabled = true
+Database.Init()
+assert(WarbandRatingsDB.settings.petHealthAlertEnabled == true
+        and WarbandRatingsDB.settings.petCrowdControlAlertEnabled == true,
+    "explicitly enabled class modules did not remain enabled after migration")
+
 assert(Database.NormalizeHonorAlertThreshold("13500") == 13500,
     "a custom Honor alert threshold was not normalized")
 assert(Database.NormalizeHonorAlertThreshold(0) == 12000,
     "an invalid Honor alert threshold should use the default")
+assert(Database.NormalizePetHealthAlertOpacity(0.63) == 0.65
+        and Database.NormalizePetHealthAlertOpacity(0) == 0.10
+        and Database.NormalizePetHealthAlertOpacity(2) == 1,
+    "pet-health alert opacity was not clamped and stepped correctly")
+assert(Database.NormalizePetHealthAlertSize(78) == 78
+        and Database.NormalizePetHealthAlertSize(12) == 32
+        and Database.NormalizePetHealthAlertSize(200) == 168,
+    "pet-health alert size was not clamped and stepped correctly")
+assert(Database.NormalizePetCrowdControlAlertOpacity(0.63) == 0.65
+        and Database.NormalizePetCrowdControlAlertOpacity(0) == 0.10
+        and Database.NormalizePetCrowdControlAlertOpacity(2) == 1,
+    "pet crowd-control alert opacity was not clamped and stepped correctly")
+assert(Database.NormalizePetCrowdControlAlertSize(78) == 78
+        and Database.NormalizePetCrowdControlAlertSize(12) == 32
+        and Database.NormalizePetCrowdControlAlertSize(200) == 168,
+    "pet crowd-control alert size was not clamped and stepped correctly")
+assert(Database.NormalizeClassModuleEnabled(nil) == false
+        and Database.NormalizeClassModuleEnabled(false) == false
+        and Database.NormalizeClassModuleEnabled(true) == true,
+    "class-module Enable settings were not normalized as opt-in")
 
 Database.SaveCharacter("pvp-42", {
     name = "Tester",

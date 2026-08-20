@@ -13,6 +13,48 @@ Database.FIELD_MEDIC_HAZARD_PAYOUT_NAME = "Field Medic's Hazard Payout"
 Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_ITEM_ID = 258534
 Database.ILLUSTRIOUS_CONTENDER_STRONGBOX_NAME = "Illustrious Contender's Strongbox"
 Database.DEFAULT_HONOR_ALERT_THRESHOLD = 12000
+Database.DEFAULT_PET_HEALTH_WARNING_OPACITY = 0.50
+Database.DEFAULT_PET_HEALTH_DANGER_OPACITY = 1
+Database.DEFAULT_PET_HEALTH_CRITICAL_OPACITY = 1
+Database.DEFAULT_PET_HEALTH_WARNING_SIZE = 64
+Database.DEFAULT_PET_HEALTH_DANGER_SIZE = 64
+Database.DEFAULT_PET_HEALTH_CRITICAL_SIZE = 83
+Database.DEFAULT_PET_CROWD_CONTROL_ALERT_OPACITY = 1
+Database.DEFAULT_PET_CROWD_CONTROL_ALERT_SIZE = 64
+-- Class modules are opt-in. New modules should normalize their Enable setting
+-- through this shared default rather than assuming a missing value means on.
+Database.DEFAULT_CLASS_MODULE_ENABLED = false
+Database.CLASS_MODULE_OPT_IN_DEFAULTS_VERSION = 1
+
+function Database.NormalizeClassModuleEnabled(value)
+    return value == true
+end
+
+function Database.NormalizePetHealthAlertOpacity(value)
+    local opacity = tonumber(value)
+    if not opacity then return 1 end
+    opacity = math.max(0.10, math.min(1, opacity))
+    return math.floor(opacity * 20 + 0.5) / 20
+end
+
+function Database.NormalizePetHealthAlertSize(value, defaultValue)
+    local size = tonumber(value)
+    if not size then return defaultValue or Database.DEFAULT_PET_HEALTH_WARNING_SIZE end
+    size = math.max(32, math.min(168, size))
+    return math.floor(size + 0.5)
+end
+
+function Database.NormalizePetCrowdControlAlertOpacity(value)
+    if value == nil then value = Database.DEFAULT_PET_CROWD_CONTROL_ALERT_OPACITY end
+    return Database.NormalizePetHealthAlertOpacity(value)
+end
+
+function Database.NormalizePetCrowdControlAlertSize(value)
+    return Database.NormalizePetHealthAlertSize(
+        value,
+        Database.DEFAULT_PET_CROWD_CONTROL_ALERT_SIZE
+    )
+end
 
 function Database.NormalizeHonorAlertThreshold(value)
     value = tonumber(value)
@@ -192,6 +234,21 @@ function Database.Init()
             conquestEquipmentChestMailRecipient = "",
             honorAlertThreshold = Database.DEFAULT_HONOR_ALERT_THRESHOLD,
             hideHonorAlertIcon = false,
+            petHealthWarningOpacity = Database.DEFAULT_PET_HEALTH_WARNING_OPACITY,
+            petHealthDangerOpacity = Database.DEFAULT_PET_HEALTH_DANGER_OPACITY,
+            petHealthCriticalOpacity = Database.DEFAULT_PET_HEALTH_CRITICAL_OPACITY,
+            petHealthWarningSize = Database.DEFAULT_PET_HEALTH_WARNING_SIZE,
+            petHealthDangerSize = Database.DEFAULT_PET_HEALTH_DANGER_SIZE,
+            petHealthCriticalSize = Database.DEFAULT_PET_HEALTH_CRITICAL_SIZE,
+            petHealthAlertEnabled = Database.DEFAULT_CLASS_MODULE_ENABLED,
+            petHealthAlertBouncing = true,
+            petCrowdControlAlertOpacity = Database.DEFAULT_PET_CROWD_CONTROL_ALERT_OPACITY,
+            petCrowdControlAlertSize = Database.DEFAULT_PET_CROWD_CONTROL_ALERT_SIZE,
+            petCrowdControlAlertEnabled = Database.DEFAULT_CLASS_MODULE_ENABLED,
+            petCrowdControlAlertBouncing = true,
+            classModuleOptInDefaultsVersion =
+                Database.CLASS_MODULE_OPT_IN_DEFAULTS_VERSION,
+            classHunterCollapsed = false,
             themeKey = "obsidian",
             windowHeight = 450,
             sortKey = "character",
@@ -261,6 +318,81 @@ function Database.Init()
     if WarbandRatingsDB.settings.hideHonorAlertIcon == nil then
         WarbandRatingsDB.settings.hideHonorAlertIcon = false
     end
+    WarbandRatingsDB.settings.petHealthAlertTestMode = nil
+    local optInDefaultsVersion = tonumber(
+        WarbandRatingsDB.settings.classModuleOptInDefaultsVersion
+    ) or 0
+    if optInDefaultsVersion < Database.CLASS_MODULE_OPT_IN_DEFAULTS_VERSION then
+        WarbandRatingsDB.settings.petHealthAlertEnabled =
+            Database.DEFAULT_CLASS_MODULE_ENABLED
+        WarbandRatingsDB.settings.petCrowdControlAlertEnabled =
+            Database.DEFAULT_CLASS_MODULE_ENABLED
+        WarbandRatingsDB.settings.classModuleOptInDefaultsVersion =
+            Database.CLASS_MODULE_OPT_IN_DEFAULTS_VERSION
+    end
+    WarbandRatingsDB.settings.petHealthAlertEnabled =
+        Database.NormalizeClassModuleEnabled(
+            WarbandRatingsDB.settings.petHealthAlertEnabled
+        )
+    if WarbandRatingsDB.settings.petHealthAlertBouncing == nil then
+        WarbandRatingsDB.settings.petHealthAlertBouncing = true
+    else
+        WarbandRatingsDB.settings.petHealthAlertBouncing =
+            WarbandRatingsDB.settings.petHealthAlertBouncing == true
+    end
+    WarbandRatingsDB.settings.petHealthAlertCollapsed = nil
+    local legacyPetHealthOpacity = Database.NormalizePetHealthAlertOpacity(
+        WarbandRatingsDB.settings.petHealthAlertOpacity
+    )
+    local legacyPetHealthSize = Database.NormalizePetHealthAlertSize(
+        WarbandRatingsDB.settings.petHealthAlertSize
+    )
+    WarbandRatingsDB.settings.petHealthWarningOpacity = Database.NormalizePetHealthAlertOpacity(
+        WarbandRatingsDB.settings.petHealthWarningOpacity or legacyPetHealthOpacity * 0.5
+    )
+    WarbandRatingsDB.settings.petHealthDangerOpacity = Database.NormalizePetHealthAlertOpacity(
+        WarbandRatingsDB.settings.petHealthDangerOpacity or legacyPetHealthOpacity
+    )
+    WarbandRatingsDB.settings.petHealthCriticalOpacity = Database.NormalizePetHealthAlertOpacity(
+        WarbandRatingsDB.settings.petHealthCriticalOpacity or legacyPetHealthOpacity
+    )
+    WarbandRatingsDB.settings.petHealthWarningSize = Database.NormalizePetHealthAlertSize(
+        WarbandRatingsDB.settings.petHealthWarningSize or legacyPetHealthSize,
+        Database.DEFAULT_PET_HEALTH_WARNING_SIZE
+    )
+    WarbandRatingsDB.settings.petHealthDangerSize = Database.NormalizePetHealthAlertSize(
+        WarbandRatingsDB.settings.petHealthDangerSize or legacyPetHealthSize,
+        Database.DEFAULT_PET_HEALTH_DANGER_SIZE
+    )
+    WarbandRatingsDB.settings.petHealthCriticalSize = Database.NormalizePetHealthAlertSize(
+        WarbandRatingsDB.settings.petHealthCriticalSize or legacyPetHealthSize * 1.3,
+        Database.DEFAULT_PET_HEALTH_CRITICAL_SIZE
+    )
+    WarbandRatingsDB.settings.petHealthAlertOpacity = nil
+    WarbandRatingsDB.settings.petHealthAlertSize = nil
+    WarbandRatingsDB.settings.petCrowdControlAlertTestMode = nil
+    WarbandRatingsDB.settings.petCrowdControlAlertEnabled =
+        Database.NormalizeClassModuleEnabled(
+            WarbandRatingsDB.settings.petCrowdControlAlertEnabled
+        )
+    if WarbandRatingsDB.settings.petCrowdControlAlertBouncing == nil then
+        WarbandRatingsDB.settings.petCrowdControlAlertBouncing = true
+    else
+        WarbandRatingsDB.settings.petCrowdControlAlertBouncing =
+            WarbandRatingsDB.settings.petCrowdControlAlertBouncing == true
+    end
+    WarbandRatingsDB.settings.petCrowdControlAlertCollapsed = nil
+    WarbandRatingsDB.settings.classModuleCollapseDefaultsVersion = nil
+    WarbandRatingsDB.settings.petCrowdControlAlertOpacity =
+        Database.NormalizePetCrowdControlAlertOpacity(
+            WarbandRatingsDB.settings.petCrowdControlAlertOpacity
+        )
+    WarbandRatingsDB.settings.petCrowdControlAlertSize =
+        Database.NormalizePetCrowdControlAlertSize(
+            WarbandRatingsDB.settings.petCrowdControlAlertSize
+        )
+    WarbandRatingsDB.settings.classHunterCollapsed =
+        WarbandRatingsDB.settings.classHunterCollapsed == true
     WarbandRatingsDB.settings.galacticEquipmentMailRecipient = nil
     if WarbandRatingsDB.settings.windowHeight == nil then
         WarbandRatingsDB.settings.windowHeight = 450

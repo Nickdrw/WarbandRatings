@@ -194,6 +194,12 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if ns.HonorAlert and ns.HonorAlert.Init then
             ns.HonorAlert.Init()
         end
+        if ns.PetHealthAlert and ns.PetHealthAlert.Init then
+            ns.PetHealthAlert.Init()
+        end
+        if ns.PetCrowdControlAlert and ns.PetCrowdControlAlert.Init then
+            ns.PetCrowdControlAlert.Init()
+        end
 
         -- Request PvP data from server; ratings may not be available immediately
         DataCollection.RequestRatedInfo()

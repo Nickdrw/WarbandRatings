@@ -22,6 +22,8 @@ BagOpener.lua
 Mailbox.lua
 ArenaQueue.lua
 HonorAlert.lua
+PetHealthAlert.lua
+PetCrowdControlAlert.lua
 UI.lua
 SeasonUI.lua
 Core.lua
