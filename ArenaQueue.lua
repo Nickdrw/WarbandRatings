@@ -1737,6 +1737,8 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
         noShowWarningEligible = NoShow.IsBracket(bracket),
     }
 
+    -- Preserve the prepared secure action while a queue temporarily blocks it.
+    -- If the queue ends in combat, protected attributes cannot be rebuilt then.
     if queue then
         if queue.status == "rolecheck" then
             state.visualState = "rolecheck"
@@ -1750,7 +1752,6 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
                 state.buttonEnabled = true
             else
                 state.buttonVisible = false
-                ClearSecureAction(cardIndex, bracket.category)
             end
         elseif queue.status == "queued" then
             state.buttonVisible = false
@@ -1760,22 +1761,22 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             else
                 state.statusText = "IN QUEUE"
             end
-            ClearSecureAction(cardIndex, bracket.category)
         elseif queue.status == "confirm" then
             state.buttonText = "Match ready"
             state.visualState = "ready"
             state.statusText = "MATCH READY"
-            ClearSecureAction(cardIndex, bracket.category)
+        elseif queue.status == "locked" then
+            state.buttonText = "Waiting"
+            state.visualState = "active"
+            state.statusText = "WAITING FOR PLAYERS"
         elseif queue.status == "active" then
             state.buttonText = "In match"
             state.visualState = "active"
             state.statusText = "MATCH IN PROGRESS"
-            ClearSecureAction(cardIndex, bracket.category)
         else
             state.buttonText = "Unavailable"
             state.visualState = "active"
-            state.statusText = "QUEUE LOCKED"
-            ClearSecureAction(cardIndex, bracket.category)
+            state.statusText = "QUEUE UNAVAILABLE"
         end
         return state
     end
@@ -2007,6 +2008,15 @@ local function UpdateDynamicCard(card)
         card.readyGlow:Show()
         local now = GetTime and GetTime() or 0
         card.readyGlow:SetAlpha(0.12 + (math.sin(now * 5) + 1) * 0.10)
+    elseif queue.status == "locked" then
+        card.readyGlow:Hide()
+        SetQueueDisplayText(
+            card,
+            "Waiting for other players to accept the match",
+            "Waiting for players"
+        )
+        card.progressBg:Hide()
+        card.progressFill:Hide()
     else
         card.readyGlow:Hide()
         SetQueueDisplayText(card, state.statusText, state.buttonText)
