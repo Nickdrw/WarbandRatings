@@ -15,7 +15,6 @@ local auraContainer
 local eventFrame
 local initialized = false
 local testMode = false
-local bounceGroups = {}
 
 local function GetSettings()
     return Database and Database.GetSettings and Database.GetSettings() or {}
@@ -116,7 +115,6 @@ local function CreateDepthBounce(target)
     bounceBack:SetOrder(2)
 
     bounce:SetLooping("REPEAT")
-    bounceGroups[#bounceGroups + 1] = bounce
     return bounce
 end
 
@@ -153,7 +151,6 @@ local function CreateAlertVisual(parent, textureAsset)
     end
     visual.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     visual.iconMask = AddRoundedMask(visual.imageLayer, visual.icon, "ARTWORK")
-    visual.bounce = CreateDepthBounce(visual.imageLayer)
 
     visual.labelLayer = CreateFrame("Frame", nil, visual)
     visual.labelLayer:SetAllPoints(visual)
@@ -261,6 +258,8 @@ local function EnsureAlertFrame()
     frame.bounceFrame = CreateFrame("Frame", nil, frame)
     frame.bounceFrame:SetSize(ICON_SIZE, ICON_SIZE)
     frame.bounceFrame:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    frame.bounce = CreateDepthBounce(frame.bounceFrame)
+    frame.bounceActive = false
 
     frame.preview = CreateAlertVisual(frame.bounceFrame, GetTestCCTexture())
     frame.preview:Hide()
@@ -307,11 +306,12 @@ function PetCrowdControlAlert.ApplySettings()
     frame.preview:SetShown(showTest)
 
     local shouldBounce = IsBouncingEnabled() and enabled
-    for _, bounce in ipairs(bounceGroups) do
+    if shouldBounce ~= frame.bounceActive then
+        frame.bounceActive = shouldBounce
         if shouldBounce then
-            if not bounce:IsPlaying() then bounce:Play() end
-        elseif bounce:IsPlaying() then
-            bounce:Stop()
+            frame.bounce:Play()
+        else
+            frame.bounce:Stop()
         end
     end
 

@@ -73,9 +73,17 @@ local function CreateAnimationGroupMock()
         return animation
     end
     group.SetLooping = function(self, value) self.looping = value end
-    group.Play = function(self) self.playing = true end
-    group.Stop = function(self) self.playing = false end
-    group.IsPlaying = function(self) return self.playing end
+    group.Play = function(self)
+        self.playing = true
+        self.playCount = (self.playCount or 0) + 1
+    end
+    group.Stop = function(self)
+        self.playing = false
+        self.stopCount = (self.stopCount or 0) + 1
+    end
+    group.IsPlaying = function()
+        error("animation state should be tracked without querying the animation group")
+    end
     return group
 end
 
@@ -217,11 +225,12 @@ assert(auraButton.registeredCooldown == auraButton.durationCooldown
     "the protected aura duration was not connected to its cooldown swipe")
 assert(auraButton.mouseMotionEnabled == false and auraButton.mouseClickEnabled == false,
     "the restricted aura icon can intercept mouse input")
-assert(alert.preview.bounce.playing
-        and auraButton.alertVisual.bounce.playing
-        and alert.preview.bounce.looping == "REPEAT"
-        and auraButton.alertVisual.bounce.looping == "REPEAT",
-    "the pet crowd-control artwork did not start its depth bounce")
+assert(alert.bounce.playing and alert.bounce.looping == "REPEAT",
+    "the pet crowd-control alert did not start its depth bounce")
+assert(alert.bounce.playCount == 1,
+    "the pet crowd-control alert restarted an already active bounce")
+assert(not alert.preview.bounce and not auraButton.alertVisual.bounce,
+    "restricted aura artwork retained a directly controlled animation group")
 assert(auraButton.alertVisual.petLabel.parent ~= auraButton.alertVisual.imageLayer,
     "the PET label was incorrectly attached to the moving artwork layer")
 assert(eventFrame.events.UNIT_PET
@@ -251,6 +260,8 @@ assert(alert.bounceFrame.point[1] == "CENTER"
         and alert.bounceFrame.point[2] == alert
         and alert.bounceFrame.point[3] == "CENTER",
     "the resized pet crowd-control visual was not kept centered on its saved position")
+assert(alert.bounce.playCount == 1,
+    "applying appearance settings restarted the active bounce")
 
 alert.centerX = 1060
 alert.centerY = 490
@@ -280,9 +291,10 @@ assert(not ns.PetCrowdControlAlert.IsTestMode()
 
 settings.petCrowdControlAlertBouncing = false
 ns.PetCrowdControlAlert.ApplySettings()
-assert(not alert.preview.bounce.playing
-        and not auraButton.alertVisual.bounce.playing,
-    "disabling Bouncing did not stop the pet CC artwork animations")
+assert(not alert.bounce.playing,
+    "disabling Bouncing did not stop the pet CC alert animation")
+assert(alert.bounce.stopCount == 1,
+    "disabling Bouncing stopped the pet CC alert animation more than once")
 
 settings.petCrowdControlAlertEnabled = false
 ns.PetCrowdControlAlert.ApplySettings()
