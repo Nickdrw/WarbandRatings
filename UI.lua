@@ -214,6 +214,31 @@ local function GetGlobalColumnTextColor(col, value, theme)
     return Utils.IsEmptyRating(value) and theme.muted or theme.text
 end
 
+function UI.IsConquestCapActive()
+    local info = C_CurrencyInfo
+        and C_CurrencyInfo.GetCurrencyInfo
+        and C_CurrencyInfo.GetCurrencyInfo(1602)
+    if not info then return nil end
+    return (tonumber(info.maxQuantity) or 0) > 0
+end
+
+function UI.IsConquestCapped(ratings)
+    if UI.IsConquestCapActive() == false then return false end
+    ratings = ratings or {}
+    local earned = tonumber(ratings.conquest_totalEarned) or 0
+    local maximum = tonumber(ratings.conquest_maxQuantity) or 0
+    return maximum > 0 and earned >= maximum
+end
+
+function UI.FormatGlobalColumnValue(col, ratings, value)
+    local formatFn = col.formatFn or Utils.FormatRating
+    local text = formatFn(value)
+    if col.key == "conquest" and UI.IsConquestCapped(ratings) then
+        return "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12:0:0|t " .. text
+    end
+    return text
+end
+
 local function GetDockedGraphHeight()
     if graphPanel and graphPanel:IsShown() and not graphPanel.detached then
         return math.max(graphPanel:GetHeight() - 1, 0)
@@ -4436,13 +4461,16 @@ local function AddConquestTooltipOverlay(row, x, y, w, h, charData, col)
 
         local seasonEarned = tonumber(ratings.conquest_totalEarned) or 0
         local seasonMaximum = tonumber(ratings.conquest_maxQuantity) or 0
-        if seasonMaximum > 0 then
+        if seasonMaximum > 0 and UI.IsConquestCapActive() ~= false then
             GameTooltip:AddDoubleLine(
                 "Season Maximum:",
                 FormatTooltipNumber(seasonEarned) .. "/" .. FormatTooltipNumber(seasonMaximum),
                 1, 0.82, 0,
                 1, 1, 1
             )
+            if UI.IsConquestCapped(ratings) then
+                GameTooltip:AddLine("Season cap reached", 0.25, 1, 0.35)
+            end
         end
 
         GameTooltip:Show()
@@ -4764,12 +4792,11 @@ function UI.RefreshTable()
                         fs:Show()
                     end
                 else
-                    local formatFn = col.formatFn or Utils.FormatRating
                     local fs = AcquireFontString(row, "GameFontHighlight")
                     fs:SetPoint("LEFT", row, "LEFT", colX, 0)
                     fs:SetWidth(w)
                     fs:SetJustifyH("CENTER")
-                    fs:SetText(formatFn(val))
+                    fs:SetText(UI.FormatGlobalColumnValue(col, charData.ratings, val))
                     SetFontColor(fs, GetGlobalColumnTextColor(col, val, theme))
                     fs:Show()
                     if Database.IsPVPColumn(col) then

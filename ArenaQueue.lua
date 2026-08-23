@@ -210,6 +210,7 @@ local builtInPvPDeltasHooked
 local betterBlizzTrackerPoints = {}
 local noShowPenaltyActive = false
 local queueBracketKeysByIndex = {}
+local acceptedBattlefieldQueues = {}
 local UpdatePanel
 local UpdateDynamicCards
 local PrimeSecureQueueBrackets
@@ -619,6 +620,17 @@ local function GetQueuedPVPRole(queueIndex, battlefieldRole)
     if PVP_ROLE_ATLASES[battlefieldRole] then return battlefieldRole end
 end
 
+local function RecordBattlefieldPortResponse(queueIndex, accepted)
+    queueIndex = tonumber(queueIndex)
+    if not queueIndex then return end
+
+    if accepted == true or accepted == 1 then
+        acceptedBattlefieldQueues[queueIndex] = true
+    else
+        acceptedBattlefieldQueues[queueIndex] = nil
+    end
+end
+
 local function ScanPVPQueues()
     local queues = {
         [QUEUE_CATEGORY_RATED] = {},
@@ -631,6 +643,9 @@ local function ScanPVPQueues()
         local status, mapName, teamSize, registeredMatch, suspended, queueType, _, battlefieldRole, asGroup, _, _, isSoloQueue =
             GetBattlefieldStatus(queueIndex)
         if status and status ~= "none" then
+            if status ~= "confirm" then
+                acceptedBattlefieldQueues[queueIndex] = nil
+            end
             local bracket, ignoredQueue = GetUnratedQueueBracket(
                 queueType,
                 mapName,
@@ -642,6 +657,16 @@ local function ScanPVPQueues()
                 bracket = GetRatedQueueBracket(queueType, teamSize, registeredMatch, isSoloQueue)
             end
             if bracket then
+                local isSolo = isSoloQueue
+                    or bracket.key == "soloShuffle"
+                    or bracket.key == "ratedBGBlitz"
+                -- Solo queues can remain "confirm" after the player accepts.
+                -- Present that interval like Blizzard's locked premade ready check.
+                if status == "confirm" and isSolo and acceptedBattlefieldQueues[queueIndex] then
+                    status = "locked"
+                elseif not isSolo then
+                    acceptedBattlefieldQueues[queueIndex] = nil
+                end
                 queueBracketKeysByIndex[queueIndex] = bracket.key
                 queues[bracket.category][bracket.key] = {
                     index = queueIndex,
@@ -650,9 +675,7 @@ local function ScanPVPQueues()
                     suspended = suspended,
                     role = GetQueuedPVPRole(queueIndex, battlefieldRole),
                     asGroup = asGroup,
-                    isSolo = isSoloQueue
-                        or bracket.key == "soloShuffle"
-                        or bracket.key == "ratedBGBlitz",
+                    isSolo = isSolo,
                     bracket = bracket,
                 }
             elseif ignoredQueue then
@@ -662,6 +685,7 @@ local function ScanPVPQueues()
             end
         else
             queueBracketKeysByIndex[queueIndex] = nil
+            acceptedBattlefieldQueues[queueIndex] = nil
         end
     end
 
@@ -3368,6 +3392,12 @@ function ArenaQueue.Attach()
     eventFrame:RegisterEvent("LFG_LIST_SEARCH_RESULT_UPDATED")
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     eventFrame:RegisterEvent("ADDON_LOADED")
+    if _G.hooksecurefunc and _G.AcceptBattlefieldPort then
+        _G.hooksecurefunc("AcceptBattlefieldPort", function(queueIndex, accepted)
+            RecordBattlefieldPortResponse(queueIndex, accepted)
+            RefreshSoon()
+        end)
+    end
     eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         if event == "ADDON_LOADED" and arg1 ~= "Blizzard_PVPUI" then
             return
