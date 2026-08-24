@@ -2,7 +2,7 @@
 ## Title: Warband PvP Companion
 ## Notes: Tracks and displays PvP and M+ ratings & currencies for all your characters.
 ## Author: NickDrew
-## Version: 3.1.4
+## Version: 3.1.5
 ## IconTexture: Interface\AddOns\WarbandRatings\media\warbandratings-icon
 ## Category: PvP
 ## SavedVariables: WarbandRatingsDB
