@@ -3083,6 +3083,7 @@ local function EnsurePanel()
         1,
         ns.DISPLAY_NAME .. " - Queues"
     )
+    panel:SetFrameStrata("MEDIUM")
     panel:SetMovable(true)
     panel:SetClampedToScreen(true)
     panel:RegisterForDrag("LeftButton")
