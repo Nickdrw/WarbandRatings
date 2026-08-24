@@ -850,11 +850,14 @@ function Database.BuildCharacterGroups(characters, seasonKey)
             specs = { 0 }
         end
 
-        -- Filter: hide if all ratings empty (global + all specs)
+        -- Filter: hide if all PvP bracket ratings are empty (global + all specs).
+        -- Currency, stats, and PvE values are displayed in the same table but do
+        -- not make a character rated.
         if not skip and settings.hideNoRating then
             local hasAny = false
             for _, col in ipairs(globalColumns) do
-                if not Utils.IsEmptyRating(charData.ratings and charData.ratings[col.key]) then
+                if Database.IsPVPColumn(col)
+                    and not Utils.IsEmptyRating(charData.ratings and charData.ratings[col.key]) then
                     hasAny = true
                     break
                 end
@@ -864,7 +867,7 @@ function Database.BuildCharacterGroups(characters, seasonKey)
                     local sr = charData.specRatings and charData.specRatings[specID]
                     if sr then
                         for _, col in ipairs(Database.SPEC_COLUMNS) do
-                            if not Utils.IsEmptyRating(sr[col.key]) then
+                            if Database.IsPVPColumn(col) and not Utils.IsEmptyRating(sr[col.key]) then
                                 hasAny = true
                                 break
                             end

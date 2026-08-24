@@ -169,6 +169,40 @@ assert(Database.NormalizeClassModuleEnabled(nil) == false
         and Database.NormalizeClassModuleEnabled(true) == true,
     "class-module Enable settings were not normalized as opt-in")
 
+WarbandRatingsDB.settings.hideNoRating = true
+local filteredGroups = Database.BuildCharacterGroups({
+    ["CurrencyOnly-Realm"] = {
+        name = "CurrencyOnly",
+        realm = "Realm",
+        classFilename = "MONK",
+        level = 90,
+        ratings = { honor = 6935, conquest = 1600, hk = 120 },
+        specRatings = {},
+    },
+    ["GlobalRated-Realm"] = {
+        name = "GlobalRated",
+        realm = "Realm",
+        classFilename = "MONK",
+        level = 90,
+        ratings = { arena2v2 = 1053, honor = 6935 },
+        specRatings = {},
+    },
+    ["SpecRated-Realm"] = {
+        name = "SpecRated",
+        realm = "Realm",
+        classFilename = "MONK",
+        level = 90,
+        ratings = { conquest = 500 },
+        specRatings = { [270] = { soloShuffle = 1001 } },
+    },
+}, "pvp-42")
+assert(#filteredGroups == 2,
+    "the no-rating filter should ignore currencies and stats")
+assert(filteredGroups[1].charData.name == "GlobalRated"
+        and filteredGroups[2].charData.name == "SpecRated",
+    "the no-rating filter removed a character with a PvP bracket rating")
+WarbandRatingsDB.settings.hideNoRating = false
+
 Database.SaveCharacter("pvp-42", {
     name = "Tester",
     realm = "Realm",
