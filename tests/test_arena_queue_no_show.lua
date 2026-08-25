@@ -1,4 +1,4 @@
--- luacheck: globals WarbandRatingsDB CreateFrame GetNumGroupMembers GetServerTime GetTime C_UnitAuras C_Spell
+-- luacheck: globals WarbandRatingsDB CreateFrame GetNumGroupMembers GetServerTime GetTime C_UnitAuras C_Spell C_PvP HonorFrame HonorFrameQueueButton
 
 local epoch = 100000
 local monotonic = 5000
@@ -29,16 +29,27 @@ end
 local ns = {}
 assert(loadfile("ArenaQueue.lua"))("WarbandRatings", ns)
 
-local noShow
-for upvalueIndex = 1, 30 do
-    local name, value = debug.getupvalue(ns.ArenaQueue.Attach, upvalueIndex)
-    if not name then break end
-    if name == "NoShow" then
-        noShow = value
-        break
+local function FindUpvalue(root, targetName, visited)
+    if type(root) ~= "function" then return nil end
+    visited = visited or {}
+    if visited[root] then return nil end
+    visited[root] = true
+
+    for upvalueIndex = 1, 100 do
+        local name, value = debug.getupvalue(root, upvalueIndex)
+        if not name then break end
+        if name == targetName then return value end
+        if type(value) == "function" then
+            local found = FindUpvalue(value, targetName, visited)
+            if found then return found end
+        end
     end
 end
+
+local noShow = FindUpvalue(ns.ArenaQueue.Attach, "NoShow")
+local buildCardState = FindUpvalue(ns.ArenaQueue.Attach, "BuildCardState")
 assert(noShow, "No-Show tracker should be available to the queue helper")
+assert(buildCardState, "queue card state builder should be reachable")
 
 activeAura = {
     duration = 10 * 60,
@@ -80,6 +91,53 @@ assert(noShow.GetActiveText():find("Match-leaving penalty active", 1, true),
     "match-leaving aura should use a distinct penalty label")
 assert(not noShow.GetActiveText():find("No-Show penalty active", 1, true),
     "match-leaving aura should not use the missed-queue label")
+activeAura = nil
+activeAuraSpellID = 1311694
+noShow.ScanActivePenalty()
+
+activeAuraSpellID = 158263
+activeAura = {
+    duration = 60,
+    expirationTime = monotonic + 29,
+    icon = 2468,
+}
+local savedRecord = WarbandRatingsDB.settings.arenaQueueNoShowPenalty
+assert(noShow.ScanActivePenalty(), "Craven aura should be detected")
+assert(noShow.GetActiveText():find("Craven penalty active", 1, true),
+    "Craven aura should use a distinct penalty label")
+assert(noShow.GetActiveButtonText() == "0:29",
+    "Craven penalty should expose its remaining duration")
+assert(noShow.IsActiveForBracket({ key = "arenaSkirmish" }),
+    "Craven should block Arena Skirmish")
+assert(noShow.IsActiveForBracket({ key = "soloShuffle" }),
+    "Craven should block Solo Shuffle")
+assert(noShow.IsActiveForBracket({ key = "arena2v2" }),
+    "Craven should block rated arenas")
+assert(not noShow.IsActiveForBracket({ key = "ratedBGBlitz" }),
+    "Craven should not block Battleground Blitz")
+assert(not noShow.IsActiveForBracket({ key = "randomBattleground" }),
+    "Craven should not block unrated battlegrounds")
+assert(WarbandRatingsDB.settings.arenaQueueNoShowPenalty == savedRecord,
+    "Craven should not alter the cumulative rated No-Show record")
+
+HonorFrame = { BonusFrame = { Arena1Button = {} } }
+HonorFrameQueueButton = {}
+C_PvP = {
+    GetSkirmishInfo = function()
+        return { minPlayers = 1, maxPlayers = 3 }
+    end,
+}
+local skirmishState = buildCardState(1, {
+    key = "arenaSkirmish",
+    category = "unrated",
+    targetKey = "Arena1Button",
+}, nil, nil, 1)
+assert(skirmishState.failureKind == "noShow"
+        and skirmishState.failureReason:find("Craven penalty active", 1, true),
+    "Arena Skirmish card should show the active Craven penalty")
+assert(not skirmishState.buttonEnabled and skirmishState.statusText == "UNAVAILABLE",
+    "Arena Skirmish queue action should be disabled while Craven is active")
+
 activeAura = nil
 activeAuraSpellID = 1311694
 noShow.ScanActivePenalty()

@@ -22,9 +22,11 @@ local FALLBACK_BADGE_TEXTURE = 2022761
 local NoShow = {
     -- Missed invitations stack until one hour after the resulting aura was applied.
     -- The aura's full duration identifies the current step in the penalty ladder.
+    cravenSpellID = 158263,
     matchLeavingSpellID = 368798,
     missedQueueSpellID = 1311694,
     spellIDs = {
+        158263, -- Leaving an Arena before entering combat.
         368798, -- Leaving an active Solo Shuffle or Battleground Blitz match.
         1311694, -- Missing a Solo Shuffle or Battleground Blitz invitation.
     },
@@ -1033,6 +1035,8 @@ local function GetUnratedQueueFailure(bracket, groupSize)
         local info = C_PvP.GetSkirmishInfo(4)
         if not info then
             return "Arena Skirmishes are currently unavailable."
+        elseif NoShow.IsActiveForBracket(bracket) then
+            return NoShow.GetActiveText(), "noShow"
         elseif groupSize < (tonumber(info.minPlayers) or 1) then
             return "Your group needs more players for Arena Skirmish."
         elseif groupSize > (tonumber(info.maxPlayers) or groupSize) then
@@ -1213,9 +1217,14 @@ function NoShow.GetActiveText()
         NoShow.icon or NoShow.GetSpellIcon(NoShow.missedQueueSpellID),
         NoShow.activeIconSize
     )
-    local penaltyLabel = NoShow.activeSpellID == NoShow.matchLeavingSpellID
-        and "Match-leaving penalty active"
-        or "No-Show penalty active"
+    local penaltyLabel
+    if NoShow.activeSpellID == NoShow.cravenSpellID then
+        penaltyLabel = "Craven penalty active"
+    elseif NoShow.activeSpellID == NoShow.matchLeavingSpellID then
+        penaltyLabel = "Match-leaving penalty active"
+    else
+        penaltyLabel = "No-Show penalty active"
+    end
     local text = (icon ~= "" and (icon .. " ") or "") .. penaltyLabel
     return text .. "."
 end
@@ -1399,6 +1408,18 @@ function NoShow.IsBracket(bracket)
         and (bracket.key == "soloShuffle" or bracket.key == "ratedBGBlitz")
 end
 
+function NoShow.IsActiveForBracket(bracket)
+    if not noShowPenaltyActive or not bracket then return false end
+
+    if NoShow.activeSpellID == NoShow.cravenSpellID then
+        return bracket.key == "arenaSkirmish"
+            or bracket.key == "soloShuffle"
+            or bracket.key == "arena2v2"
+            or bracket.key == "arena3v3"
+    end
+    return NoShow.IsBracket(bracket)
+end
+
 local function GetSoloShuffleFailure()
     if _G.ConquestFrame and _G.ConquestFrame.ratedSoloShuffleEnabled == false then
         return "Solo Shuffle is currently unavailable."
@@ -1406,7 +1427,7 @@ local function GetSoloShuffleFailure()
         return "Waiting for rated PvP availability."
     end
 
-    if noShowPenaltyActive then
+    if NoShow.IsActiveForBracket(BRACKETS.soloShuffle) then
         return NoShow.GetActiveText(), "noShow"
     end
 
@@ -1461,7 +1482,7 @@ local function GetBlitzFailure(groupSize)
         return "Waiting for rated PvP availability."
     end
 
-    if noShowPenaltyActive then
+    if NoShow.IsActiveForBracket(BRACKETS.ratedBGBlitz) then
         return NoShow.GetActiveText(), "noShow"
     end
 
@@ -1509,11 +1530,14 @@ local function GetGroupUnitLayout(groupSize)
     return "party", groupSize - 1
 end
 
-local function GetArenaGroupFailure(groupSize)
+local function GetArenaGroupFailure(bracket, groupSize)
     if _G.ConquestFrame and _G.ConquestFrame.arenasEnabled == false then
         return "Rated arenas are currently unavailable."
     elseif _G.ConquestFrame and _G.ConquestFrame.arenasEnabled == nil then
         return "Waiting for rated PvP availability."
+    end
+    if NoShow.IsActiveForBracket(bracket) then
+        return NoShow.GetActiveText(), "noShow"
     end
     if not UnitIsGroupLeader or not UnitIsGroupLeader("player") then
         return _G.PVP_NOT_LEADER or "Only the group leader can queue.", "notLeader"
@@ -1554,7 +1578,7 @@ local function GetBracketFailure(bracket, groupSize)
     elseif bracket.key == "ratedBGBlitz" then
         return GetBlitzFailure(groupSize)
     end
-    return GetArenaGroupFailure(groupSize)
+    return GetArenaGroupFailure(bracket, groupSize)
 end
 
 local function GetPublicTierName(tierInfo)
@@ -1808,7 +1832,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
     if commonFailure then
         state.failureReason = commonFailure
     elseif not isRated then
-        state.failureReason = GetUnratedQueueFailure(bracket, groupSize)
+        state.failureReason, state.failureKind = GetUnratedQueueFailure(bracket, groupSize)
     else
         state.failureReason, state.failureKind = GetBracketFailure(bracket, groupSize)
     end
