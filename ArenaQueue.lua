@@ -1841,7 +1841,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             state.buttonVisible = false
             state.visualState = "queued"
             if queue.suspended then
-                state.statusText = "QUEUE SUSPENDED"
+                state.statusText = "QUEUE PAUSED"
             else
                 state.statusText = "IN QUEUE"
             end
@@ -2047,7 +2047,7 @@ local function UpdateDynamicCard(card)
     elseif queue.status == "queued" then
         card.readyGlow:Hide()
         if queue.suspended then
-            SetQueueDisplayText(card, "Queue suspended", "Suspended")
+            SetQueueDisplayText(card, "Queue paused", "Paused")
             card.progressBg:Hide()
             card.progressFill:Hide()
             return
