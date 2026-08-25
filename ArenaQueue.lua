@@ -18,6 +18,7 @@ local CARD_SIDE_INSET = 4
 local CARD_WIDTH = PANEL_WIDTH - CARD_SIDE_INSET * 2
 local CARD_PROGRESS_WIDTH = CARD_WIDTH - 20
 local MAX_CARDS = 4
+local MAX_ACTIVE_BATTLEFIELD_QUEUES = 3
 local FALLBACK_BADGE_TEXTURE = 2022761
 local NoShow = {
     -- Missed invitations stack until one hour after the resulting aura was applied.
@@ -638,6 +639,7 @@ local function ScanPVPQueues()
         [QUEUE_CATEGORY_RATED] = {},
         [QUEUE_CATEGORY_UNRATED] = {},
     }
+    local activeQueueCount = 0
     local maxQueues = GetMaxBattlefieldID and GetMaxBattlefieldID()
     maxQueues = tonumber(maxQueues) or tonumber(_G.MAX_BATTLEFIELD_QUEUES) or 8
 
@@ -645,6 +647,7 @@ local function ScanPVPQueues()
         local status, mapName, teamSize, registeredMatch, suspended, queueType, _, battlefieldRole, asGroup, _, _, isSoloQueue =
             GetBattlefieldStatus(queueIndex)
         if status and status ~= "none" then
+            activeQueueCount = activeQueueCount + 1
             if status == "queued" or status == "active" then
                 acceptedBattlefieldQueues[queueIndex] = nil
             end
@@ -695,7 +698,7 @@ local function ScanPVPQueues()
         end
     end
 
-    return queues
+    return queues, activeQueueCount
 end
 
 local function GetRoleCheckBracketKeyFromName(queueName)
@@ -1802,7 +1805,7 @@ local function UpdateBuiltInPvPRatingDeltas()
     end
 end
 
-local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSize)
+local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSize, activeQueueCount)
     local isRated = bracket.category == QUEUE_CATEGORY_RATED
     local state = {
         bracket = bracket,
@@ -1866,7 +1869,10 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
         return state
     end
 
-    if commonFailure then
+    if (tonumber(activeQueueCount) or 0) >= MAX_ACTIVE_BATTLEFIELD_QUEUES then
+        state.failureReason = "You can queue for up to 3 PvP battles at a time."
+        state.failureKind = "queueLimit"
+    elseif commonFailure then
         state.failureReason = commonFailure
     elseif not isRated then
         state.failureReason, state.failureKind = GetUnratedQueueFailure(bracket, groupSize)
@@ -1895,7 +1901,7 @@ local function GetPanelState()
     if IsHelperHidden() or not GetObjectiveTracker() then return nil end
 
     NoShow.ScanActivePenalty()
-    local queueGroups = ScanPVPQueues()
+    local queueGroups, activeQueueCount = ScanPVPQueues()
     local ratedQueues = queueGroups[QUEUE_CATEGORY_RATED]
     local unratedQueues = queueGroups[QUEUE_CATEGORY_UNRATED]
     local roleCheck = ScanPVPRoleCheck()
@@ -1903,6 +1909,7 @@ local function GetPanelState()
         local roleCheckQueues = queueGroups[roleCheck.bracket.category]
         if roleCheckQueues and not roleCheckQueues[roleCheck.bracket.key] then
             roleCheckQueues[roleCheck.bracket.key] = roleCheck
+            activeQueueCount = activeQueueCount + 1
         end
     end
     local category = GetQueueCategory()
@@ -1943,7 +1950,8 @@ local function GetPanelState()
             bracket,
             queues[bracket.key],
             commonFailure,
-            groupSize
+            groupSize,
+            activeQueueCount
         )
         state.cards[cardIndex] = cardState
     end

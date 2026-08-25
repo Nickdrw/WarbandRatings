@@ -276,6 +276,8 @@ WarbandRatingsCharacterDB.settings = {
 
 On upgrade, the former account-wide choice seeds each character's initial value. Changing it afterward affects only the current character.
 
+The helper counts occupied battlefield slots across Rated, Unrated, and unrecognized PvP queues. Once three slots are occupied, existing queue cards continue to show their live status while every new queue action is disabled until a slot becomes available.
+
 ### PvP History
 
 Graph series live inside the same canonical seasonal character record as the table and Rewind data. `WarbandRatingsDB.history` contains only coordination metadata and diagnostics.
