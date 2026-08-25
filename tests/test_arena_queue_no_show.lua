@@ -193,11 +193,12 @@ local warningCard = {
     actionButton = actionButton,
     actionBlocker = actionBlocker,
     queueText = queueText,
+    progressBg = {},
     compactRating = compactRating,
     compactDelta = compactDelta,
 }
 local queuedState = {
-    queue = {},
+    queue = { status = "queued" },
     buttonVisible = false,
     buttonEnabled = false,
 }
@@ -206,8 +207,18 @@ assert(warningButton.shown and warningButton.tooltipText == noShow.FormatWarning
     "queued warning icon should expose the complete sentence as its tooltip")
 assert(actionButton.shown == false and actionBlocker.shown,
     "warning icon should occupy the unavailable action-button area")
-assert(queueText.points[2] and queueText.points[2][2] == warningButton,
+assert(queueText.points[3] and queueText.points[3][2] == warningButton,
     "normal expanded queue text should stop before the warning icon")
+assert(queueText.points[1]
+        and queueText.points[1][2] == warningCard.progressBg
+        and queueText.points[1][3] == "BOTTOMLEFT"
+        and queueText.points[1][5] == 0
+        and queueText.points[2][2] == warningCard
+        and queueText.points[2][3] == "BOTTOMLEFT"
+        and queueText.points[2][5] == 1,
+    "expanded queue timers should be vertically centered below the progress bar")
+assert(queueText.justify == "RIGHT",
+    "expanded queue timers should use the available space from the right edge")
 noShow.UpdateQueueWarningDisplay(warningCard, queuedState, nil)
 assert(not warningButton.shown, "queued warning icon should hide when the reset window ends")
 warningCard.minimizedLayout = true

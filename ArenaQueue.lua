@@ -1329,6 +1329,42 @@ function NoShow.HideQueueWarningTooltip(button)
     end
 end
 
+function NoShow.IsExpandedQueueTimer(card, state)
+    local queue = state and state.queue
+    return card
+        and not card.minimizedLayout
+        and queue
+        and not queue.suspended
+        and (queue.status == "queued" or queue.status == "confirm")
+end
+
+function NoShow.SetExpandedQueueTextAnchor(card, state)
+    if NoShow.IsExpandedQueueTimer(card, state) then
+        card.queueText:SetPoint(
+            "TOPLEFT",
+            card.progressBg,
+            "BOTTOMLEFT",
+            0,
+            0
+        )
+        card.queueText:SetPoint(
+            "BOTTOMLEFT",
+            card,
+            "BOTTOMLEFT",
+            10,
+            1
+        )
+    else
+        card.queueText:SetPoint(
+            "BOTTOMLEFT",
+            card,
+            "BOTTOMLEFT",
+            10,
+            13
+        )
+    end
+end
+
 function NoShow.UpdateQueueWarningDisplay(card, state, warning)
     local button = card and card.noShowWarningButton
     if not button then return end
@@ -1374,32 +1410,28 @@ function NoShow.UpdateQueueWarningDisplay(card, state, warning)
         card.queueText:SetPoint("BOTTOMRIGHT", button, "BOTTOMLEFT", -2, 0)
         card.queueText:SetJustifyH("CENTER")
     elseif showWarning then
-        card.queueText:SetPoint(
-            "BOTTOMLEFT",
-            card,
-            "BOTTOMLEFT",
-            10,
-            card.minimizedLayout and 7 or 13
-        )
+        NoShow.SetExpandedQueueTextAnchor(card, state)
         card.queueText:SetPoint("RIGHT", button, "LEFT", -8, 0)
-        card.queueText:SetJustifyH("LEFT")
+        card.queueText:SetJustifyH(
+            NoShow.IsExpandedQueueTimer(card, state) and "RIGHT" or "LEFT"
+        )
     elseif showQueueInButton then
         card.queueText:SetAllPoints(card.actionButton)
         card.queueText:SetJustifyH("CENTER")
     else
-        card.queueText:SetPoint(
-            "BOTTOMLEFT",
-            card,
-            "BOTTOMLEFT",
-            10,
-            card.minimizedLayout and 7 or 13
-        )
+        if card.minimizedLayout then
+            card.queueText:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 7)
+        else
+            NoShow.SetExpandedQueueTextAnchor(card, state)
+        end
         if state.buttonVisible then
             card.queueText:SetPoint("RIGHT", card.actionButton, "LEFT", -8, 0)
         else
             card.queueText:SetPoint("RIGHT", card, "RIGHT", -10, 0)
         end
-        card.queueText:SetJustifyH("LEFT")
+        card.queueText:SetJustifyH(
+            NoShow.IsExpandedQueueTimer(card, state) and "RIGHT" or "LEFT"
+        )
     end
 end
 
@@ -1811,6 +1843,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             end
         elseif queue.status == "confirm" then
             state.buttonText = "Match ready"
+            state.buttonVisible = false
             state.visualState = "ready"
             state.statusText = "MATCH READY"
         elseif queue.status == "locked" then
@@ -2128,7 +2161,18 @@ local function ApplyCardTheme(card, theme)
     HelperPanel.SetFontColor(card.sessionDelta, sessionDeltaColor)
     HelperPanel.SetFontColor(card.compactDelta, sessionDeltaColor)
     HelperPanel.SetFontColor(card.statusText, accent)
-    HelperPanel.SetFontColor(card.queueText, theme.muted)
+    local emphasizeQueueTimer = NoShow.IsExpandedQueueTimer(card, state)
+    local queueFont = emphasizeQueueTimer and _G.GameFontHighlight or _G.GameFontDisableSmall
+    if queueFont then
+        card.queueText:SetFontObject(queueFont)
+    end
+    local queueTextColor = theme.muted
+    if emphasizeQueueTimer then
+        queueTextColor = state.queue.status == "confirm"
+            and STATUS_COLORS.ready
+            or theme.text
+    end
+    HelperPanel.SetFontColor(card.queueText, queueTextColor)
 end
 
 local function ApplyQueueTabTheme(button, theme)

@@ -40,6 +40,13 @@ local bracket = {
     key = "arenaSkirmish",
     category = "unrated",
 }
+local readyState = buildCardState(1, bracket, {
+    status = "confirm",
+    bracket = bracket,
+}, nil, 1)
+assert(not readyState.buttonVisible,
+    "match-ready countdowns should use the full row instead of showing a disabled button")
+
 local queue = {
     status = "locked",
     bracket = bracket,
