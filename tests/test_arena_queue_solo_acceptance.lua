@@ -62,6 +62,10 @@ battlefieldPortHook(1, true)
 assert(GetSoloQueue().status == "locked",
     "accepted Solo Shuffle queues should wait for the remaining players")
 
+battlefieldStatus = "error"
+assert(GetSoloQueue().status == "locked",
+    "accepted solo queues should keep waiting while matchmaking resolves the ready check")
+
 battlefieldStatus = "queued"
 assert(GetSoloQueue().status == "queued", "leaving confirmation should clear the accepted response")
 battlefieldStatus = "confirm"
@@ -72,6 +76,11 @@ battlefieldPortHook(1, 1)
 assert(GetSoloQueue().status == "locked",
     "accepted Solo Battleground queues should wait for the remaining players")
 
+battlefieldStatus = "error"
+assert(GetSoloQueue().status == "locked",
+    "accepted Solo Battleground queues should keep waiting during lobby resolution")
+
+battlefieldStatus = "confirm"
 battlefieldPortHook(1, false)
 assert(GetSoloQueue().status == "confirm", "declining a solo match should not show a waiting state")
 

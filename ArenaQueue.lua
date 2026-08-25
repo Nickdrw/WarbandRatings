@@ -645,7 +645,7 @@ local function ScanPVPQueues()
         local status, mapName, teamSize, registeredMatch, suspended, queueType, _, battlefieldRole, asGroup, _, _, isSoloQueue =
             GetBattlefieldStatus(queueIndex)
         if status and status ~= "none" then
-            if status ~= "confirm" then
+            if status == "queued" or status == "active" then
                 acceptedBattlefieldQueues[queueIndex] = nil
             end
             local bracket, ignoredQueue = GetUnratedQueueBracket(
@@ -662,9 +662,13 @@ local function ScanPVPQueues()
                 local isSolo = isSoloQueue
                     or bracket.key == "soloShuffle"
                     or bracket.key == "ratedBGBlitz"
-                -- Solo queues can remain "confirm" after the player accepts.
-                -- Present that interval like Blizzard's locked premade ready check.
-                if status == "confirm" and isSolo and acceptedBattlefieldQueues[queueIndex] then
+                -- Accepted solo ready checks can remain "confirm" or briefly
+                -- report "error" while the lobby resolves missing players.
+                -- Present both intervals like Blizzard's locked premade ready check.
+                if isSolo
+                    and acceptedBattlefieldQueues[queueIndex]
+                    and (status == "confirm" or status == "error")
+                then
                     status = "locked"
                 elseif not isSolo then
                     acceptedBattlefieldQueues[queueIndex] = nil
