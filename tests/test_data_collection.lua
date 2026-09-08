@@ -1,7 +1,8 @@
 -- luacheck: globals time UnitName GetNormalizedRealmName GetRealmName
 -- luacheck: globals GetSpecialization GetSpecializationInfo UnitClass UnitLevel
 -- luacheck: globals GetMaxLevelForPlayerExpansion UnitGUID RequestRatedInfo
--- luacheck: globals GetPersonalRatedInfo GetBattlefieldWinner GetBattlefieldTeamInfo C_PvP
+-- luacheck: globals GetPersonalRatedInfo GetBattlefieldWinner GetBattlefieldTeamInfo
+-- luacheck: globals C_PvP
 
 local now = 1000
 local rating = 1500
@@ -23,7 +24,10 @@ local recorded
 local recordCount = 0
 local enriched
 local savedMMR
+local savedMMRDelta
+local savedMMRBracket
 local seasonActive = true
+local teamMMRByFaction = { [0] = 1600, [1] = 1500 }
 
 time = function() return now end
 UnitName = function() return currentName end
@@ -41,8 +45,8 @@ GetPersonalRatedInfo = function()
         roundsSeasonPlayed, 0, roundsWeeklyPlayed, roundsWeeklyWon
 end
 GetBattlefieldWinner = function() return 0 end
-GetBattlefieldTeamInfo = function()
-    return nil, nil, nil, 1600
+GetBattlefieldTeamInfo = function(faction)
+    return nil, nil, nil, teamMMRByFaction[faction]
 end
 
 C_PvP = {
@@ -84,6 +88,7 @@ local ns = {
         end,
         GetPVPColumnByBracketIndex = function(bracketIndex)
             if bracketIndex == 7 then return specColumn end
+            if bracketIndex == 1 or bracketIndex == 2 then return globalColumn end
         end,
         IsValidSeasonKey = function(seasonKey)
             return seasonKey == "pvp-42" or seasonKey == "pvp-41"
@@ -101,8 +106,10 @@ local ns = {
             WarbandRatingsDB.seasons[seasonKey].characters[data.name .. "-" .. data.realm] = data
             return true
         end,
-        SaveLastMMR = function(_, _, _, _, _, mmr)
+        SaveLastMMR = function(_, _, _, _, bracketIndex, mmr, mmrDelta)
+            savedMMRBracket = bracketIndex
             savedMMR = mmr
+            savedMMRDelta = mmrDelta
             return true
         end,
     },
@@ -231,9 +238,9 @@ scoreInfo = { faction = 0 }
 enriched = nil
 savedMMR = nil
 assert(DataCollection.BeginRatedMatch(true))
-assert(DataCollection.CaptureActiveMatchMMR())
+assert(not DataCollection.CaptureActiveMatchMMR())
 assert(enriched == nil, "team-average MMR should not enrich a personal history point")
-assert(savedMMR == 1600, "team-average fallback should remain available for the character display")
+assert(savedMMR == nil, "team MMR should not be used for a personal-MMR bracket")
 
 scoreInfo = {
     faction = 0,
@@ -275,5 +282,71 @@ assert(DataCollection.MarkRatedStatsUpdated())
 local otherData = DataCollection.CollectCurrentCharacter()
 assert(otherData.pvpStats.arena3v3.ownerCharacterKey == "Other-Realm",
     "the refreshed character did not receive owned global statistics")
+
+currentName = "Tester"
+C_PvP.IsRatedSoloShuffle = function() return true end
+C_PvP.IsRatedArena = function() return false end
+C_PvP.GetActiveMatchBracket = function() return 6 end -- Blizzard's zero-based Solo Shuffle ID.
+scoreInfo = { faction = 0, prematchMMR = 1700 }
+savedMMR = nil
+savedMMRDelta = nil
+assert(DataCollection.BeginRatedMatch(true), "Solo Shuffle match tracking did not start")
+assert(DataCollection.CaptureActiveMatchMMR())
+scoreInfo = { faction = 0, postmatchMMR = 1722 }
+assert(DataCollection.MarkRatedMatchComplete(0, 120), "Solo Shuffle completion did not capture MMR")
+assert(savedMMR == 1722 and savedMMRDelta == 22,
+    "MMR change was not derived from the same match's pre/post values")
+
+scoreInfo = { faction = 0, matchMakingRating = 1800 }
+savedMMR = nil
+savedMMRDelta = nil
+assert(DataCollection.BeginRatedMatch(true), "second Solo Shuffle match tracking did not start")
+assert(DataCollection.CaptureActiveMatchMMR())
+scoreInfo = { faction = 0, matchMakingRating = 1824 }
+assert(DataCollection.MarkRatedMatchComplete(0, 120), "generic final MMR sample was not captured")
+assert(savedMMR == 1824 and savedMMRDelta == 24,
+    "final MMR sample was not paired with the same match's starting MMR")
+
+C_PvP.IsRatedSoloShuffle = function() return false end
+C_PvP.IsRatedArena = function() return true end
+C_PvP.GetActiveMatchBracket = function() return 0 end -- Blizzard's zero-based 2v2 ID.
+teamMMRByFaction[0] = 2200 -- Opposing team: must never be selected for this player.
+teamMMRByFaction[1] = 1650
+scoreInfo = { faction = 1, prematchMMR = 0, postmatchMMR = 0 }
+savedMMR = nil
+savedMMRDelta = nil
+assert(DataCollection.BeginRatedMatch(true), "2v2 match tracking did not start")
+assert(DataCollection.CaptureActiveMatchMMR())
+assert(savedMMRBracket == 1, "zero-based 2v2 bracket was not normalized for MMR storage")
+teamMMRByFaction[1] = 1675
+assert(DataCollection.MarkRatedMatchComplete(1, 120), "2v2 completion did not capture team MMR")
+assert(savedMMR == 1675 and savedMMRDelta == 25,
+    "2v2 MMR was not derived from the player's own team")
+
+scoreInfo = { prematchMMR = 1900, postmatchMMR = 1925 }
+savedMMR = nil
+savedMMRDelta = nil
+assert(DataCollection.BeginRatedMatch(true), "2v2 match without faction did not start")
+assert(not DataCollection.CaptureActiveMatchMMR(), "2v2 captured MMR without the player's faction")
+assert(savedMMR == nil and savedMMRDelta == nil,
+    "2v2 wrote an MMR value without a trustworthy team identity")
+
+C_PvP.GetActiveMatchBracket = function() return 1 end -- Blizzard's zero-based 3v3 ID.
+teamMMRByFaction[0] = 1800
+teamMMRByFaction[1] = 2300 -- Opposing team: must never be selected for this player.
+scoreInfo = { faction = 0, prematchMMR = 0, postmatchMMR = 0 }
+savedMMR = nil
+savedMMRDelta = nil
+assert(DataCollection.BeginRatedMatch(true), "3v3 match tracking did not start")
+assert(DataCollection.CaptureActiveMatchMMR())
+teamMMRByFaction[0] = 1820
+assert(DataCollection.MarkRatedMatchComplete(0, 120), "3v3 completion did not capture team MMR")
+assert(savedMMR == 1820 and savedMMRDelta == 20,
+    "3v3 MMR was not derived from the player's own team")
+
+DataCollection.UpdateActivePVPContext()
+assert(DataCollection.BeginRatedMatch(true), "zero-based 3v3 bracket did not start match tracking")
+assert(DataCollection.CaptureActiveMatchMMR())
+assert(savedMMRBracket == 2, "zero-based 3v3 bracket was not normalized for MMR storage")
 
 print("data collection tests passed")

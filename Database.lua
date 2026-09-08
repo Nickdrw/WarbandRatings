@@ -210,6 +210,9 @@ local function NormalizeCharacterSpecData(charData)
     charData.specRatings = NormalizeSpecMap(charData.specRatings, currentSpecID)
     charData.specPVPStats = NormalizeSpecMap(charData.specPVPStats, currentSpecID)
     charData.specLastMMR = NormalizeSpecMap(charData.specLastMMR, currentSpecID)
+    -- Remove retired experimental data on load and when merging character snapshots.
+    charData.combatStats = nil
+    charData.combatStatsVersion = nil
 end
 
 function Database.Init()
@@ -742,11 +745,12 @@ function Database.GetItemWarbandSummary(itemID)
     return total, entries
 end
 
-function Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, mmr)
+function Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, mmr, mmrDelta)
     if not Database.IsStorageReady() then return false end
     if not Database.IsValidSeasonKey(seasonKey) then return false end
     mmr = tonumber(mmr)
     if not mmr or mmr <= 0 then return false end
+    mmrDelta = tonumber(mmrDelta)
 
     local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
     if not col then return false end
@@ -762,9 +766,14 @@ function Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, mmr)
         existing.specLastMMR = existing.specLastMMR or {}
         existing.specLastMMR[specID] = existing.specLastMMR[specID] or {}
         existing.specLastMMR[specID][col.key] = mmr
+        existing.specLastMMRDelta = existing.specLastMMRDelta or {}
+        existing.specLastMMRDelta[specID] = existing.specLastMMRDelta[specID] or {}
+        existing.specLastMMRDelta[specID][col.key] = mmrDelta
     else
         existing.lastMMR = existing.lastMMR or {}
         existing.lastMMR[col.key] = mmr
+        existing.lastMMRDelta = existing.lastMMRDelta or {}
+        existing.lastMMRDelta[col.key] = mmrDelta
     end
 
     existing.lastUpdated = time()

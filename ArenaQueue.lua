@@ -102,6 +102,7 @@ end
 local BRACKETS = {
     soloShuffle = {
         key = "soloShuffle",
+        databaseKey = "soloShuffle",
         category = QUEUE_CATEGORY_RATED,
         label = "Solo Shuffle",
         description = "Rated solo arena for one player.",
@@ -110,6 +111,7 @@ local BRACKETS = {
     },
     ratedBGBlitz = {
         key = "ratedBGBlitz",
+        databaseKey = "soloBG",
         category = QUEUE_CATEGORY_RATED,
         label = "Battleground Blitz",
         description = "Rated 8v8 battleground for solo players or a duo with a healer.",
@@ -118,6 +120,7 @@ local BRACKETS = {
     },
     arena2v2 = {
         key = "arena2v2",
+        databaseKey = "arena2v2",
         category = QUEUE_CATEGORY_RATED,
         label = "2v2 Arena",
         description = "Rated arena for your two-player group.",
@@ -126,6 +129,7 @@ local BRACKETS = {
     },
     arena3v3 = {
         key = "arena3v3",
+        databaseKey = "arena3v3",
         category = QUEUE_CATEGORY_RATED,
         label = "3v3 Arena",
         description = "Rated arena for your three-player group.",
@@ -1727,6 +1731,51 @@ local function GetRatingInfo(bracket)
     }
 end
 
+function ArenaQueue.GetCurrentCharacterKey()
+    if not ns.Utils or not ns.Utils.CharKey or not UnitName then return nil end
+
+    local name = UnitName("player")
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not realm and GetRealmName then
+        realm = GetRealmName()
+        realm = realm and realm:gsub("%s", "")
+    end
+    if not name or not realm then return nil end
+    return ns.Utils.CharKey(name, realm)
+end
+
+function ArenaQueue.GetLastMMRInfo(bracket)
+    local characterKey = ArenaQueue.GetCurrentCharacterKey()
+    local characters = Database and Database.GetCurrentCharacters and Database.GetCurrentCharacters()
+    local charData = characterKey and characters and characters[characterKey]
+    local databaseKey = bracket.databaseKey or bracket.key
+    local specID = GetCurrentSpecID()
+    local mmr
+    local delta
+
+    if charData then
+        if databaseKey == "soloShuffle" or databaseKey == "soloBG" then
+            local specMMR = charData.specLastMMR
+                and (charData.specLastMMR[specID] or charData.specLastMMR[tostring(specID)])
+            mmr = specMMR and tonumber(specMMR[databaseKey])
+            local specMMRDelta = charData.specLastMMRDelta
+                and (charData.specLastMMRDelta[specID] or charData.specLastMMRDelta[tostring(specID)])
+            delta = specMMRDelta and tonumber(specMMRDelta[databaseKey])
+        else
+            mmr = charData.lastMMR and tonumber(charData.lastMMR[databaseKey])
+            delta = charData.lastMMRDelta and tonumber(charData.lastMMRDelta[databaseKey])
+        end
+    end
+    if not mmr or mmr <= 0 then
+        return { mmr = 0 }
+    end
+
+    return {
+        mmr = mmr,
+        delta = delta,
+    }
+end
+
 local function GetBetterBlizzTrackerPoints(tracker)
     local points = betterBlizzTrackerPoints[tracker]
     if points then return points end
@@ -1817,6 +1866,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             ranking = 0,
             tierName = "",
         },
+        mmr = isRated and ArenaQueue.GetLastMMRInfo(bracket) or { mmr = 0 },
         buttonText = "Queue",
         buttonEnabled = false,
         buttonVisible = true,
@@ -2162,6 +2212,8 @@ local function ApplyCardTheme(card, theme)
     HelperPanel.SetFontColor(card.rankText, theme.muted)
     HelperPanel.SetFontColor(card.ratingValue, accent)
     HelperPanel.SetFontColor(card.ratingLabel, theme.muted)
+    HelperPanel.SetFontColor(card.mmrValue, theme.mmr)
+    HelperPanel.SetFontColor(card.mmrLabel, theme.muted)
     HelperPanel.SetFontColor(card.compactRating, accent)
     local sessionDelta = state.rating.sessionDelta
     local sessionDeltaColor = theme.muted
@@ -2172,6 +2224,14 @@ local function ApplyCardTheme(card, theme)
     end
     HelperPanel.SetFontColor(card.sessionDelta, sessionDeltaColor)
     HelperPanel.SetFontColor(card.compactDelta, sessionDeltaColor)
+    local mmrDelta = state.mmr.delta
+    local mmrDeltaColor = theme.muted
+    if mmrDelta and mmrDelta > 0 then
+        mmrDeltaColor = STATUS_COLORS.ready
+    elseif mmrDelta and mmrDelta < 0 then
+        mmrDeltaColor = SESSION_LOSS_COLOR
+    end
+    HelperPanel.SetFontColor(card.mmrDelta, mmrDeltaColor)
     HelperPanel.SetFontColor(card.statusText, accent)
     local emphasizeQueueTimer = NoShow.IsExpandedQueueTimer(card, state)
     local queueFont = emphasizeQueueTimer and _G.GameFontHighlight or _G.GameFontDisableSmall
@@ -2879,6 +2939,9 @@ local function ApplyCardLayout(card, minimized, isRated)
         card.ratingValue:Hide()
         card.ratingLabel:Hide()
         card.sessionDelta:Hide()
+        card.mmrValue:Hide()
+        card.mmrLabel:Hide()
+        card.mmrDelta:Hide()
         card.rankText:Hide()
         card.statusDot:Hide()
         card.statusText:Hide()
@@ -2892,7 +2955,9 @@ local function ApplyCardLayout(card, minimized, isRated)
         card.badge:SetShown(isRated)
         card.ratingValue:SetShown(isRated)
         card.ratingLabel:SetShown(isRated)
-        card.rankText:SetShown(isRated)
+        card.rankText:Hide()
+        card.mmrValue:SetShown(isRated)
+        card.mmrLabel:SetShown(isRated)
         card.statusDot:Show()
         card.statusText:Show()
 
@@ -2905,7 +2970,7 @@ local function ApplyCardLayout(card, minimized, isRated)
             card.modeName:SetPoint("RIGHT", card, "RIGHT", -10, 0)
             card.statusDot:SetPoint("TOPLEFT", card, "TOPLEFT", 10, -32)
         end
-        card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, isRated and 34 or 27)
+        card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 27)
         card.actionButton:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -9, 7)
     end
 end
@@ -3011,6 +3076,18 @@ local function CreateCard(cardIndex)
     card.sessionDelta:SetPoint("RIGHT", card.ratingLabel, "LEFT", -6, 0)
     card.sessionDelta:SetJustifyH("RIGHT")
 
+    card.mmrValue = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    card.mmrValue:SetPoint("TOPRIGHT", card.ratingLabel, "BOTTOMRIGHT", 0, -4)
+    card.mmrValue:SetJustifyH("RIGHT")
+
+    card.mmrLabel = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    card.mmrLabel:SetPoint("TOPRIGHT", card.mmrValue, "BOTTOMRIGHT", 0, -1)
+    card.mmrLabel:SetText("MMR")
+
+    card.mmrDelta = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    card.mmrDelta:SetPoint("RIGHT", card.mmrLabel, "LEFT", -6, 0)
+    card.mmrDelta:SetJustifyH("RIGHT")
+
     card.modeName = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     card.modeName:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -10)
     card.modeName:SetPoint("RIGHT", card.ratingValue, "LEFT", -8, 0)
@@ -3035,7 +3112,7 @@ local function CreateCard(cardIndex)
     card.statusText:SetJustifyH("LEFT")
 
     card.progressBg = card:CreateTexture(nil, "ARTWORK")
-    card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 34)
+    card.progressBg:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 10, 27)
     card.progressBg:SetSize(CARD_PROGRESS_WIDTH, 3)
     card.progressBg:Hide()
 
@@ -3300,6 +3377,17 @@ local function UpdateCard(card, state)
     else
         card.sessionDelta:SetText("")
         card.sessionDelta:Hide()
+    end
+
+    local mmr = state.mmr.mmr
+    local mmrDelta = state.mmr.delta
+    card.mmrValue:SetText(mmr > 0 and mmr or "—")
+    if not minimized and mmrDelta and mmrDelta ~= 0 then
+        card.mmrDelta:SetText((mmrDelta >= 0 and "+" or "") .. mmrDelta)
+        card.mmrDelta:Show()
+    else
+        card.mmrDelta:SetText("")
+        card.mmrDelta:Hide()
     end
 
     local rankText = state.rating.tierName

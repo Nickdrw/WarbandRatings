@@ -13,6 +13,16 @@ local ratedStatsCharacterKey
 local ratedStatsRequestedCharacterKey
 local activeRatedMatch
 
+-- C_PvP.GetActiveMatchBracket uses zero-based bracket IDs, unlike the
+-- one-based IDs accepted by GetPersonalRatedInfo and Database columns.
+local ACTIVE_MATCH_BRACKET_TO_DATABASE_INDEX = {
+    [0] = 1, -- 2v2
+    [1] = 2, -- 3v3
+    [3] = 4, -- Rated Battleground
+    [6] = 7, -- Solo Shuffle
+    [8] = 9, -- Battleground Blitz
+}
+
 local ACCOUNT_BANK_BAG_IDS = {
     12,
     13,
@@ -577,7 +587,8 @@ local function GetActiveRatedBracketIndex()
 
     if C_PvP.GetActiveMatchBracket then
         local ok, activeBracketIndex = pcall(C_PvP.GetActiveMatchBracket)
-        activeBracketIndex = ok and tonumber(activeBracketIndex)
+        activeBracketIndex = ok
+            and ACTIVE_MATCH_BRACKET_TO_DATABASE_INDEX[tonumber(activeBracketIndex)]
         if activeBracketIndex and Database.GetPVPColumnByBracketIndex(activeBracketIndex) then
             return activeBracketIndex
         end
@@ -718,23 +729,15 @@ local function GetBattlefieldTeamMMR(teamIndex)
     return GetPositiveNumber(mmr)
 end
 
-local function GetFallbackBattlefieldMMR(info)
-    if type(info) == "table" and info.faction ~= nil then
-        local factionMMR = GetBattlefieldTeamMMR(info.faction)
-        if factionMMR then
-            return factionMMR
-        end
-    end
+local function IsTeamMMRBracket(bracketIndex)
+    return bracketIndex == 1 or bracketIndex == 2 or bracketIndex == 4
+end
 
-    local teamIndices = { 0, 1, 2, "Horde", "Alliance" }
-    for _, teamIndex in ipairs(teamIndices) do
-        local mmr = GetBattlefieldTeamMMR(teamIndex)
-        if mmr then
-            return mmr
-        end
-    end
+local function GetPlayerTeamMMR(info)
+    local faction = GetSafeNumber(type(info) == "table" and info.faction)
+    if faction ~= 0 and faction ~= 1 then return nil end
 
-    return nil
+    return GetBattlefieldTeamMMR(faction)
 end
 
 local function GetMMRFromInfo(info)
@@ -753,7 +756,14 @@ local function GetMMRFromInfo(info)
     return prematchMMR, postMatchMMR
 end
 
-local function GetAvailableMMR(scoreInfo)
+local function GetAvailableMMR(scoreInfo, bracketIndex)
+    -- Arena score records expose zero personal MMR for 2v2 and 3v3. Their
+    -- visible MMR is the player's team's MMR. Never probe arbitrary teams:
+    -- after a fast exit that can select the opponent's value instead.
+    if IsTeamMMRBracket(bracketIndex) then
+        return GetPlayerTeamMMR(scoreInfo), nil, nil
+    end
+
     local prematchMMR, postMatchMMR = GetMMRFromInfo(scoreInfo)
     local enrichmentMMR = prematchMMR
     if not prematchMMR or not postMatchMMR then
@@ -761,9 +771,6 @@ local function GetAvailableMMR(scoreInfo)
         prematchMMR = prematchMMR or activePrematchMMR
         postMatchMMR = postMatchMMR or activePostMatchMMR
         enrichmentMMR = enrichmentMMR or activePrematchMMR
-    end
-    if not prematchMMR then
-        prematchMMR = GetFallbackBattlefieldMMR(scoreInfo)
     end
     return prematchMMR, postMatchMMR, enrichmentMMR
 end
@@ -890,8 +897,8 @@ function DataCollection.CaptureActiveMatchMMR()
 
     local context = activeRatedMatch
     local scoreInfo = GetPlayerScoreInfo()
-    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo)
-    if prematchMMR then
+    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo, context.bracketIndex)
+    if prematchMMR and not context.preMMR then
         context.preMMR = prematchMMR
     end
     if enrichmentMMR then
@@ -914,13 +921,27 @@ function DataCollection.CaptureActiveMatchMMR()
 
     local currentMMR = postMatchMMR or prematchMMR
     if currentMMR then
+        local isFinalMMRSample = context.completedAt or context.inactiveAt
+        if isFinalMMRSample then
+            -- Blizzard does not consistently label the final value as
+            -- postmatchMMR. The value read after this match ends is still a
+            -- valid post-match sample because preMMR was fixed at match start.
+            context.postMMR = currentMMR
+        end
+        local mmrDelta
+        local verifiedPostMMR = context.postMMR
+        if isFinalMMRSample and context.preMMR and verifiedPostMMR
+                and verifiedPostMMR ~= context.preMMR then
+            mmrDelta = verifiedPostMMR - context.preMMR
+        end
         Database.SaveLastMMR(
             context.seasonKey,
             context.name,
             context.realm,
             context.specID,
             context.bracketIndex,
-            currentMMR
+            currentMMR,
+            mmrDelta
         )
         return true
     end
@@ -997,7 +1018,7 @@ local function FinalizeRatedMatch(recordHistory)
     end
 
     local scoreInfo = GetPlayerScoreInfo()
-    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo)
+    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo, bracketIndex)
     prematchMMR = prematchMMR or (context and context.preMMR)
     postMatchMMR = postMatchMMR or (context and context.postMMR)
     enrichmentMMR = enrichmentMMR or (context and context.enrichmentMMR)
@@ -1034,8 +1055,14 @@ local function FinalizeRatedMatch(recordHistory)
     end
 
     local currentMMR = postMatchMMR or prematchMMR
+    local verifiedPostMMR = context.postMMR or postMatchMMR
+    local mmrDelta = (context.completedAt or context.inactiveAt)
+        and context.preMMR
+        and verifiedPostMMR
+        and verifiedPostMMR ~= context.preMMR
+        and (verifiedPostMMR - context.preMMR)
     local savedMMR = currentMMR
-        and Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, currentMMR)
+        and Database.SaveLastMMR(seasonKey, name, realm, specID, bracketIndex, currentMMR, mmrDelta)
         or false
 
     if not recordHistory then

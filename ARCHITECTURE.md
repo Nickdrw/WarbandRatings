@@ -536,7 +536,10 @@ To use fake data again, intentionally rewire the UI/Core paths or add a controll
 
 ## Known Patterns And Pitfalls
 
-- Use WSL for project commands: `wsl luacheck .`, `wsl git ...`.
+- Use WSL for project commands: `wsl luacheck .`, `wsl git ...`. If a restricted
+  runner reports `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`, retry the same
+  command through the normal (unsandboxed) WSL environment; this is a runner
+  permission boundary, not evidence that WSL or `luacheck` is unavailable.
 - WoW FontString truncation needs `SetWordWrap(false)` and `SetNonSpaceWrap(false)`.
 - PVEFrame is not suited for third-party tabs; standalone buttons in Blizzard panes are more reliable.
 - SavedVariables merging must explicitly copy new fields in both create and update paths.

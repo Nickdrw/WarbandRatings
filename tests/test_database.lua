@@ -316,6 +316,14 @@ assert(Database.SaveLastMMR("pvp-42", "Tester", "Realm", 270, 7, 1805),
     "season-bound specialization MMR was not saved")
 assert(saved.specLastMMR[270].soloShuffle == 1805,
     "specialization MMR was written to the wrong character record")
+assert(Database.SaveLastMMR("pvp-42", "Tester", "Realm", 270, 2, 1900, -12),
+    "season-bound arena MMR with its change was not saved")
+assert(saved.lastMMRDelta.arena3v3 == -12,
+    "arena MMR change was written to the wrong character record")
+assert(Database.SaveLastMMR("pvp-42", "Tester", "Realm", 270, 2, 1900),
+    "arena MMR without a verified change was not saved")
+assert(saved.lastMMRDelta.arena3v3 == nil,
+    "stale arena MMR change was retained without a verified match pair")
 assert(not Database.SaveLastMMR("pvp-41", "Tester", "Realm", 270, 7, 1900),
     "MMR was allowed to cross its season boundary")
 assert(not Database.SaveCharacter("pvp-41", saved),
@@ -335,5 +343,26 @@ assert(Database.SaveCharacter("pvp-41", {
 }), "an explicitly season-bound historical API record was rejected")
 assert(WarbandRatingsDB.seasons["pvp-41"].characters["Historical-Realm"].seasonKey == "pvp-41",
     "historical API data was written under the wrong season")
+
+-- Retired experimental fields must disappear without removing unrelated data,
+-- including when an older character snapshot is merged back into the database.
+local preservedRating, preservedSeries = saved.ratings.arena2v2, saved.series
+saved.combatStats, saved.combatStatsVersion = { obsolete = true }, 4
+local historical = WarbandRatingsDB.seasons["pvp-41"].characters["Historical-Realm"]
+historical.combatStats, historical.combatStatsVersion = { obsolete = true }, 1
+WarbandRatingsDB.characters = { Legacy = { combatStats = { obsolete = true }, combatStatsVersion = 4 } }
+Database.Init()
+Database.Migrate()
+assert(saved.combatStats == nil and saved.combatStatsVersion == nil
+    and historical.combatStats == nil and historical.combatStatsVersion == nil
+    and WarbandRatingsDB.characters.Legacy.combatStats == nil
+    and WarbandRatingsDB.characters.Legacy.combatStatsVersion == nil,
+    "retired data survived initialization in a current, archived or legacy character")
+assert(saved.ratings.arena2v2 == preservedRating and saved.series == preservedSeries,
+    "retired-data cleanup changed ratings or history")
+saved.combatStats, saved.combatStatsVersion = { obsolete = true }, 4
+assert(Database.SaveCharacter("pvp-42", saved))
+assert(saved.combatStats == nil and saved.combatStatsVersion == nil,
+    "merging an old snapshot restored retired data")
 
 print("database tests passed")
