@@ -11,6 +11,8 @@ local merchantCurrencyID = 1602
 local buyCount = 0
 local lastBuyQuantity
 local helperPanel
+local helperPanels = {}
+local createdFrames = {}
 
 local function NewWidget()
     local widget = {
@@ -48,6 +50,16 @@ end
 
 MerchantFrame = NewWidget()
 MerchantFrame.shown = true
+_G.GossipFrame = NewWidget()
+_G.UnitGUID = function() return "Creature-0-0-0-0-17630-0000000000" end
+_G.C_Item = { GetItemIconByID = function() return 67890 end }
+local selectedGossipOption
+_G.C_GossipInfo = {
+    GetOptions = function()
+        return { { icon = 132060, gossipOptionID = 42 } }
+    end,
+    SelectOption = function(optionID) selectedGossipOption = optionID end,
+}
 
 C_CurrencyInfo = {
     GetCurrencyInfo = function()
@@ -75,7 +87,11 @@ BuyMerchantItem = function(_, quantity)
     lastBuyQuantity = quantity
 end
 C_Timer = { After = function(_, callback) callback() end }
-CreateFrame = function() return NewWidget() end
+CreateFrame = function()
+    local frame = NewWidget()
+    createdFrames[#createdFrames + 1] = frame
+    return frame
+end
 
 GameTooltip = NewWidget()
 GameTooltip.lines = {}
@@ -96,8 +112,9 @@ local ns = {
     },
     DataCollection = {},
     HelperPanel = {
-        CreateShell = function()
+        CreateShell = function(name)
             helperPanel = NewWidget()
+            helperPanels[name] = helperPanel
             return helperPanel
         end,
         ApplyShellTheme = function()
@@ -174,3 +191,30 @@ assert(GameTooltip.lines[2] == "Buys one copy of Infused Heliotrope.",
 currencyQuantity = 0
 ns.Merchant.Refresh()
 assert(not helperPanel.shown, "unaffordable Heliotrope should preserve the existing hidden-helper behavior")
+
+merchantItemID = 260260
+merchantItemName = "Springrunner Sparkling"
+merchantItemPrice = 350
+merchantCurrencyID = nil
+currencyQuantity = 0
+ns.Merchant.Refresh()
+
+local waterPanel = helperPanels.WarbandRatingsArenaWaterFrame
+assert(waterPanel and waterPanel.shown, "Springrunner Sparkling should show the arena-water helper")
+assert(waterPanel.body.text == "Springrunner Sparkling", "arena-water helper should identify the vendor drink")
+assert(waterPanel.singleButton.text == "Buy 1", "arena-water helper should describe a single-item purchase")
+assert(waterPanel.button.text == "Buy 20", "arena-water helper should offer a 20-water purchase")
+
+waterPanel.button.scripts.OnClick()
+assert(buyCount == 3 and lastBuyQuantity == 20,
+    "arena-water helper should request 20 bottles")
+
+MerchantFrame.shown = false
+createdFrames[1].scripts.OnEvent(nil, "GOSSIP_SHOW")
+assert(waterPanel.shown, "Innkeeper Jovia's gossip window should show the arena-water helper")
+assert(waterPanel.detail.text == "Arena-usable: browse goods to buy it.",
+    "gossip helper should explain that the vendor list must be opened before buying")
+assert(waterPanel.button.shown and waterPanel.button.text == "Browse goods" and not waterPanel.singleButton.shown,
+    "gossip helper should replace purchases with a browse-goods action")
+waterPanel.button.scripts.OnClick()
+assert(selectedGossipOption == 42, "gossip helper should select the innkeeper's vendor option")

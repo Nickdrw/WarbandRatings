@@ -12,6 +12,13 @@ local PANEL_WIDTH = 220
 local PANEL_HEIGHT = 114
 local ICON_SIZE = 28
 local PANEL_BELOW_OFFSET_Y = -42
+local ARENA_WATER_ITEM_ID = 260260
+local ARENA_WATER_NAME = "Springrunner Sparkling"
+local ARENA_WATER_TARGET_QUANTITY = 20
+local VENDOR_GOSSIP_ICON = 132060
+local ARENA_WATER_VENDOR_IDS = {
+    [17630] = true, -- Innkeeper Jovia, Silvermoon City
+}
 
 local function GetCurrencyDumpItems()
     local items = {
@@ -41,6 +48,8 @@ end
 
 local eventFrame
 local panel
+local arenaWaterPanel
+local gossipArenaWaterVendor
 
 local function FormatNumber(value)
     value = math.floor((tonumber(value) or 0) + 0.5)
@@ -62,6 +71,12 @@ local function ApplyPanelTheme()
     HelperPanel.SetTextureColor(panel.iconBorderRight, theme.accent, 0.85)
     HelperPanel.SetFontColor(panel.body, theme.text)
     HelperPanel.SetFontColor(panel.detail, theme.muted)
+
+    if arenaWaterPanel then
+        local waterTheme = HelperPanel.ApplyShellTheme(arenaWaterPanel)
+        HelperPanel.SetFontColor(arenaWaterPanel.body, waterTheme.text)
+        HelperPanel.SetFontColor(arenaWaterPanel.detail, waterTheme.muted)
+    end
 end
 
 Merchant.ApplyTheme = ApplyPanelTheme
@@ -235,6 +250,59 @@ local function GetPurchaseState()
     return item
 end
 
+local function GetNPCID()
+    local guid = UnitGUID and UnitGUID("npc")
+    return guid and tonumber(guid:match("^Creature%-%d+%-%d+%-%d+%-%d+%-(%d+)%-"))
+end
+
+local function IsArenaWaterVendor(npcID)
+    local settings = Database.GetSettings() or {}
+    return npcID and (ARENA_WATER_VENDOR_IDS[npcID]
+        or (type(settings.arenaWaterVendorIDs) == "table" and settings.arenaWaterVendorIDs[npcID]))
+end
+
+local function RememberArenaWaterVendor()
+    local npcID = GetNPCID()
+    if not npcID then return end
+
+    local settings = Database.GetSettings()
+    if not settings then return end
+    if type(settings.arenaWaterVendorIDs) ~= "table" then
+        settings.arenaWaterVendorIDs = {}
+    end
+    settings.arenaWaterVendorIDs[npcID] = true
+end
+
+local function GetArenaWaterState()
+    local settings = Database.GetSettings() or {}
+    if settings.hideArenaWaterHelper then return nil end
+
+    if MerchantFrame and MerchantFrame:IsShown() then
+        local numItems = GetMerchantNumItems and GetMerchantNumItems() or 0
+        for index = 1, numItems do
+            local itemInfo = GetItemInfo(index)
+            local itemID = itemInfo and GetItemID(index)
+            if itemInfo and (itemID == ARENA_WATER_ITEM_ID or itemInfo.name == ARENA_WATER_NAME) then
+                RememberArenaWaterVendor()
+                return {
+                    index = index,
+                    name = itemInfo.name or ARENA_WATER_NAME,
+                    texture = itemInfo.texture,
+                    purchasable = itemInfo.isPurchasable ~= false,
+                }
+            end
+        end
+    end
+
+    if gossipArenaWaterVendor then
+        return {
+            name = ARENA_WATER_NAME,
+            texture = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(ARENA_WATER_ITEM_ID),
+            gossipOnly = true,
+        }
+    end
+end
+
 local UpdatePanel
 
 local function RefreshSoon()
@@ -288,6 +356,26 @@ local function BuyMaxCurrencyDumpItem()
         BuyMerchantItem(state.index, state.quantity)
     end
     RefreshAfterPurchase()
+end
+
+local function BuyArenaWater(quantity)
+    local state = GetArenaWaterState()
+    if not state or not state.purchasable or not BuyMerchantItem then return end
+
+    BuyMerchantItem(state.index, quantity)
+    RefreshSoon()
+end
+
+local function OpenArenaWaterVendor()
+    local gossipInfo = _G.C_GossipInfo
+    if not gossipInfo or not gossipInfo.GetOptions or not gossipInfo.SelectOption then return end
+
+    for _, option in ipairs(gossipInfo.GetOptions() or {}) do
+        if option.icon == VENDOR_GOSSIP_ICON and option.gossipOptionID then
+            gossipInfo.SelectOption(option.gossipOptionID)
+            return
+        end
+    end
 end
 
 local function ShowTooltip(self)
@@ -402,6 +490,50 @@ local function EnsurePanel()
     ApplyPanelTheme()
 end
 
+local function EnsureArenaWaterPanel()
+    if arenaWaterPanel or not MerchantFrame then return end
+
+    arenaWaterPanel = HelperPanel.CreateShell(
+        "WarbandRatingsArenaWaterFrame",
+        PANEL_WIDTH,
+        PANEL_HEIGHT,
+        ns.DISPLAY_NAME
+    )
+    arenaWaterPanel:SetFrameLevel((MerchantFrame:GetFrameLevel() or 0) + 10)
+
+    arenaWaterPanel.icon = arenaWaterPanel:CreateTexture(nil, "ARTWORK")
+    arenaWaterPanel.icon:SetSize(ICON_SIZE, ICON_SIZE)
+    arenaWaterPanel.icon:SetPoint("TOPLEFT", arenaWaterPanel, "TOPLEFT", 10, -34)
+    arenaWaterPanel.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    arenaWaterPanel.body = arenaWaterPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    arenaWaterPanel.body:SetPoint("TOPLEFT", arenaWaterPanel.icon, "TOPRIGHT", 8, -1)
+    arenaWaterPanel.body:SetPoint("TOPRIGHT", arenaWaterPanel, "TOPRIGHT", -10, -32)
+    arenaWaterPanel.body:SetJustifyH("LEFT")
+
+    arenaWaterPanel.detail = arenaWaterPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    arenaWaterPanel.detail:SetPoint("TOPLEFT", arenaWaterPanel.body, "BOTTOMLEFT", 0, -4)
+    arenaWaterPanel.detail:SetPoint("RIGHT", arenaWaterPanel, "RIGHT", -10, 0)
+    arenaWaterPanel.detail:SetJustifyH("LEFT")
+
+    arenaWaterPanel.singleButton = CreateFrame("Button", nil, arenaWaterPanel, "UIPanelButtonTemplate")
+    arenaWaterPanel.singleButton:SetPoint("BOTTOMLEFT", arenaWaterPanel, "BOTTOMLEFT", 10, 7)
+    arenaWaterPanel.singleButton:SetPoint("BOTTOMRIGHT", arenaWaterPanel, "BOTTOM", -2, 7)
+    arenaWaterPanel.singleButton:SetHeight(22)
+    arenaWaterPanel.singleButton:SetText("Buy 1")
+    arenaWaterPanel.singleButton:SetScript("OnClick", function() BuyArenaWater(1) end)
+
+    arenaWaterPanel.button = CreateFrame("Button", nil, arenaWaterPanel, "UIPanelButtonTemplate")
+    arenaWaterPanel.button:SetPoint("BOTTOMLEFT", arenaWaterPanel, "BOTTOM", 2, 7)
+    arenaWaterPanel.button:SetPoint("BOTTOMRIGHT", arenaWaterPanel, "BOTTOMRIGHT", -10, 7)
+    arenaWaterPanel.button:SetHeight(22)
+    arenaWaterPanel.button:SetScript("OnClick", function()
+        BuyArenaWater(ARENA_WATER_TARGET_QUANTITY)
+    end)
+
+    ApplyPanelTheme()
+end
+
 local function LayoutPurchaseButtons(showSingleButton)
     panel.singleButton:ClearAllPoints()
     panel.button:ClearAllPoints()
@@ -427,7 +559,7 @@ local function PositionPanel()
     panel:SetFrameLevel((MerchantFrame:GetFrameLevel() or 0) + 10)
 end
 
-UpdatePanel = function()
+local function UpdateCurrencyDumpPanel()
     if not panel then return end
 
     local state = GetPurchaseState()
@@ -475,9 +607,76 @@ UpdatePanel = function()
     panel.button:Enable()
 end
 
+local function PositionArenaWaterPanel()
+    if not arenaWaterPanel then return end
+
+    local gossipFrame = _G.GossipFrame
+    arenaWaterPanel:ClearAllPoints()
+    if gossipArenaWaterVendor and (not MerchantFrame or not MerchantFrame:IsShown()) and gossipFrame then
+        arenaWaterPanel:SetPoint("TOP", gossipFrame, "BOTTOM", 0, PANEL_BELOW_OFFSET_Y)
+    elseif MerchantFrame then
+        arenaWaterPanel:SetPoint("TOP", MerchantFrame, "BOTTOM", 0, PANEL_BELOW_OFFSET_Y)
+    else
+        return
+    end
+    HelperPanel.SnapFrameToPixelGrid(arenaWaterPanel)
+    local anchor = gossipArenaWaterVendor and (not MerchantFrame or not MerchantFrame:IsShown())
+        and gossipFrame or MerchantFrame
+    arenaWaterPanel:SetFrameLevel((anchor:GetFrameLevel() or 0) + 10)
+end
+
+local function UpdateArenaWaterPanel()
+    if not arenaWaterPanel then return end
+
+    local water = GetArenaWaterState()
+    arenaWaterPanel.state = water
+    if not water then
+        arenaWaterPanel:Hide()
+        return
+    end
+
+    PositionArenaWaterPanel()
+    arenaWaterPanel.icon:SetTexture(water.texture)
+    arenaWaterPanel.body:SetText(water.name)
+    if water.gossipOnly then
+        arenaWaterPanel.detail:SetText("Arena-usable: browse goods to buy it.")
+        arenaWaterPanel.singleButton:Hide()
+        arenaWaterPanel.button:SetPoint("BOTTOMLEFT", arenaWaterPanel, "BOTTOMLEFT", 10, 7)
+        arenaWaterPanel.button:SetPoint("BOTTOMRIGHT", arenaWaterPanel, "BOTTOMRIGHT", -10, 7)
+        arenaWaterPanel.button:SetText("Browse goods")
+        arenaWaterPanel.button:SetScript("OnClick", OpenArenaWaterVendor)
+        arenaWaterPanel.button:Show()
+    else
+        arenaWaterPanel.detail:SetText("Arena-usable: restores 5% mana per second.")
+        arenaWaterPanel.button:SetPoint("BOTTOMLEFT", arenaWaterPanel, "BOTTOM", 2, 7)
+        arenaWaterPanel.button:SetPoint("BOTTOMRIGHT", arenaWaterPanel, "BOTTOMRIGHT", -10, 7)
+        arenaWaterPanel.button:SetText("Buy " .. ARENA_WATER_TARGET_QUANTITY)
+        arenaWaterPanel.button:SetScript("OnClick", function() BuyArenaWater(ARENA_WATER_TARGET_QUANTITY) end)
+        arenaWaterPanel.singleButton:Show()
+        arenaWaterPanel.button:Show()
+    end
+    if not water.gossipOnly and water.purchasable then
+        arenaWaterPanel.singleButton:Enable()
+        arenaWaterPanel.button:Enable()
+    elseif not water.gossipOnly then
+        arenaWaterPanel.singleButton:Disable()
+        arenaWaterPanel.button:Disable()
+    end
+    arenaWaterPanel:Show()
+    ApplyPanelTheme()
+end
+
+UpdatePanel = function()
+    UpdateCurrencyDumpPanel()
+    UpdateArenaWaterPanel()
+end
+
 function Merchant.Refresh()
     if MerchantFrame and MerchantFrame:IsShown() then
         EnsurePanel()
+        if GetArenaWaterState() then
+            EnsureArenaWaterPanel()
+        end
     end
     RefreshSoon()
 end
@@ -490,13 +689,30 @@ function Merchant.Attach()
     eventFrame:RegisterEvent("MERCHANT_UPDATE")
     eventFrame:RegisterEvent("MERCHANT_CLOSED")
     eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+    eventFrame:RegisterEvent("GOSSIP_SHOW")
+    eventFrame:RegisterEvent("GOSSIP_CLOSED")
     eventFrame:SetScript("OnEvent", function(_, event)
         if event == "MERCHANT_CLOSED" then
             if panel then panel:Hide() end
+            if arenaWaterPanel and not gossipArenaWaterVendor then arenaWaterPanel:Hide() end
+            return
+        elseif event == "GOSSIP_CLOSED" then
+            gossipArenaWaterVendor = false
+            if arenaWaterPanel and (not MerchantFrame or not MerchantFrame:IsShown()) then arenaWaterPanel:Hide() end
+            return
+        elseif event == "GOSSIP_SHOW" then
+            gossipArenaWaterVendor = IsArenaWaterVendor(GetNPCID()) and true or false
+            if gossipArenaWaterVendor then
+                EnsureArenaWaterPanel()
+                RefreshSoon()
+            end
             return
         end
 
         EnsurePanel()
+        if GetArenaWaterState() then
+            EnsureArenaWaterPanel()
+        end
         RefreshSoon()
     end)
 end

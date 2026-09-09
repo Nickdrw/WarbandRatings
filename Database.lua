@@ -229,6 +229,8 @@ function Database.Init()
             hideNonMaxLevel = false,
             hideBoxesHelper = false,
             hideHeliotropeHelper = false,
+            hideArenaWaterHelper = false,
+            arenaWaterVendorIDs = {},
             hideConquestEquipmentChestPurchaseHelper = false,
             hideConquestEquipmentChestMailHelper = false,
             arenaQueueMinimized = false,
@@ -269,6 +271,12 @@ function Database.Init()
     end
     if WarbandRatingsDB.settings.hideHeliotropeHelper == nil then
         WarbandRatingsDB.settings.hideHeliotropeHelper = false
+    end
+    if WarbandRatingsDB.settings.hideArenaWaterHelper == nil then
+        WarbandRatingsDB.settings.hideArenaWaterHelper = false
+    end
+    if type(WarbandRatingsDB.settings.arenaWaterVendorIDs) ~= "table" then
+        WarbandRatingsDB.settings.arenaWaterVendorIDs = {}
     end
     if WarbandRatingsDB.settings.hideConquestEquipmentChestPurchaseHelper == nil then
         WarbandRatingsDB.settings.hideConquestEquipmentChestPurchaseHelper =
