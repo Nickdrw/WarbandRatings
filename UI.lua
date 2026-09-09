@@ -2293,7 +2293,7 @@ function UI.CreateSettingsPanel()
     helperYOffset = helperYOffset - 26
     UI.CreateCheckbox(helpersPage, "Hide Heliotrope purchase helper", "hideHeliotropeHelper", helperYOffset, UI.RefreshFeatureHelpers)
     helperYOffset = helperYOffset - 26
-    UI.CreateCheckbox(helpersPage, "Hide arena water purchase helper", "hideArenaWaterHelper", helperYOffset, UI.RefreshFeatureHelpers)
+    UI.CreateCheckbox(helpersPage, "Hide arena water helper", "hideArenaWaterHelper", helperYOffset, UI.RefreshFeatureHelpers)
     helperYOffset = helperYOffset - 26
     settingsPanel.seasonFeatureStartYOffset = helperYOffset
     settingsPanel.seasonFeatureCheckboxes = {
