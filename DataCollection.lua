@@ -290,6 +290,30 @@ function DataCollection.MarkRatedStatsUpdated()
     return true
 end
 
+-- Conquest's seasonal cap is shared by every character, while totalEarned is
+-- character-specific. When the weekly reset extends the cap, characters that
+-- have not been logged in yet still hold last week's cap and would otherwise
+-- incorrectly appear capped. Only move the saved cap forward: a zero or lower
+-- value can be a temporarily unavailable API response, not a real reset.
+function DataCollection.RefreshWarbandConquestCap(seasonKey, maximum)
+    maximum = tonumber(maximum) or 0
+    if maximum <= 0 then return false end
+
+    local characters = Database.GetSeasonCharacters and Database.GetSeasonCharacters(seasonKey)
+    if type(characters) ~= "table" then return false end
+
+    local changed = false
+    for _, character in pairs(characters) do
+        local ratings = character and character.ratings
+        local savedMaximum = tonumber(ratings and ratings.conquest_maxQuantity) or 0
+        if type(ratings) == "table" and savedMaximum < maximum then
+            ratings.conquest_maxQuantity = maximum
+            changed = true
+        end
+    end
+    return changed
+end
+
 function DataCollection.CollectCurrentCharacter(seasonKey)
     seasonKey = seasonKey or Season.GetContentSeasonKey()
     if not Database.IsValidSeasonKey(seasonKey) then return nil end
@@ -412,6 +436,7 @@ function DataCollection.CollectCurrentCharacter(seasonKey)
     }
 
     if not Database.SaveCharacter(seasonKey, data) then return nil end
+    DataCollection.RefreshWarbandConquestCap(seasonKey, globalRatings.conquest_maxQuantity)
     return data
 end
 

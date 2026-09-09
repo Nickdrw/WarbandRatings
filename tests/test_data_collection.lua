@@ -155,6 +155,39 @@ WarbandRatingsDB = {
 
 assert(loadfile("DataCollection.lua"))("WarbandRatings", ns)
 local DataCollection = ns.DataCollection
+WarbandRatingsDB.seasons["pvp-42"].characters["Stale-Realm"] = {
+    seasonKey = "pvp-42",
+    ratings = {
+        conquest_totalEarned = 750,
+        conquest_maxQuantity = 750,
+    },
+}
+WarbandRatingsDB.seasons["pvp-42"].characters["AlreadyCurrent-Realm"] = {
+    seasonKey = "pvp-42",
+    ratings = {
+        conquest_totalEarned = 1500,
+        conquest_maxQuantity = 1500,
+    },
+}
+WarbandRatingsDB.seasons["pvp-41"] = {
+    seasonKey = "pvp-41",
+    characters = {
+        ["Previous-Realm"] = {
+            seasonKey = "pvp-41",
+            ratings = { conquest_maxQuantity = 750 },
+        },
+    },
+}
+assert(DataCollection.RefreshWarbandConquestCap("pvp-42", 900),
+    "a weekly Conquest-cap increase did not refresh the current season")
+assert(WarbandRatingsDB.seasons["pvp-42"].characters["Stale-Realm"].ratings.conquest_maxQuantity == 900,
+    "an unlogged character retained the previous week's Conquest cap")
+assert(WarbandRatingsDB.seasons["pvp-42"].characters["Stale-Realm"].ratings.conquest_totalEarned == 750,
+    "refreshing the Conquest cap changed an unlogged character's earned amount")
+assert(WarbandRatingsDB.seasons["pvp-42"].characters["AlreadyCurrent-Realm"].ratings.conquest_maxQuantity == 1500,
+    "the live Conquest cap refresh moved a newer saved cap backward")
+assert(WarbandRatingsDB.seasons["pvp-41"].characters["Previous-Realm"].ratings.conquest_maxQuantity == 750,
+    "the live Conquest cap refresh modified a previous season")
 DataCollection.RequestRatedInfo()
 assert(DataCollection.MarkRatedStatsUpdated())
 assert(DataCollection.BeginRatedMatch())
