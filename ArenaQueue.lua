@@ -3148,7 +3148,7 @@ local function CreateCard(cardIndex)
 
     card.noShowWarningButton = CreateFrame("Button", nil, card)
     card.noShowWarningButton:SetSize(22, 22)
-    card.noShowWarningButton:SetPoint("RIGHT", card.actionButton, "RIGHT", 0, 0)
+    card.noShowWarningButton:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -9, 3)
     card.noShowWarningButton:SetFrameLevel(card.actionBlocker:GetFrameLevel() + 1)
     card.noShowWarningButton:EnableMouse(true)
     card.noShowWarningButton.icon = card.noShowWarningButton:CreateTexture(nil, "ARTWORK")
