@@ -202,6 +202,7 @@ local ratingSessionInitialized
 local ratingSessionResumeSaved
 local ratingSessionRecord
 local sessionRatingBaselines = {}
+local sessionMMRBaselines = {}
 local bracketProxies = {
     [QUEUE_CATEGORY_RATED] = {},
     [QUEUE_CATEGORY_UNRATED] = {},
@@ -1667,12 +1668,15 @@ local function InitializeRatingSession()
         and type(savedSession.baselines) == "table"
     then
         sessionRatingBaselines = savedSession.baselines
+        sessionMMRBaselines = type(savedSession.mmrBaselines) == "table" and savedSession.mmrBaselines or {}
     else
         sessionRatingBaselines = {}
+        sessionMMRBaselines = {}
     end
 
     ratingSessionRecord = {
         baselines = sessionRatingBaselines,
+        mmrBaselines = sessionMMRBaselines,
         reloadOnly = true,
     }
     settings.arenaQueueRatingSessions[playerGUID] = ratingSessionRecord
@@ -1683,6 +1687,7 @@ end
 local function TouchRatingSession()
     if not InitializeRatingSession() then return end
     ratingSessionRecord.baselines = sessionRatingBaselines
+    ratingSessionRecord.mmrBaselines = sessionMMRBaselines
 end
 
 local function CaptureSessionRatingBaselines()
@@ -1751,28 +1756,33 @@ function ArenaQueue.GetLastMMRInfo(bracket)
     local databaseKey = bracket.databaseKey or bracket.key
     local specID = GetCurrentSpecID()
     local mmr
-    local delta
 
     if charData then
         if databaseKey == "soloShuffle" or databaseKey == "soloBG" then
             local specMMR = charData.specLastMMR
                 and (charData.specLastMMR[specID] or charData.specLastMMR[tostring(specID)])
             mmr = specMMR and tonumber(specMMR[databaseKey])
-            local specMMRDelta = charData.specLastMMRDelta
-                and (charData.specLastMMRDelta[specID] or charData.specLastMMRDelta[tostring(specID)])
-            delta = specMMRDelta and tonumber(specMMRDelta[databaseKey])
         else
             mmr = charData.lastMMR and tonumber(charData.lastMMR[databaseKey])
-            delta = charData.lastMMRDelta and tonumber(charData.lastMMRDelta[databaseKey])
         end
     end
     if not mmr or mmr <= 0 then
         return { mmr = 0 }
     end
 
+    local sessionDelta
+    if InitializeRatingSession() then
+        local sessionKey = GetSessionRatingKey(bracket)
+        if sessionMMRBaselines[sessionKey] == nil then
+            sessionMMRBaselines[sessionKey] = mmr
+        end
+        sessionDelta = mmr - sessionMMRBaselines[sessionKey]
+        TouchRatingSession()
+    end
+
     return {
         mmr = mmr,
-        delta = delta,
+        delta = sessionDelta,
     }
 end
 
@@ -3623,6 +3633,7 @@ function ArenaQueue.Attach()
             ratingSessionResumeSaved = nil
             ratingSessionRecord = nil
             sessionRatingBaselines = {}
+            sessionMMRBaselines = {}
         elseif event == "PLAYER_ENTERING_WORLD" then
             NoShow.ScanActivePenalty()
             ratedStatsReady = false
