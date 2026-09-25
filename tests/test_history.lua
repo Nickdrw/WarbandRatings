@@ -57,7 +57,84 @@ WarbandRatingsDB = {
 assert(loadfile("Season.lua"))("WarbandRatings", ns)
 assert(loadfile("History.lua"))("WarbandRatings", ns)
 local History = ns.History
-History.Init()
+local initialDatabase = WarbandRatingsDB
+local malformedDatabases = {
+    true,
+    { schemaVersion = 2, history = true, seasons = {} },
+    { schemaVersion = 2, history = {}, seasons = true },
+    {
+        schemaVersion = 2,
+        history = {},
+        seasons = {
+            ["pvp-41"] = {
+                seasonKey = "pvp-41",
+                characters = {
+                    ["Broken-Realm"] = {
+                        seasonKey = "pvp-41",
+                        series = { global = {}, specs = { [71] = true } },
+                    },
+                },
+            },
+        },
+    },
+}
+for _, malformedDatabase in ipairs(malformedDatabases) do
+    WarbandRatingsDB = malformedDatabase
+    local callSucceeded, initialized, validationError = pcall(History.Init)
+    assert(callSucceeded and not initialized and type(validationError) == "string",
+        "malformed SavedVariables did not fail initialization cleanly")
+end
+
+WarbandRatingsDB = {
+    schemaVersion = 2,
+    history = { diagnostics = true },
+    seasons = {},
+}
+assert(History.Init(), "malformed diagnostics container blocked initialization")
+assert(type(WarbandRatingsDB.history.diagnostics) == "table",
+    "malformed diagnostics container was not normalized")
+History.RecordDiagnostic("normalizedDiagnostics")
+assert(WarbandRatingsDB.history.diagnostics.normalizedDiagnostics.count == 1,
+    "normalized diagnostics container was not writable")
+
+local validDiagnostic = { count = 3, lastAt = 900 }
+local preservedHistoryPoint = { 900, 1800, 1850, 0, 0, 1, true, 9, "postmatch", 71 }
+WarbandRatingsDB = {
+    schemaVersion = 2,
+    history = {
+        diagnostics = {
+            valid = validDiagnostic,
+            malformed = true,
+            [7] = { count = 1 },
+        },
+    },
+    seasons = {
+        ["pvp-41"] = {
+            seasonKey = "pvp-41",
+            characters = {
+                ["Preserved-Realm"] = {
+                    seasonKey = "pvp-41",
+                    series = {
+                        global = { arena2v2 = { points = { preservedHistoryPoint } } },
+                        specs = {},
+                    },
+                },
+            },
+        },
+    },
+}
+assert(History.Init(), "malformed diagnostic entries blocked valid history")
+assert(WarbandRatingsDB.history.diagnostics.valid == validDiagnostic,
+    "valid diagnostics were changed during normalization")
+assert(WarbandRatingsDB.history.diagnostics.malformed == nil
+        and WarbandRatingsDB.history.diagnostics[7] == nil,
+    "malformed diagnostic entries were retained")
+assert(WarbandRatingsDB.seasons["pvp-41"].characters["Preserved-Realm"]
+        .series.global.arena2v2.points[1] == preservedHistoryPoint,
+    "diagnostics recovery discarded valid historical series")
+
+WarbandRatingsDB = initialDatabase
+assert(History.Init())
 
 assert(History.RecordMatch(
     "pvp-41",
@@ -104,6 +181,12 @@ assert(series.points[1][3] == 1540, "next-lobby MMR did not enrich the pending p
 assert(series.points[1][7] == true, "enriched MMR was not aligned to the completed match")
 assert(series.points[1][9] == "nextPrematch", "MMR provenance was not stored")
 
+assert(History.EnrichMatchPostMMR("pvp-41", "Tester", "Realm", 71, 7, 1555, 10))
+assert(series.points[1][3] == 1555 and series.points[1][7] == true,
+    "late post-match MMR did not replace the provisional enrichment")
+assert(series.points[1][9] == "postmatch",
+    "late post-match MMR provenance was not stored")
+
 assert(History.RecordMatch(
     "pvp-41",
     "Tester",
@@ -135,8 +218,8 @@ assert(History.RecordMatch(
     10,
     "pending"
 ))
-assert(series.points[1][3] == 1540, "a retry without MMR erased an enriched value")
-assert(series.points[1][9] == "nextPrematch", "a retry erased MMR provenance")
+assert(series.points[1][3] == 1555, "a retry without MMR erased an enriched value")
+assert(series.points[1][9] == "postmatch", "a retry erased MMR provenance")
 assert(series.points[1][10] == 71, "a retry erased the match specialization")
 
 local seasonKey = History.GetContentSeasonKey()

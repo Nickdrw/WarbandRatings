@@ -222,7 +222,7 @@ function Database.Init()
     if type(WarbandRatingsDB.seasonFeatures) ~= "table" then
         WarbandRatingsDB.seasonFeatures = {}
     end
-    if not WarbandRatingsDB.settings then
+    if type(WarbandRatingsDB.settings) ~= "table" then
         WarbandRatingsDB.settings = {
             hideNoRating = false,
             hideEmptyColumns = false,
@@ -795,19 +795,23 @@ function Database.BuildCharacterGroups(characters, seasonKey)
     local settings = Database.GetSettings()
     local globalColumns = Database.GetGlobalColumns(seasonKey)
     local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
+    local isCurrentSeason = seasonKey == nil or seasonKey == Season.GetContentSeasonKey()
     local groups = {}
 
     for _, charData in pairs(characters or {}) do
         local skip = false
 
         -- Filter: hide non-max-level characters
-        if settings.hideNonMaxLevel and (charData.level or 0) < maxLevel then
+        if isCurrentSeason
+            and settings.hideNonMaxLevel
+            and (charData.level or 0) < maxLevel
+        then
             skip = true
         end
 
         -- Zero out PvP bracket ratings for sub-max-level characters at display time,
         -- so stale stored data from before this logic existed is never shown.
-        if not skip and (charData.level or 0) < maxLevel then
+        if not skip and isCurrentSeason and (charData.level or 0) < maxLevel then
             local patchedRatings = {}
             for k, v in pairs(charData.ratings or {}) do patchedRatings[k] = v end
             for _, col in ipairs(globalColumns) do

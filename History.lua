@@ -29,6 +29,19 @@ local MMR_SOURCE_POSTMATCH = "postmatch"
 local MMR_SOURCE_PREMATCH = "prematch"
 local MMR_SOURCE_NEXT_PREMATCH = "nextPrematch"
 
+local function NormalizeDiagnostics(history)
+    if type(history.diagnostics) ~= "table" then
+        history.diagnostics = {}
+        return
+    end
+
+    for reason, diagnostic in pairs(history.diagnostics) do
+        if type(reason) ~= "string" or type(diagnostic) ~= "table" then
+            history.diagnostics[reason] = nil
+        end
+    end
+end
+
 local function NormalizeSeasonID(value)
     value = tonumber(value)
     if value and value > 0 then
@@ -65,7 +78,7 @@ local function EnsureRoot()
     WarbandRatingsDB.history = WarbandRatingsDB.history or {}
     local history = WarbandRatingsDB.history
     history.version = math.max(tonumber(history.version) or 1, HISTORY_VERSION)
-    history.diagnostics = history.diagnostics or {}
+    NormalizeDiagnostics(history)
     return history
 end
 
@@ -434,6 +447,28 @@ local function BuildMigratedStorage(previousCurrentSeasonKey)
 end
 
 local function ValidateSeasonBindings(seasons)
+    if type(seasons) ~= "table" then
+        return false, "invalid seasons container"
+    end
+
+    local function ValidateSeries(series, label)
+        if type(series) ~= "table" then
+            return false, "invalid series for " .. label
+        end
+        if series.points ~= nil and type(series.points) ~= "table" then
+            return false, "invalid series points for " .. label
+        end
+        if series.summary ~= nil and type(series.summary) ~= "table" then
+            return false, "invalid series summary for " .. label
+        end
+        for pointIndex, point in pairs(series.points or {}) do
+            if type(point) ~= "table" then
+                return false, "invalid history point for " .. label .. "/" .. tostring(pointIndex)
+            end
+        end
+        return true
+    end
+
     local tableFields = {
         "ratings",
         "pvpStats",
@@ -466,6 +501,25 @@ local function ValidateSeasonBindings(seasons)
             for _, field in ipairs(tableFields) do
                 if character[field] ~= nil and type(character[field]) ~= "table" then
                     return false, "invalid " .. field .. " for " .. tostring(charKey)
+                end
+            end
+            for colKey, series in pairs(character.series.global) do
+                local valid, validationError = ValidateSeries(
+                    series,
+                    tostring(charKey) .. "/global/" .. tostring(colKey)
+                )
+                if not valid then return false, validationError end
+            end
+            for specID, specHistory in pairs(character.series.specs) do
+                if type(specHistory) ~= "table" then
+                    return false, "invalid spec series for " .. tostring(charKey)
+                end
+                for colKey, series in pairs(specHistory) do
+                    local valid, validationError = ValidateSeries(
+                        series,
+                        tostring(charKey) .. "/" .. tostring(specID) .. "/" .. tostring(colKey)
+                    )
+                    if not valid then return false, validationError end
                 end
             end
         end
@@ -698,7 +752,18 @@ function History.IsPVPStatsTrusted(stats, characterKey, specID)
 end
 
 function History.Init()
+    if WarbandRatingsDB ~= nil and type(WarbandRatingsDB) ~= "table" then
+        return false, "invalid SavedVariables root"
+    end
     WarbandRatingsDB = WarbandRatingsDB or {}
+    if WarbandRatingsDB.history ~= nil and type(WarbandRatingsDB.history) ~= "table" then
+        local validationError = "invalid history container"
+        WarbandRatingsDB.storageMigrationError = validationError
+        return false, validationError
+    end
+    if WarbandRatingsDB.history then
+        NormalizeDiagnostics(WarbandRatingsDB.history)
+    end
     local previousCurrentSeasonKey = WarbandRatingsDB.history
         and WarbandRatingsDB.history.currentSeasonKey
     local migrated, migrationError = MigrateSeasonStorage(previousCurrentSeasonKey)
@@ -1213,6 +1278,42 @@ function History.EnrichPendingMMR(seasonKey, name, realm, specID, bracketIndex, 
     point[FIELD_MMR_SOURCE] = MMR_SOURCE_NEXT_PREMATCH
     RecalculatePointDeltas(points)
     History.RecordDiagnostic("mmrEnrichedFromNextLobby")
+    return true
+end
+
+function History.EnrichMatchPostMMR(seasonKey, name, realm, specID, bracketIndex, mmr, matchSequence)
+    if Database.IsStorageReady and not Database.IsStorageReady() then return false end
+    if not Database.IsValidSeasonKey(seasonKey) then return false end
+    mmr = GetPositiveNumber(mmr)
+    matchSequence = NormalizeMatchSequence(matchSequence)
+    if not mmr or matchSequence <= 0 then return false end
+
+    local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
+    if not col then return false end
+
+    EnsureRoot()
+    local season = WarbandRatingsDB.seasons[seasonKey]
+    local charData = season and season.characters and season.characters[Utils.CharKey(name, realm)]
+    if charData and charData.seasonKey ~= seasonKey then return false end
+    local series = charData and GetSeries(charData, col.key, specID)
+    local points = series and series.points
+    if not points then return false end
+
+    local pointIndex = FindPointByMatchSequence(points, matchSequence)
+    local point = pointIndex and points[pointIndex]
+    if not point then return false end
+    if point[FIELD_MMR] == mmr
+        and point[FIELD_MMR_IS_POSTMATCH] == true
+        and point[FIELD_MMR_SOURCE] == MMR_SOURCE_POSTMATCH
+    then
+        return false
+    end
+
+    point[FIELD_MMR] = mmr
+    point[FIELD_MMR_IS_POSTMATCH] = true
+    point[FIELD_MMR_SOURCE] = MMR_SOURCE_POSTMATCH
+    RecalculatePointDeltas(points)
+    History.RecordDiagnostic("mmrEnrichedFromPostmatch")
     return true
 end
 

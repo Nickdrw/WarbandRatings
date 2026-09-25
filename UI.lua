@@ -3570,6 +3570,9 @@ end
 local function HideGraphHover()
     if not graphPanel then return end
 
+    graphPanel.hoverData = nil
+    graphPanel.hoverIndex = nil
+
     if graphPanel.hoverLine then
         graphPanel.hoverLine:Hide()
         if graphPanel.hoverLine.ClearAllPoints then
@@ -3630,6 +3633,15 @@ local function ScrollHistoryGraph(delta)
     SetHistoryGraphViewportStart(currentStart - (delta * GRAPH_SCROLL_STEP))
 end
 
+function UI._ShouldReuseGraphHover(panel, data, index, tooltipOwned)
+    if panel.hoverData == data and panel.hoverIndex == index and tooltipOwned then
+        return true
+    end
+    panel.hoverData = data
+    panel.hoverIndex = index
+    return false
+end
+
 local function UpdateGraphHover()
     if not graphPanel or not graphPanel.graphData then return end
 
@@ -3658,6 +3670,14 @@ local function UpdateGraphHover()
     end
 
     local index = data.visibleStart + visibleIndex - 1
+    if UI._ShouldReuseGraphHover(
+        graphPanel,
+        data,
+        index,
+        GameTooltip:IsOwned(graphPanel.canvas)
+    ) then
+        return
+    end
     local point = data.points[index]
     local pointX = data.visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * data.xStep)
         or (GRAPH_MARGIN_LEFT + data.plotWidth / 2)

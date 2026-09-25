@@ -120,14 +120,17 @@ eventFrame:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED")
 eventFrame:RegisterEvent("SAVED_VARIABLES_TOO_LARGE")
 
 local function TryCollectLastMatchMMRWithRetries(recordHistory)
-    if DataCollection.CollectLastMatchMMR(recordHistory) then
+    local expectedGeneration = DataCollection.GetActiveMatchGeneration()
+    if expectedGeneration == nil then expectedGeneration = false end
+
+    if DataCollection.CollectLastMatchMMR(recordHistory, expectedGeneration) then
         CallUI("RefreshTable")
     end
 
     local delays = { 0.25, 0.75, 1.5, 3, 6, 10 }
     for _, delay in ipairs(delays) do
         C_Timer.After(delay, function()
-            if DataCollection.CollectLastMatchMMR(recordHistory) then
+            if DataCollection.CollectLastMatchMMR(recordHistory, expectedGeneration) then
                 CallUI("RefreshTable")
             end
         end)
@@ -135,14 +138,17 @@ local function TryCollectLastMatchMMRWithRetries(recordHistory)
 end
 
 local function TryCaptureActiveMatchMMRWithRetries()
-    if DataCollection.CaptureActiveMatchMMR() then
+    local expectedGeneration = DataCollection.GetActiveMatchGeneration()
+    if expectedGeneration == nil then expectedGeneration = false end
+
+    if DataCollection.CaptureActiveMatchMMR(expectedGeneration) then
         CallUI("RefreshTable")
     end
 
     local delays = { 0.25, 0.75, 1.5, 3 }
     for _, delay in ipairs(delays) do
         C_Timer.After(delay, function()
-            if DataCollection.CaptureActiveMatchMMR() then
+            if DataCollection.CaptureActiveMatchMMR(expectedGeneration) then
                 CallUI("RefreshTable")
             end
         end)
@@ -228,7 +234,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             RequestAchievementData()
         end
 
-        DataCollection.UpdateActivePVPContext()
+        DataCollection.HandlePlayerEnteringWorld()
         if IsPVPMatchActive() then
             DataCollection.BeginRatedMatch()
             TryCaptureActiveMatchMMRWithRetries()

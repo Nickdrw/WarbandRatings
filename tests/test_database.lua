@@ -1,12 +1,18 @@
--- luacheck: globals WarbandRatingsDB WarbandRatingsCharacterDB time
+-- luacheck: globals WarbandRatingsDB WarbandRatingsCharacterDB time GetMaxLevelForPlayerExpansion
 
 time = function() return 2200 end
+GetMaxLevelForPlayerExpansion = function() return 90 end
 
 local ns = {
     Utils = {
         CharKey = function(name, realm) return name .. "-" .. realm end,
         IsEmptyRating = function(value) return not value or value == 0 end,
         FormatNumber = function(value) return tostring(value) end,
+        ShallowCopy = function(source)
+            local copy = {}
+            for key, value in pairs(source or {}) do copy[key] = value end
+            return copy
+        end,
     },
     Season = {
         GetCrests = function() return {} end,
@@ -203,6 +209,40 @@ assert(filteredGroups[1].charData.name == "GlobalRated"
     "the no-rating filter removed a character with a PvP bracket rating")
 WarbandRatingsDB.settings.hideNoRating = false
 
+local historicalGroups = Database.BuildCharacterGroups({
+    ["Veteran-Realm"] = {
+        name = "Veteran",
+        realm = "Realm",
+        classFilename = "MONK",
+        level = 80,
+        ratings = { arena2v2 = 1800 },
+        lastMMR = { arena2v2 = 1850 },
+        specRatings = { [270] = { soloShuffle = 1750 } },
+        specLastMMR = { [270] = { soloShuffle = 1780 } },
+    },
+}, "pvp-41")
+assert(historicalGroups[1].charData.ratings.arena2v2 == 1800
+        and historicalGroups[1].charData.lastMMR.arena2v2 == 1850
+        and historicalGroups[1].charData.specRatings[270].soloShuffle == 1750,
+    "current max-level rules erased an archived season's ratings")
+
+local currentGroups = Database.BuildCharacterGroups({
+    ["Veteran-Realm"] = {
+        name = "Veteran",
+        realm = "Realm",
+        classFilename = "MONK",
+        level = 80,
+        ratings = { arena2v2 = 1800 },
+        lastMMR = { arena2v2 = 1850 },
+        specRatings = { [270] = { soloShuffle = 1750 } },
+        specLastMMR = { [270] = { soloShuffle = 1780 } },
+    },
+}, "pvp-42")
+assert(currentGroups[1].charData.ratings.arena2v2 == 0
+        and currentGroups[1].charData.lastMMR.arena2v2 == 0
+        and currentGroups[1].charData.specRatings[270].soloShuffle == 0,
+    "current-season sub-max-level ratings were not suppressed")
+
 Database.SaveCharacter("pvp-42", {
     name = "Tester",
     realm = "Realm",
@@ -364,5 +404,10 @@ saved.combatStats, saved.combatStatsVersion = { obsolete = true }, 4
 assert(Database.SaveCharacter("pvp-42", saved))
 assert(saved.combatStats == nil and saved.combatStatsVersion == nil,
     "merging an old snapshot restored retired data")
+
+WarbandRatingsDB.settings = true
+Database.Init()
+assert(type(WarbandRatingsDB.settings) == "table",
+    "malformed disposable settings were not reset to defaults")
 
 print("database tests passed")

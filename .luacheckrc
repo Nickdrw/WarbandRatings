@@ -62,6 +62,7 @@ read_globals = {
     "GetCurrentArenaSeason",
     "GetNumBattlefieldScores",
     "GetPersonalRatedInfo",
+    "IsInInstance",
     "IsArenaSkirmish",
     "RequestRatedInfo",
 

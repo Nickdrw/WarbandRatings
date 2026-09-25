@@ -9,20 +9,25 @@ on:
     branches: [main]
 
 jobs:
-  # Runs on PRs and pushes to main - validation
-  lint:
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+  validation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Luacheck
-        run: sudo apt-get install -y lua-check
+      - name: Install Lua 5.1 and Luacheck
+        run: sudo apt-get install -y lua5.1 lua-check
+      - name: Run tests
+        run: |
+          set -e
+          for test_file in tests/test_*.lua; do
+            lua5.1 "$test_file"
+          done
       - name: Lint Lua
         run: luacheck .
 
   # Runs on tags only - release
   package-and-publish:
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: validation
     runs-on: ubuntu-latest
     permissions:
       contents: write

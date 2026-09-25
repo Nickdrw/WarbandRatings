@@ -1,3 +1,4 @@
+-- luacheck: globals issecretvalue
 local _, ns = ...
 ns.Merchant = {}
 local Merchant = ns.Merchant
@@ -252,7 +253,8 @@ end
 
 local function GetNPCID()
     local guid = UnitGUID and UnitGUID("npc")
-    return guid and tonumber(guid:match("^Creature%-%d+%-%d+%-%d+%-%d+%-(%d+)%-"))
+    if not guid or (issecretvalue and issecretvalue(guid)) then return nil end
+    return tonumber(guid:match("^Creature%-%d+%-%d+%-%d+%-%d+%-(%d+)%-"))
 end
 
 local function IsArenaWaterVendor(npcID)

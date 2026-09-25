@@ -12,6 +12,9 @@ local ratedStatsRequestedSpecID
 local ratedStatsCharacterKey
 local ratedStatsRequestedCharacterKey
 local activeRatedMatch
+local activeRatedMatchGeneration = 0
+local MATCH_CONTEXT_RETENTION_SECONDS = 60
+local UNRECORDED_MATCH_RETENTION_SECONDS = 600
 
 -- C_PvP.GetActiveMatchBracket uses zero-based bracket IDs, unlike the
 -- one-based IDs accepted by GetPersonalRatedInfo and Database columns.
@@ -668,6 +671,32 @@ function DataCollection.UpdateActivePVPContext()
     RememberRatedBracketIndex(GetActiveRatedBracketIndex())
 end
 
+local function IsInPVPInstance()
+    if not IsInInstance then return false end
+
+    local ok, inInstance, instanceType = pcall(IsInInstance)
+    return ok
+        and inInstance
+        and (instanceType == "arena" or instanceType == "pvp")
+end
+
+function DataCollection.HandlePlayerEnteringWorld()
+    DataCollection.UpdateActivePVPContext()
+
+    local context = activeRatedMatch
+    if context
+        and context.ratingRecorded
+        and context.mmrEnrichmentPending
+        and IsInPVPInstance()
+    then
+        if History then History.RecordDiagnostic("pendingMMRContextReplacedOnPVPEntry") end
+        activeRatedMatch = nil
+        return true
+    end
+
+    return false
+end
+
 local function GetPlayerScoreInfo()
     if not C_PvP then return nil end
 
@@ -786,7 +815,7 @@ local function GetAvailableMMR(scoreInfo, bracketIndex)
     -- visible MMR is the player's team's MMR. Never probe arbitrary teams:
     -- after a fast exit that can select the opponent's value instead.
     if IsTeamMMRBracket(bracketIndex) then
-        return GetPlayerTeamMMR(scoreInfo), nil, nil
+        return GetPlayerTeamMMR(scoreInfo), nil, nil, true
     end
 
     local prematchMMR, postMatchMMR = GetMMRFromInfo(scoreInfo)
@@ -797,7 +826,7 @@ local function GetAvailableMMR(scoreInfo, bracketIndex)
         postMatchMMR = postMatchMMR or activePostMatchMMR
         enrichmentMMR = enrichmentMMR or activePrematchMMR
     end
-    return prematchMMR, postMatchMMR, enrichmentMMR
+    return prematchMMR, postMatchMMR, enrichmentMMR, false
 end
 
 local function GetMatchResult(scoreInfo, eventWinner)
@@ -872,6 +901,61 @@ local function MatchesActiveContext(context, name, realm, specID, bracketIndex)
         and context.bracketIndex == bracketIndex
 end
 
+local function IsMatchContextExpired(context)
+    if not context then return false end
+    if context.ratingRecorded then
+        return context.mmrEnrichmentPending
+            and context.enrichmentDeadline
+            and time() > context.enrichmentDeadline
+    end
+    return context.unrecordedDeadline and time() > context.unrecordedDeadline
+end
+
+local function GetMatchContextMismatchReason(context)
+    local name, realm = GetCurrentCharacterIdentity()
+    if context.name ~= name or context.realm ~= realm then
+        return "matchContextCharacterMismatch"
+    end
+    if context.specID ~= GetCurrentSpecID() then
+        return "matchContextSpecMismatch"
+    end
+    if context.seasonKey ~= Season.GetContentSeasonKey() then
+        return "matchContextSeasonMismatch"
+    end
+
+    local activeBracketIndex = GetActiveRatedBracketIndex()
+    if activeBracketIndex and activeBracketIndex ~= context.bracketIndex then
+        return "matchContextBracketMismatch"
+    end
+    return nil
+end
+
+local function GetActiveRatedMatch(expectedGeneration)
+    local context = activeRatedMatch
+    if context and IsMatchContextExpired(context) then
+        if History then History.RecordDiagnostic("matchContextExpired") end
+        activeRatedMatch = nil
+        context = nil
+    end
+    local mismatchReason = context and GetMatchContextMismatchReason(context)
+    if mismatchReason then
+        if History then History.RecordDiagnostic(mismatchReason) end
+        activeRatedMatch = nil
+        context = nil
+    end
+    if expectedGeneration ~= nil
+        and (not context or context.generation ~= expectedGeneration)
+    then
+        return nil
+    end
+    return context
+end
+
+function DataCollection.GetActiveMatchGeneration()
+    local context = GetActiveRatedMatch()
+    return context and context.generation or nil
+end
+
 function DataCollection.BeginRatedMatch(forceNew)
     if IsRatedSeasonInactive() then
         activeRatedMatch = nil
@@ -889,16 +973,23 @@ function DataCollection.BeginRatedMatch(forceNew)
     end
     RememberRatedBracketIndex(bracketIndex)
 
+    local currentContext = GetActiveRatedMatch()
     if not forceNew
-        and MatchesActiveContext(activeRatedMatch, name, realm, specID, bracketIndex)
-        and activeRatedMatch.seasonKey == seasonKey
-        and not activeRatedMatch.finalized
+        and MatchesActiveContext(currentContext, name, realm, specID, bracketIndex)
+        and currentContext.seasonKey == seasonKey
+        and not currentContext.ratingRecorded
     then
         return true
     end
 
+    if currentContext and currentContext.mmrEnrichmentPending and History then
+        History.RecordDiagnostic("pendingMMRContextReplaced")
+    end
+
     local snapshot = GetRatedSnapshot(bracketIndex) or {}
+    activeRatedMatchGeneration = activeRatedMatchGeneration + 1
     activeRatedMatch = {
+        generation = activeRatedMatchGeneration,
         seasonKey = seasonKey,
         name = name,
         realm = realm,
@@ -913,16 +1004,17 @@ function DataCollection.BeginRatedMatch(forceNew)
     return true
 end
 
-function DataCollection.CaptureActiveMatchMMR()
+function DataCollection.CaptureActiveMatchMMR(expectedGeneration)
     if IsRatedSeasonInactive() then
         activeRatedMatch = nil
         return false
     end
-    if not activeRatedMatch then return false end
+    local context = GetActiveRatedMatch(expectedGeneration)
+    if not context then return false end
 
-    local context = activeRatedMatch
     local scoreInfo = GetPlayerScoreInfo()
-    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo, context.bracketIndex)
+    local prematchMMR, postMatchMMR, enrichmentMMR, finalTeamSample =
+        GetAvailableMMR(scoreInfo, context.bracketIndex)
     if prematchMMR and not context.preMMR then
         context.preMMR = prematchMMR
     end
@@ -940,61 +1032,97 @@ function DataCollection.CaptureActiveMatchMMR()
             )
         end
     end
-    if postMatchMMR then
-        context.postMMR = postMatchMMR
+    local confirmedPostMMR = postMatchMMR
+    if not confirmedPostMMR
+        and finalTeamSample
+        and (context.completedAt or context.inactiveAt)
+    then
+        confirmedPostMMR = prematchMMR
+    end
+    if confirmedPostMMR then
+        context.postMMR = confirmedPostMMR
+        context.postMMRConfirmed = true
+        context.mmrEnrichmentPending = false
     end
 
-    local currentMMR = postMatchMMR or prematchMMR
+    local currentMMR = confirmedPostMMR or prematchMMR
     if currentMMR then
-        local isFinalMMRSample = context.completedAt or context.inactiveAt
-        if isFinalMMRSample then
-            -- Blizzard does not consistently label the final value as
-            -- postmatchMMR. The value read after this match ends is still a
-            -- valid post-match sample because preMMR was fixed at match start.
-            context.postMMR = currentMMR
-        end
         local mmrDelta
-        local verifiedPostMMR = context.postMMR
-        if isFinalMMRSample and context.preMMR and verifiedPostMMR
-                and verifiedPostMMR ~= context.preMMR then
-            mmrDelta = verifiedPostMMR - context.preMMR
+        if context.postMMRConfirmed and context.preMMR and context.postMMR
+                and context.postMMR ~= context.preMMR then
+            mmrDelta = context.postMMR - context.preMMR
         end
-        Database.SaveLastMMR(
-            context.seasonKey,
-            context.name,
-            context.realm,
-            context.specID,
-            context.bracketIndex,
-            currentMMR,
-            mmrDelta
-        )
-        return true
+        local saved = false
+        if context.lastSavedMMR ~= currentMMR or context.lastSavedMMRDelta ~= mmrDelta then
+            saved = Database.SaveLastMMR(
+                context.seasonKey,
+                context.name,
+                context.realm,
+                context.specID,
+                context.bracketIndex,
+                currentMMR,
+                mmrDelta
+            )
+            if saved then
+                context.lastSavedMMR = currentMMR
+                context.lastSavedMMRDelta = mmrDelta
+            end
+        end
+        local enriched = false
+        if context.ratingRecorded
+            and context.postMMRConfirmed
+            and context.recordedMatchSequence
+            and History
+            and History.EnrichMatchPostMMR
+        then
+            enriched = History.EnrichMatchPostMMR(
+                context.seasonKey,
+                context.name,
+                context.realm,
+                context.specID,
+                context.bracketIndex,
+                context.postMMR,
+                context.recordedMatchSequence
+            )
+            if enriched and activeRatedMatch == context then
+                context.collectionFinalized = true
+                activeRatedMatch = nil
+            end
+        end
+        return saved or enriched
     end
     return false
 end
 
 function DataCollection.MarkRatedMatchComplete(winner, duration)
-    if not activeRatedMatch then
+    local context = GetActiveRatedMatch()
+    if not context then
         DataCollection.BeginRatedMatch()
+        context = GetActiveRatedMatch()
     end
-    if not activeRatedMatch then return false end
+    if not context then return false end
 
-    activeRatedMatch.completedAt = time()
-    activeRatedMatch.eventWinner = GetSafeNumber(winner)
-    activeRatedMatch.duration = GetSafeNumber(duration)
-    DataCollection.CaptureActiveMatchMMR()
+    if not context.completedAt then
+        context.completedAt = time()
+        context.eventWinner = GetSafeNumber(winner)
+        context.duration = GetSafeNumber(duration)
+    end
+    DataCollection.CaptureActiveMatchMMR(context.generation)
     return true
 end
 
 function DataCollection.MarkRatedMatchInactive()
-    if not activeRatedMatch then
+    local context = GetActiveRatedMatch()
+    if not context then
         DataCollection.RequestRatedInfo(GetCurrentSpecID())
         return false
     end
 
-    activeRatedMatch.inactiveAt = time()
-    DataCollection.CaptureActiveMatchMMR()
-    DataCollection.RequestRatedInfo(activeRatedMatch.specID)
+    context.inactiveAt = context.inactiveAt or time()
+    context.unrecordedDeadline = context.unrecordedDeadline
+        or (context.inactiveAt + UNRECORDED_MATCH_RETENTION_SECONDS)
+    DataCollection.CaptureActiveMatchMMR(context.generation)
+    DataCollection.RequestRatedInfo(context.specID)
     return true
 end
 
@@ -1017,7 +1145,7 @@ local function HasFreshMatch(context, matchSequence)
     return matchSequence > preSeasonPlayed
 end
 
-local function FinalizeRatedMatch(recordHistory)
+local function FinalizeRatedMatch(recordHistory, expectedGeneration)
     if IsRatedSeasonInactive() then
         activeRatedMatch = nil
         if History then History.RecordDiagnostic("finalizeInactiveSeason") end
@@ -1030,7 +1158,7 @@ local function FinalizeRatedMatch(recordHistory)
 
     local name, realm = GetCurrentCharacterIdentity()
     local specID = GetCurrentSpecID()
-    local context = activeRatedMatch
+    local context = GetActiveRatedMatch(expectedGeneration)
     if not context then
         if History then History.RecordDiagnostic("finalizeNoTrackedMatch") end
         return false
@@ -1042,11 +1170,15 @@ local function FinalizeRatedMatch(recordHistory)
         return false
     end
 
+    local capturedMMR = DataCollection.CaptureActiveMatchMMR(context.generation)
+    context = GetActiveRatedMatch(context.generation)
+    if not context then return capturedMMR end
+    if context.ratingRecorded then return capturedMMR end
+
     local scoreInfo = GetPlayerScoreInfo()
-    local prematchMMR, postMatchMMR, enrichmentMMR = GetAvailableMMR(scoreInfo, bracketIndex)
-    prematchMMR = prematchMMR or (context and context.preMMR)
-    postMatchMMR = postMatchMMR or (context and context.postMMR)
-    enrichmentMMR = enrichmentMMR or (context and context.enrichmentMMR)
+    local prematchMMR = context.preMMR
+    local postMatchMMR = context.postMMRConfirmed and context.postMMR or nil
+    local enrichmentMMR = context.enrichmentMMR
 
     local col = Database.GetPVPColumnByBracketIndex(bracketIndex)
     if not col then
@@ -1080,9 +1212,8 @@ local function FinalizeRatedMatch(recordHistory)
     end
 
     local currentMMR = postMatchMMR or prematchMMR
-    local verifiedPostMMR = context.postMMR or postMatchMMR
-    local mmrDelta = (context.completedAt or context.inactiveAt)
-        and context.preMMR
+    local verifiedPostMMR = context.postMMRConfirmed and context.postMMR or nil
+    local mmrDelta = context.preMMR
         and verifiedPostMMR
         and verifiedPostMMR ~= context.preMMR
         and (verifiedPostMMR - context.preMMR)
@@ -1123,17 +1254,24 @@ local function FinalizeRatedMatch(recordHistory)
         elseif History then
             History.RecordDiagnostic("ratingRecordedWithMMR")
         end
-        if activeRatedMatch == context then
-            activeRatedMatch.finalized = true
+        context.ratingRecorded = true
+        context.ratingRecordedAt = time()
+        context.recordedMatchSequence = matchSequence
+        context.mmrEnrichmentPending = not context.postMMRConfirmed
+        context.enrichmentDeadline = context.mmrEnrichmentPending
+            and (context.ratingRecordedAt + MATCH_CONTEXT_RETENTION_SECONDS)
+            or nil
+        if context.postMMRConfirmed and activeRatedMatch == context then
+            context.collectionFinalized = true
             activeRatedMatch = nil
         end
     end
     return recorded or savedMMR
 end
 
-function DataCollection.CollectLastMatchMMR(recordHistory)
+function DataCollection.CollectLastMatchMMR(recordHistory, expectedGeneration)
     if not recordHistory then
-        return DataCollection.CaptureActiveMatchMMR()
+        return DataCollection.CaptureActiveMatchMMR(expectedGeneration)
     end
-    return FinalizeRatedMatch(true)
+    return FinalizeRatedMatch(true, expectedGeneration)
 end

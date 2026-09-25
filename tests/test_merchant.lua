@@ -218,3 +218,12 @@ assert(waterPanel.button.shown and waterPanel.button.text == "Browse goods" and 
     "gossip helper should replace purchases with a browse-goods action")
 waterPanel.button.scripts.OnClick()
 assert(selectedGossipOption == 42, "gossip helper should select the innkeeper's vendor option")
+
+local secretGUID = setmetatable({}, {
+    __index = function() error("secret GUID was accessed") end,
+})
+_G.issecretvalue = function(value) return value == secretGUID end
+_G.UnitGUID = function() return secretGUID end
+waterPanel:Hide()
+createdFrames[1].scripts.OnEvent(nil, "GOSSIP_SHOW")
+assert(not waterPanel.shown, "a secret NPC GUID should not identify the arena-water vendor")

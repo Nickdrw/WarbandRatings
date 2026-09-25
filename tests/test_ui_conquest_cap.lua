@@ -55,4 +55,13 @@ assert(unknownCapText == "725", "missing cap data should not produce a false mar
 local otherColumnText = ns.UI.FormatGlobalColumnValue({ key = "honor" }, cappedRatings, 725)
 assert(otherColumnText == "725", "the Conquest cap marker should not affect other currencies")
 
+local hoverPanel = {}
+local graphData = {}
+assert(not ns.UI._ShouldReuseGraphHover(hoverPanel, graphData, 3, false),
+    "the first graph hover was incorrectly treated as cached")
+assert(ns.UI._ShouldReuseGraphHover(hoverPanel, graphData, 3, true),
+    "an unchanged graph point did not reuse its tooltip")
+assert(not ns.UI._ShouldReuseGraphHover(hoverPanel, graphData, 4, true),
+    "moving to another graph point reused a stale tooltip")
+
 print("UI Conquest-cap tests passed")
