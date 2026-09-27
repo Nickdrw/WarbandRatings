@@ -63,6 +63,7 @@ Version 2.0 adds season-aware PvP history, graph inspection tools, theming, colu
 ### PvP MMR Display
 
 - PvP rating tooltips show current/last MMR when available.
+- PvP rating tooltips use the last graph point only when its rating matches the value shown, so a later character refresh cannot change the displayed match date. New graph points also record the WoW version/build. For older points without a captured version, a bounded date lookup estimates 12.0.5 (April 23–June 15, 2026), 12.0.7 (June 18–August 10), or 12.1.0 (August 13–September 27); regional release days and dates outside these ranges remain unknown. The tooltip marks estimates as inferred. These dates come from Blizzard's [12.0.5 announcement](https://worldofwarcraft.blizzard.com/en-us/news/24272610), [Revelations announcement](https://worldofwarcraft.blizzard.com/en-us/news/24280281), [12.1 notes](https://worldofwarcraft.blizzard.com/en-us/news/24293281), and [12.1 launch post](https://worldofwarcraft.blizzard.com/en-us/news/24294370).
 - The history graph has session-local Rating/MMR toggles.
 - Saved as:
   - `charData.lastMMR[colKey]` for global PvP brackets.
@@ -225,7 +226,7 @@ WarbandRatingsDB.seasons["pvp-42"].characters["Name-Realm"] = {
 
     currentSpecID = 71,
     currentSpecRatings = { soloShuffle = 1800, soloBG = 0 },
-    lastUpdated = 1713400000,
+    lastUpdated = 1790530354,
 
     series = {
         global = {},
@@ -305,8 +306,8 @@ WarbandRatingsDB.seasons["pvp-42"] = {
                     arena2v2 = {
                         points = {
                             -- { time, rating, mmr, ratingDelta, mmrDelta, result,
-                            --   mmrIsPostMatch, matchSequence, mmrSource, specID }
-                            { 1713400000, 1500, 1530, 12, 0, 1, true, 42, "postmatch", 71 },
+                            --   mmrIsPostMatch, matchSequence, mmrSource, specID, wowVersion, wowBuild }
+                            { 1787674368, 1500, 1530, 12, 0, 1, true, 42, "postmatch", 71, "12.1.0", "build" },
                         },
                         archived = false,
                     },
@@ -336,6 +337,8 @@ History point fields are compact numeric indexes to reduce SavedVariables size:
 | `8` | season game counter used as the stable match sequence |
 | `9` | MMR source: `postmatch`, `prematch`, `nextPrematch`, or `pending` |
 | `10` | specialization active during the match |
+| `11` | WoW version when the match was recorded, when available |
+| `12` | WoW build when the match was recorded, when available |
 
 MMR is optional. A point with `mmr = 0` and `mmrSource = "pending"` still preserves the rating result. When the next lobby exposes the player's exact prematch MMR, the preceding pending point is enriched and marked `nextPrematch`. Team-average scoreboard fallbacks are never used for this enrichment. Older history that stores prematch MMR on the following point remains supported by the graph alignment logic.
 

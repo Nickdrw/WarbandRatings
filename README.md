@@ -27,6 +27,7 @@ Crests
 - Season-aware crests and helper features
 - Customizable Honor alert (12,000 by default) with yellow/orange warnings on Honor gains in range, coalescing rapid currency updates and deferring instanced-PvP alerts until after the exit loading screen, plus a red threshold notice and movable bouncing icon
 - Column filters and display options
+- PvP rating tooltips show the last recorded match date for that rating and its WoW version; older graph points can show a clearly marked version inferred from published patch dates
 
 ## How it works
 

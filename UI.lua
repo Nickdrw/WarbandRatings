@@ -3062,6 +3062,51 @@ UI.PVPTooltip = UI.PVPTooltip or {
     },
 }
 
+-- Published patch dates provide a conservative fallback for matches recorded
+-- before the addon stored GetBuildInfo() with graph points. Exclude release days because the
+-- maintenance window varies by region, and do not guess beyond known dates.
+UI.PVPTooltip.historicalPatchRanges = {
+    { first = "2026-04-23", last = "2026-06-15", version = "12.0.5" },
+    { first = "2026-06-18", last = "2026-08-10", version = "12.0.7" },
+    { first = "2026-08-13", last = "2026-09-27", version = "12.1.0" },
+}
+
+function UI.PVPTooltip.GetRatingRecord(series, rating)
+    rating = tonumber(rating)
+    if not rating or type(series) ~= "table" then return nil end
+
+    local points = series.points
+    local lastPoint = points and points[#points]
+    if lastPoint then
+        local recordedAt = tonumber(lastPoint[HISTORY_FIELD_TIME])
+        if recordedAt and recordedAt > 0 and tonumber(lastPoint[HISTORY_FIELD_RATING]) == rating then
+            return recordedAt, lastPoint[11], lastPoint[12]
+        end
+        return nil
+    end
+
+    local summary = series.summary
+    local recordedAt = summary and tonumber(summary.sourceLastTime)
+    if recordedAt and recordedAt > 0 and tonumber(summary.finalRating) == rating then
+        return recordedAt, summary.sourceLastVersion, summary.sourceLastBuild
+    end
+    return nil
+end
+
+function UI.PVPTooltip.GetMatchVersion(recordedAt, storedVersion)
+    if type(storedVersion) == "string" and storedVersion ~= "" then
+        return storedVersion, false
+    end
+    if not recordedAt then return nil, false end
+    local matchDate = date("%Y-%m-%d", recordedAt)
+    for _, patch in ipairs(UI.PVPTooltip.historicalPatchRanges) do
+        if matchDate >= patch.first and matchDate <= patch.last then
+            return patch.version, true
+        end
+    end
+    return nil, false
+end
+
 function UI.PVPTooltip.FormatWinRate(won, played)
     won = tonumber(won) or 0
     played = tonumber(played) or 0
@@ -3144,15 +3189,15 @@ function UI.PVPTooltip.GetStats(charData, specID, col)
 end
 
 function UI.PVPTooltip.GetRating(charData, specID, col, stats)
-    if stats and stats.rating and stats.rating > 0 then
-        return stats.rating
-    end
-
+    local displayedRating
     if Database.IsSpecColumn(col) then
         local specRatings = charData.specRatings and charData.specRatings[specID]
-        return specRatings and specRatings[col.key]
+        displayedRating = specRatings and specRatings[col.key]
+    else
+        displayedRating = charData.ratings and charData.ratings[col.key]
     end
-    return charData.ratings and charData.ratings[col.key]
+    if displayedRating ~= nil then return displayedRating end
+    return stats and stats.rating
 end
 
 function UI.PVPTooltip.GetMMR(charData, specID, col)
@@ -3299,6 +3344,34 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
             theme.muted[1], theme.muted[2], theme.muted[3],
             theme.mmr[1], theme.mmr[2], theme.mmr[3]
         )
+    end
+
+    local seasonKey = ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey and ns.SeasonUI.GetSelectedSeasonKey()
+        or (History and History.GetContentSeasonKey and History.GetContentSeasonKey())
+    local series = seasonKey and History and History.GetSeriesForSeason
+        and History.GetSeriesForSeason(seasonKey, characterKey, col.key, specID)
+    local recordedAt, recordedVersion, recordedBuild = UI.PVPTooltip.GetRatingRecord(series, rating)
+    local version, inferred = UI.PVPTooltip.GetMatchVersion(recordedAt, recordedVersion)
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddDoubleLine(
+        "Rating last recorded:",
+        recordedAt and date("%Y-%m-%d %H:%M", recordedAt) or "Unknown",
+        theme.muted[1], theme.muted[2], theme.muted[3],
+        theme.text[1], theme.text[2], theme.text[3]
+    )
+    local versionText = version or "Unknown"
+    if inferred then
+        versionText = versionText .. " (inferred)"
+    elseif version and recordedBuild and recordedBuild ~= "" then
+        versionText = versionText .. " (build " .. tostring(recordedBuild) .. ")"
+    end
+    GameTooltip:AddDoubleLine(
+        "WoW version:", versionText,
+        theme.muted[1], theme.muted[2], theme.muted[3],
+        theme.text[1], theme.text[2], theme.text[3]
+    )
+    if not recordedAt then
+        GameTooltip:AddLine("No graph point confirms when this rating was reached.", theme.muted[1], theme.muted[2], theme.muted[3])
     end
 
     if stats then

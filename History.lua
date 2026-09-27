@@ -22,6 +22,8 @@ local FIELD_MMR_IS_POSTMATCH = 7
 local FIELD_MATCH_SEQUENCE = 8
 local FIELD_MMR_SOURCE = 9
 local FIELD_SPEC_ID = 10
+local FIELD_GAME_VERSION = 11
+local FIELD_GAME_BUILD = 12
 
 local EnsureCharacterHistory
 local BuildCharacterFromHistory
@@ -137,6 +139,8 @@ local function BuildSummary(points)
         lowestRating = tonumber(first[FIELD_RATING]) or 0,
         peakMMR = 0,
         finalMMR = 0,
+        sourceLastVersion = last[FIELD_GAME_VERSION],
+        sourceLastBuild = last[FIELD_GAME_BUILD],
     }
 
     for _, point in ipairs(points) do
@@ -1212,6 +1216,10 @@ function History.RecordMatch(
     mmr = GetPositiveNumber(mmr) or 0
 
     timestamp = tonumber(timestamp) or time()
+    local gameVersion, gameBuild
+    if GetBuildInfo and math.abs(time() - timestamp) <= 300 then
+        gameVersion, gameBuild = GetBuildInfo()
+    end
     result = NormalizeResult(result)
     mmrIsPostMatch = mmrIsPostMatch and true or false
     matchSequence = NormalizeMatchSequence(matchSequence)
@@ -1272,6 +1280,8 @@ function History.RecordMatch(
         matchSequence,
         mmrSource,
         tonumber(specID) or 0,
+        gameVersion,
+        gameBuild,
     }
     table.insert(points, FindInsertionIndex(points, timestamp), point)
     RecalculatePointDeltas(points)

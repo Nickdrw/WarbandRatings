@@ -98,6 +98,7 @@ read_globals = {
     "C_SeasonInfo",
     "DEFAULT_CHAT_FRAME",
     "date",
+    "GetBuildInfo",
     "GetTime",
     "tinsert",
     "time",

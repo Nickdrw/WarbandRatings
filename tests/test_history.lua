@@ -158,6 +158,7 @@ assert(series.points[1][3] == 0, "missing MMR should use the zero sentinel")
 assert(series.points[1][8] == 10, "match sequence was not stored")
 assert(series.points[1][9] == "pending", "missing MMR was not marked pending")
 assert(series.points[1][10] == 71, "the specialization active during the match was not stored")
+assert(series.points[1][11] == nil, "a historical timestamp was assigned the current client version")
 
 assert(History.RecordMatch(
     "pvp-41",
@@ -221,6 +222,22 @@ assert(History.RecordMatch(
 assert(series.points[1][3] == 1555, "a retry without MMR erased an enriched value")
 assert(series.points[1][9] == "postmatch", "a retry erased MMR provenance")
 assert(series.points[1][10] == 71, "a retry erased the match specialization")
+
+now = 2000
+GetBuildInfo = function() return "12.0.7", "61111", "", 120007 end
+assert(History.RecordMatch(
+    "pvp-41", "Tester", "Realm", 71, 7, 1520, nil, 1, now, false, 12, "pending"
+))
+assert(series.points[3][11] == "12.0.7" and series.points[3][12] == "61111",
+    "the client version was not stored with a newly recorded match")
+GetBuildInfo = function() return "12.1.0", "62222", "", 120100 end
+assert(History.RecordMatch(
+    "pvp-41", "Tester", "Realm", 71, 7, 1520, nil, -1, now + 10, false, 12, "pending"
+))
+assert(series.points[3][11] == "12.0.7" and series.points[3][12] == "61111",
+    "a retry changed the version assigned to the original match")
+now = 1000
+GetBuildInfo = function() return "12.0.7", "", "", 120007 end
 
 local seasonKey = History.GetContentSeasonKey()
 local function SaveSeasonCharacter(charKey, character)
