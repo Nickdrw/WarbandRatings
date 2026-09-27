@@ -9,6 +9,8 @@ local UNKNOWN_SEASON = "unknown"
 local DUPLICATE_WINDOW_SECONDS = 30
 local HISTORY_VERSION = 5
 local DATABASE_SCHEMA_VERSION = 2
+local ARCHIVED_RAW_SEASONS_TO_KEEP = 3
+local LEGACY_BACKUP_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 local FIELD_TIME = 1
 local FIELD_RATING = 2
@@ -249,6 +251,26 @@ local function TrimOldestArchivedRawSeason(history)
         if trimmed then return entry.key end
     end
     return nil
+end
+
+local function PruneOldArchivedRawSeasons(history)
+    local activeContentSeasonKey = history.contentSeasonKey or history.currentSeasonKey
+    local archivedSeasons = {}
+    for seasonKey, season in pairs(WarbandRatingsDB.seasons or {}) do
+        if seasonKey ~= activeContentSeasonKey and season.archived then
+            archivedSeasons[#archivedSeasons + 1] = { key = seasonKey, season = season }
+        end
+    end
+    table.sort(archivedSeasons, function(a, b)
+        local aNumber = GetSeasonNumber(a.key)
+        local bNumber = GetSeasonNumber(b.key)
+        if aNumber ~= bNumber then return aNumber > bNumber end
+        return a.key > b.key
+    end)
+    for index = ARCHIVED_RAW_SEASONS_TO_KEEP + 1, #archivedSeasons do
+        ArchiveSeason(archivedSeasons[index].season)
+        ForEachSeries(archivedSeasons[index].season, ClearArchivedRawPoints)
+    end
 end
 
 function History.EnsureCurrentSeason()
@@ -633,6 +655,7 @@ function History.EnsureContentSeason()
     local targetSeason = EnsureSeason(history, targetSeasonKey)
     if not targetSeason then return nil end
     history.contentSeasonKey = targetSeasonKey
+    PruneOldArchivedRawSeasons(history)
     return targetSeasonKey
 end
 
@@ -790,6 +813,11 @@ function History.Init()
         end)
     end
     History.AuditPVPStatOwnership()
+    local backup = WarbandRatingsDB.legacySchemaBackup
+    local migratedAt = type(backup) == "table" and tonumber(backup.migratedAt)
+    if migratedAt and time() - migratedAt >= LEGACY_BACKUP_RETENTION_SECONDS then
+        WarbandRatingsDB.legacySchemaBackup = nil
+    end
     return true
 end
 

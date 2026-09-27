@@ -176,7 +176,12 @@ local function DiscoverConquestEquipmentChest(index, itemInfo, itemID)
     if not definition or not definition.discoverAtVendor or not itemID or not itemName then
         return nil
     end
-    if itemName ~= definition.expectedName and not EndsWith(itemName, definition.nameSuffix) then
+    if definition.itemID and itemID ~= definition.itemID then
+        return nil
+    end
+    if not definition.itemID
+        and itemName ~= definition.expectedName
+        and not EndsWith(itemName, definition.nameSuffix) then
         return nil
     end
 

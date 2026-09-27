@@ -10,6 +10,12 @@ local merchantItemPrice = 375
 local merchantCurrencyID = 1602
 local buyCount = 0
 local lastBuyQuantity
+local discoveredChest = {
+    itemID = 256553,
+    name = "Galactic Equipment Chest",
+    fallbackCost = 375,
+    requiredPVPRating = 1400,
+}
 local helperPanel
 local helperPanels = {}
 local createdFrames = {}
@@ -131,12 +137,20 @@ local ns = {
     },
     Season = {
         GetFeature = function()
+            return discoveredChest
+        end,
+        GetFeatureDefinition = function()
             return {
-                itemID = 256553,
-                name = "Galactic Equipment Chest",
-                fallbackCost = 375,
-                requiredPVPRating = 1400,
+                itemID = 271991,
+                expectedName = "Venomous Equipment Chest",
+                nameSuffix = " Equipment Chest",
+                discoverAtVendor = true,
+                hasOpeningCast = true,
             }
+        end,
+        RememberFeature = function(_, data)
+            discoveredChest = data
+            return data
         end,
     },
 }
@@ -227,3 +241,17 @@ _G.UnitGUID = function() return secretGUID end
 waterPanel:Hide()
 createdFrames[1].scripts.OnEvent(nil, "GOSSIP_SHOW")
 assert(not waterPanel.shown, "a secret NPC GUID should not identify the arena-water vendor")
+
+MerchantFrame.shown = true
+discoveredChest = nil
+merchantItemID = 271992
+merchantItemName = "Coffre d'équipement venimeux"
+merchantItemPrice = 375
+merchantCurrencyID = 1602
+currencyQuantity = 750
+ns.Merchant.Refresh()
+assert(discoveredChest == nil, "an unrelated localized item was discovered as the chest")
+merchantItemID = 271991
+ns.Merchant.Refresh()
+assert(discoveredChest and discoveredChest.itemID == 271991,
+    "localized chest was not discovered by its stable item ID")

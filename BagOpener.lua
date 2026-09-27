@@ -43,6 +43,7 @@ local panel
 local boxByItemID = {}
 local pendingOpeningButton
 local pendingPanelHide = false
+local pendingPanelMoveStop = false
 local bagUpdateSerial = 0
 local isPanelMoving = false
 local UpdatePanel
@@ -424,17 +425,22 @@ local function SavePanelPosition()
 end
 
 local function StartPanelMove()
-    if not panel then return end
+    if not panel or (_G.InCombatLockdown and _G.InCombatLockdown()) then return end
 
     isPanelMoving = true
     panel:StartMoving()
 end
 
 local function StopPanelMove()
-    if not panel then return end
+    if not panel or not isPanelMoving then return end
+    if _G.InCombatLockdown and _G.InCombatLockdown() then
+        pendingPanelMoveStop = true
+        return
+    end
 
     panel:StopMovingOrSizing()
     isPanelMoving = false
+    pendingPanelMoveStop = false
     ClampPanelToScreen()
     HelperPanel.SnapFrameToPixelGrid(panel)
     SavePanelPosition()
@@ -1097,6 +1103,9 @@ function BagOpener.Attach()
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
     eventFrame:SetScript("OnEvent", function(_, event, unit, castGUID, spellID)
         if event == "PLAYER_REGEN_ENABLED" then
+            if pendingPanelMoveStop then
+                StopPanelMove()
+            end
             if pendingPanelHide then
                 pendingPanelHide = false
             end

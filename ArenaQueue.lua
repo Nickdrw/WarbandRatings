@@ -3449,7 +3449,7 @@ UpdatePanel = function()
     end
 
     if IsHelperHidden() or not IsPlayerMaxLevel() or IsInInstancedContent() then
-        if panel then panel:Hide() end
+        if panel and IsPVPUISettingUpAllowed() then panel:Hide() end
         RestoreQueueStatusButton()
         return
     end
@@ -3463,7 +3463,7 @@ UpdatePanel = function()
     local state = GetPanelState()
     panel.state = state
     if not state then
-        panel:Hide()
+        if IsPVPUISettingUpAllowed() then panel:Hide() end
         RestoreQueueStatusButton()
         return
     end
@@ -3528,7 +3528,7 @@ function ArenaQueue.Hide()
     if ns.UI and ns.UI.UpdateQueueHelperPvPButton then
         ns.UI.UpdateQueueHelperPvPButton()
     end
-    if panel then
+    if panel and IsPVPUISettingUpAllowed() then
         if isPanelMoving then
             panel:StopMovingOrSizing()
             isPanelMoving = false

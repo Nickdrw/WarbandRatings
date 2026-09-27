@@ -8,6 +8,7 @@ local History = ns.History
 local Season = ns.Season
 local SPEC_RATED_INFO_REQUEST_DELAY = 1
 local databaseReady = false
+local savedVariablesLoadFailed = false
 
 local function CallUI(method, ...)
     local UI = ns.UI
@@ -130,6 +131,7 @@ local function TryCollectLastMatchMMRWithRetries(recordHistory)
     local delays = { 0.25, 0.75, 1.5, 3, 6, 10 }
     for _, delay in ipairs(delays) do
         C_Timer.After(delay, function()
+            if not databaseReady then return end
             if DataCollection.CollectLastMatchMMR(recordHistory, expectedGeneration) then
                 CallUI("RefreshTable")
             end
@@ -148,6 +150,7 @@ local function TryCaptureActiveMatchMMRWithRetries()
     local delays = { 0.25, 0.75, 1.5, 3 }
     for _, delay in ipairs(delays) do
         C_Timer.After(delay, function()
+            if not databaseReady then return end
             if DataCollection.CaptureActiveMatchMMR(expectedGeneration) then
                 CallUI("RefreshTable")
             end
@@ -155,10 +158,24 @@ local function TryCaptureActiveMatchMMRWithRetries()
     end
 end
 
-local function RefreshHeliotropeCounts()
-    DataCollection.CollectCurrentCharacter()
-    DataCollection.ScanWarbandBankHeliotrope()
-    CallUI("RefreshHeliotropeCounter")
+local characterRefreshPending = false
+local bankScanPending = false
+local function ScheduleCharacterRefresh(scanBank)
+    bankScanPending = bankScanPending or scanBank or false
+    if characterRefreshPending then return end
+    characterRefreshPending = true
+    C_Timer.After(0.1, function()
+        characterRefreshPending = false
+        if not databaseReady then return end
+        local shouldScanBank = bankScanPending
+        bankScanPending = false
+        DataCollection.CollectCurrentCharacter()
+        if shouldScanBank then
+            DataCollection.ScanWarbandBankHeliotrope()
+            CallUI("RefreshHeliotropeCounter")
+        end
+        CallUI("RefreshTable")
+    end)
 end
 
 local function CollectPreseasonCharacter()
@@ -183,7 +200,16 @@ local function IsPVPMatchActive()
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
-    if event == "PLAYER_LOGIN" then
+    if event == "SAVED_VARIABLES_TOO_LARGE" then
+        if not arg1 or arg1 == "WarbandRatings" or arg1 == "WarbandRatingsDB"
+            or arg1 == "WarbandRatingsCharacterDB" then
+            savedVariablesLoadFailed = true
+            databaseReady = false
+            ChatMessage("SavedVariables could not be loaded; changes from this session may not save. Back up the existing saved file before reloading.")
+        end
+        return
+    elseif event == "PLAYER_LOGIN" then
+        if savedVariablesLoadFailed then return end
         local initialized, migrationError = History.Init()
         if not initialized then
             if DEFAULT_CHAT_FRAME then
@@ -212,6 +238,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
         -- Collect after a short delay to let PvP data load
         C_Timer.After(3, function()
+            if not databaseReady then return end
             DataCollection.CollectCurrentCharacter()
             CollectPreseasonCharacter()
             DataCollection.ScanWarbandBankHeliotrope()
@@ -240,20 +267,21 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
             TryCaptureActiveMatchMMRWithRetries()
         else
             C_Timer.After(1, function()
+                if not databaseReady then return end
                 TryCollectLastMatchMMRWithRetries(true)
             end)
         end
 
     elseif event == "CRITERIA_UPDATE" then
         -- Statistics are now available from the server; update HK and other stat columns.
-        DataCollection.CollectCurrentCharacter()
-        CallUI("RefreshTable")
+        ScheduleCharacterRefresh(false)
 
     elseif event == "PVP_RATED_STATS_UPDATE" then
         DataCollection.MarkRatedStatsUpdated()
         DataCollection.UpdateActivePVPContext()
         -- Re-collect when PvP stats arrive
         C_Timer.After(0.5, function()
+            if not databaseReady then return end
             DataCollection.CollectCurrentCharacter()
             CollectPreseasonCharacter()
             CallUI("RefreshTable")
@@ -271,11 +299,13 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         local expectedSpecID = DataCollection.MarkRatedStatsStale()
         DataCollection.UpdateActivePVPContext()
         C_Timer.After(SPEC_RATED_INFO_REQUEST_DELAY, function()
+            if not databaseReady then return end
             DataCollection.RequestRatedInfo(expectedSpecID)
         end)
         -- Re-collect non-PvP data immediately; cumulative PvP statistics and
         -- spec ratings stay gated until the active character/spec cache is fresh.
         C_Timer.After(0.5, function()
+            if not databaseReady then return end
             DataCollection.CollectCurrentCharacter()
             CallUI("RefreshTable")
         end)
@@ -284,9 +314,11 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         or event == "BANKFRAME_OPENED"
         or event == "PLAYERBANKSLOTS_CHANGED"
         or event == "PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED" then
-        RefreshHeliotropeCounts()
+        ScheduleCharacterRefresh(true)
         if event == "BANKFRAME_OPENED" then
-            C_Timer.After(0.5, RefreshHeliotropeCounts)
+            C_Timer.After(0.5, function()
+                ScheduleCharacterRefresh(true)
+            end)
         end
 
     elseif event == "PVP_MATCH_ACTIVE" then
@@ -314,24 +346,6 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
         DataCollection.UpdateActivePVPContext()
         TryCollectLastMatchMMRWithRetries(true)
 
-    elseif event == "SAVED_VARIABLES_TOO_LARGE" then
-        if not arg1 or arg1 == "WarbandRatings" or arg1 == "WarbandRatingsDB" then
-            local trimmedSeasonKey = History.HandleSavedVariablesTooLarge()
-            if DEFAULT_CHAT_FRAME then
-                if trimmedSeasonKey then
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        ns.DISPLAY_NAME
-                            .. ": raw graph points for the oldest archived season ("
-                            .. trimmedSeasonKey
-                            .. ") were trimmed; its summary was kept."
-                    )
-                else
-                    DEFAULT_CHAT_FRAME:AddMessage(
-                        ns.DISPLAY_NAME .. ": no archived raw graph points were available to trim."
-                    )
-                end
-            end
-        end
     end
 end)
 

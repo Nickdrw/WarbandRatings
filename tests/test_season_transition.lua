@@ -1,6 +1,7 @@
 -- luacheck: globals time GetCurrentArenaSeason GetBuildInfo WarbandRatingsDB
 
-time = function() return 2000 end
+local now = 2000
+time = function() return now end
 local detectedSeasonID = 41
 GetCurrentArenaSeason = function() return detectedSeasonID end
 local interfaceVersion = 120007
@@ -126,6 +127,7 @@ assert(Season.GetFeature("conquestEquipmentChest", "pvp-41"), "Season 1 chest de
 assert(not Season.GetFeature("conquestEquipmentChest", "pvp-42"), "Season 1 chest leaked into Season 2")
 local chestDefinition = Season.GetFeatureDefinition("conquestEquipmentChest", "pvp-42")
 assert(chestDefinition.expectedName == "Venomous Equipment Chest", "Season 2 chest prefix was not anticipated")
+assert(chestDefinition.itemID == 271991, "Season 2 chest ID was not configured for localized clients")
 local detectedChest = Season.RememberFeature("conquestEquipmentChest", {
     itemID = 299999,
     name = "Venomous Equipment Chest",
@@ -272,6 +274,40 @@ assert(WarbandRatingsDB.seasons["pvp-41"].characters["Tester-Realm"].series.glob
     "the emergency size handler retained the selected raw graph points")
 assert(#WarbandRatingsDB.seasons["pvp-42"].characters["Tester-Realm"].series.global.arena2v2.points == 2,
     "the emergency size handler trimmed more than one archived season")
+
+for seasonID = 37, 40 do
+    local seasonKey = "pvp-" .. seasonID
+    WarbandRatingsDB.seasons[seasonKey] = {
+        seasonKey = seasonKey,
+        archived = true,
+        characters = {
+            ["Tester-Realm"] = {
+                seasonKey = seasonKey,
+                series = {
+                    global = { arena2v2 = {
+                        archived = true,
+                        points = { { 1000, 1500, 1550 } },
+                        summary = { finalRating = 1500 },
+                    } },
+                    specs = {},
+                },
+            },
+        },
+    }
+end
+History.EnsureContentSeason()
+assert(WarbandRatingsDB.seasons["pvp-37"].characters["Tester-Realm"].series.global.arena2v2.points == nil,
+    "oldest archived raw points were not pruned proactively")
+assert(WarbandRatingsDB.seasons["pvp-37"].characters["Tester-Realm"].series.global.arena2v2.summary.finalRating == 1500,
+    "proactive pruning discarded the archived season summary")
+assert(WarbandRatingsDB.seasons["pvp-40"].characters["Tester-Realm"].series.global.arena2v2.points,
+    "proactive pruning removed a recent archived season")
+now = now + 7 * 24 * 60 * 60 + 1
+assert(History.Init(), "validated storage failed after backup retention elapsed")
+assert(WarbandRatingsDB.legacySchemaBackup == nil,
+    "validated migration backup survived beyond its retention window")
+WarbandRatingsDB.legacySchemaBackup = true
+assert(History.Init(), "malformed optional migration backup caused initialization to throw")
 
 detectedSeasonID = 41
 WarbandRatingsDB = {}

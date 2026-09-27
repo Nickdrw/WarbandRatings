@@ -51,6 +51,7 @@ local EXPANSIONS = {
                 },
                 features = {
                     conquestEquipmentChest = {
+                        itemID = 271991,
                         expectedName = "Venomous Equipment Chest",
                         nameSuffix = " Equipment Chest",
                         fallbackCost = 375,

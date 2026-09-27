@@ -571,4 +571,17 @@ assert(DataCollection.BeginRatedMatch(true), "zero-based 3v3 bracket did not sta
 assert(DataCollection.CaptureActiveMatchMMR())
 assert(savedMMRBracket == 2, "zero-based 3v3 bracket was not normalized for MMR storage")
 
+local currentCharacter = WarbandRatingsDB.seasons["pvp-42"].characters["Tester-Realm"]
+currentCharacter.ratings.arena3v3 = 1800
+DataCollection.MarkRatedStatsStale()
+rating = 0
+DataCollection.CollectCurrentCharacter()
+assert(WarbandRatingsDB.seasons["pvp-42"].characters["Tester-Realm"].ratings.arena3v3 == 1800,
+    "unreadable stale PvP rating replaced a stored global rating with zero")
+DataCollection.RequestRatedInfo()
+assert(DataCollection.MarkRatedStatsUpdated())
+DataCollection.CollectCurrentCharacter()
+assert(WarbandRatingsDB.seasons["pvp-42"].characters["Tester-Realm"].ratings.arena3v3 == 0,
+    "fresh zero PvP rating was incorrectly replaced with a stored value")
+
 print("data collection tests passed")

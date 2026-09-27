@@ -336,6 +336,9 @@ function DataCollection.CollectCurrentCharacter(seasonKey)
     local isMaxLevel = level >= maxLevel
     local characterKey = Utils.CharKey(name, realm)
     local ratedStatsAreFresh = CanCollectRatedStats(characterKey, specID, isMaxLevel)
+    local seasonCharacters = Database.GetSeasonCharacters and Database.GetSeasonCharacters(seasonKey)
+    local storedRatings = seasonCharacters and seasonCharacters[characterKey]
+        and seasonCharacters[characterKey].ratings
 
     -- Global ratings (not per-spec)
     local globalRatings = {}
@@ -350,6 +353,9 @@ function DataCollection.CollectCurrentCharacter(seasonKey)
                 ratedStatsAreFresh,
                 characterKey
             )
+            if isMaxLevel and not ratedStatsAreFresh and rating == 0 and storedRatings then
+                rating = tonumber(storedRatings[col.key]) or 0
+            end
             globalRatings[col.key] = rating
             globalPVPStats[col.key] = stats
         elseif col.key == "mythicPlus" then

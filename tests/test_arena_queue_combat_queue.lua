@@ -102,4 +102,28 @@ assert(readyState.buttonEnabled,
 assert(not readyState.failureReason,
     "combat should not report prepared PvP queue controls as unavailable")
 
+local panelHideCount = 0
+local testPanel = {
+    Hide = function() panelHideCount = panelHideCount + 1 end,
+}
+assert(SetUpvalue(ns.ArenaQueue.Hide, "panel", testPanel),
+    "test should install the queue panel")
+ns.ArenaQueue.Hide()
+assert(panelHideCount == 0,
+    "combat must not hide the visual panel while detached secure controls remain shown")
+inCombat = false
+ns.ArenaQueue.Hide()
+assert(panelHideCount == 1, "the queue panel should hide after combat")
+
+local updatePanel = FindUpvalue(ns.ArenaQueue.Attach, "UpdatePanel")
+assert(updatePanel, "queue panel updater should be reachable")
+assert(SetUpvalue(updatePanel, "UpdateBuiltInPvPRatingDeltas", function() end))
+assert(SetUpvalue(updatePanel, "IsHelperHidden", function() return true end))
+inCombat = true
+updatePanel()
+assert(panelHideCount == 1, "a combat refresh hid the panel but left secure controls detached")
+inCombat = false
+updatePanel()
+assert(panelHideCount == 2, "a post-combat refresh did not hide the suppressed panel")
+
 print("arena queue combat-queue tests passed")
