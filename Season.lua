@@ -1,12 +1,27 @@
 local _, ns = ...
 
--- luacheck: globals GetBuildInfo GetCurrentArenaSeason C_PvP C_SeasonInfo
+-- luacheck: globals GetBuildInfo GetCurrentArenaSeason GetCurrentRegion C_PvP C_SeasonInfo time
 
 ns.Season = {}
 local Season = ns.Season
 
 local UNKNOWN_SEASON_KEY = "unknown"
 local LEGACY_EXPANSION_KEY = "legacy"
+
+-- Regional rated-PvP opening dates (US, EU). Unknown seasons and regions do
+-- not offer calendar alignment until their dates are published.
+local PVP_SEASON_STARTS = {
+    ["pvp-41"] = { [1] = { 2026, 3, 17 }, [3] = { 2026, 3, 18 } },
+    ["pvp-42"] = { [1] = { 2026, 8, 18 }, [3] = { 2026, 8, 19 } },
+}
+
+function Season.GetPVPSeasonStartTime(seasonKey, regionID)
+    regionID = regionID or (GetCurrentRegion and GetCurrentRegion())
+    local starts = PVP_SEASON_STARTS[seasonKey]
+    local parts = starts and starts[regionID]
+    if not parts or not time then return nil end
+    return time({ year = parts[1], month = parts[2], day = parts[3], hour = 0 })
+end
 
 local EXPANSIONS = {
     {

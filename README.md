@@ -28,6 +28,7 @@ Crests
 - Customizable Honor alert (12,000 by default) with yellow/orange warnings on Honor gains in range, coalescing rapid currency updates and deferring instanced-PvP alerts until after the exit loading screen, plus a red threshold notice and movable bouncing icon
 - Column filters and display options
 - PvP rating tooltips show the last recorded match date for that rating and its WoW version; older graph points can show a clearly marked version inferred from published patch dates
+- The `By Game / Day` switch beside a rating graph's title slides between games and elapsed season days. Checking `Compare to last season (by day)` selects the day graph, shows both seasons' rating curves from a day-zero rating baseline, and hides the MMR curve; both seasons' recorded MMR remains in the hover tooltip. Each day's point is its final recorded match, with smooth visual transitions between recorded days and the final rating continued flat through today. The comparison stops at the current season's elapsed day
 
 ## How it works
 

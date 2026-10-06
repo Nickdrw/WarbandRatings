@@ -40,10 +40,8 @@ local GRAPH_MARGIN_RIGHT = 44
 local GRAPH_MARGIN_TOP = 34
 local GRAPH_MARGIN_BOTTOM = 48
 local GRAPH_GAMES_LABEL_WIDTH = 126
-local GRAPH_GAMES_LABEL_GAP = 12
 local GRAPH_DETACHED_WIDTH = 980
 local GRAPH_DETACHED_HEIGHT = 420
-local GRAPH_POINT_SIZE = 5
 local GRAPH_HOVER_POINT_SIZE = 7
 local GRAPH_MIN_VISIBLE_POINT_COUNT = 20
 local GRAPH_MAX_VISIBLE_POINT_COUNT = 200
@@ -2904,25 +2902,14 @@ local function ClearGraphDrawings()
         end
     end
 
-    graphPanel.dotIndex = 0
-    if graphPanel.dots then
-        for _, dot in ipairs(graphPanel.dots) do
-            dot:Hide()
-            dot:ClearAllPoints()
-        end
-    end
-
     if graphPanel.hoverLine then
         graphPanel.hoverLine:Hide()
         if graphPanel.hoverLine.ClearAllPoints then
             graphPanel.hoverLine:ClearAllPoints()
         end
     end
-    if graphPanel.hoverRatingDot then
-        graphPanel.hoverRatingDot:Hide()
-    end
-    if graphPanel.hoverMMRDot then
-        graphPanel.hoverMMRDot:Hide()
+    if graphPanel.hoverDot then
+        graphPanel.hoverDot:Hide()
     end
     if graphPanel.canvas and GameTooltip:IsOwned(graphPanel.canvas) then
         GameTooltip:Hide()
@@ -3015,24 +3002,6 @@ local function AddGraphLine(x1, y1, x2, y2, r, g, b, alpha, thickness)
     line:SetStartPoint("TOPLEFT", drawLayer, x1, -y1)
     line:SetEndPoint("TOPLEFT", drawLayer, x2, -y2)
     line:Show()
-end
-
-local function AddGraphDot(x, y, r, g, b, alpha, size)
-    graphPanel.dots = graphPanel.dots or {}
-    graphPanel.dotIndex = (graphPanel.dotIndex or 0) + 1
-    local drawLayer = EnsureGraphDrawLayer()
-
-    local dot = graphPanel.dots[graphPanel.dotIndex]
-    if not dot then
-        dot = drawLayer:CreateTexture(nil, "OVERLAY")
-        graphPanel.dots[graphPanel.dotIndex] = dot
-    end
-
-    dot:SetSize(size or GRAPH_POINT_SIZE, size or GRAPH_POINT_SIZE)
-    dot:SetColorTexture(r, g, b, alpha or 1)
-    dot:ClearAllPoints()
-    dot:SetPoint("CENTER", drawLayer, "TOPLEFT", x, -y)
-    dot:Show()
 end
 
 local function FormatGraphValue(value)
@@ -3587,25 +3556,174 @@ local function RoundGraphScale(minValue, maxValue)
     return lowerValue, upperValue, tickStep
 end
 
-local function GetVisibleGraphScale(points, visibleStart, visibleEnd, showRating, showMMR)
+UI.GraphComparison = {}
+
+function UI.GraphComparison.GetVisiblePoints(points, visibleStart, visibleEnd, xStep, plotWidth)
+    local visible = {}
+    for index = visibleStart, math.min(visibleEnd, #(points or {})) do
+        local x = visibleEnd > visibleStart
+            and (GRAPH_MARGIN_LEFT + (index - visibleStart) * xStep)
+            or (GRAPH_MARGIN_LEFT + plotWidth / 2)
+        visible[#visible + 1] = {
+            point = points[index],
+            index = index,
+            x = x,
+        }
+    end
+    return visible
+end
+
+function UI.GraphComparison.GetSeasonDay(timestamp, seasonStart)
+    local function getCalendarDay(value)
+        local parts = value and date("*t", value)
+        if not parts then return nil end
+        local previousYear = parts.year - 1
+        return previousYear * 365 + math.floor(previousYear / 4) - math.floor(previousYear / 100)
+            + math.floor(previousYear / 400) + parts.yday
+    end
+    local day, firstDay = getCalendarDay(timestamp), getCalendarDay(seasonStart)
+    return day and firstDay and day - firstDay or nil
+end
+
+function UI.GraphComparison.GetRecordedCoverage(seasonKey, charKey, colKey, specID, points)
+    if not seasonKey or not points or #points == 0 or not History or not History.GetSeasonCharacters then return nil end
+    local character = History.GetSeasonCharacters(seasonKey)[charKey]
+    if not character then return nil end
+    local stats
+    if specID and specID > 0 then
+        local specStats = character.specPVPStats and character.specPVPStats[specID]
+        stats = specStats and specStats[colKey]
+    else
+        stats = character.pvpStats and character.pvpStats[colKey]
+    end
+    local played = tonumber(stats and stats.seasonPlayed)
+    local recorded = #(points or {})
+    if played and played > recorded then return recorded, played end
+    return nil
+end
+
+function UI.GraphComparison.GetDailyPoints(points, seasonStart, lastDay, plotWidth)
+    local visible = {}
+    if not seasonStart or not lastDay then return visible end
+    for index, point in ipairs(points or {}) do
+        local day = UI.GraphComparison.GetSeasonDay(GetHistoryPointTime(point), seasonStart)
+        if day and day >= 0 and day <= lastDay then
+            local entry = {
+                point = point,
+                index = index,
+                day = day,
+                x = GRAPH_MARGIN_LEFT + (lastDay > 0 and day / lastDay * plotWidth or 0),
+            }
+            if visible[#visible] and visible[#visible].day == day then
+                visible[#visible] = entry -- The last recorded match supplies this day's rating.
+            else
+                visible[#visible + 1] = entry
+            end
+        end
+    end
+    if visible[#visible] then
+        visible[#visible].endX = GRAPH_MARGIN_LEFT + plotWidth
+    end
+    return visible
+end
+
+function UI.GraphComparison.GetSmoothValue(first, last, fraction)
+    local t = math.max(0, math.min(1, fraction))
+    return first + (last - first) * t * t * (3 - 2 * t)
+end
+
+function UI.GraphComparison.GetPreviousColor(r, g, b, accent)
+    local function distance(color)
+        return (r - color[1]) ^ 2 + (g - color[2]) ^ 2 + (b - color[3]) ^ 2
+    end
+    if distance(accent) >= 0.15 then return accent end
+    local bestColor, bestDistance = accent, distance(accent)
+    for _, color in ipairs({ { 0.35, 0.75, 1 }, { 1, 0.7, 0.3 }, { 0.8, 0.45, 1 } }) do
+        local candidateDistance = distance(color)
+        if candidateDistance > bestDistance then
+            bestColor, bestDistance = color, candidateDistance
+        end
+    end
+    return bestColor
+end
+
+function UI.GraphComparison.DrawSmoothDaySegment(x1, y1, x2, y2, r, g, b, alpha, thickness)
+    if y1 == y2 then
+        AddGraphLine(x1, y1, x2, y2, r, g, b, alpha, thickness)
+        return
+    end
+    local steps = math.max(1, math.min(64, math.ceil(math.max(x2 - x1, math.abs(y2 - y1)) / 6)))
+    local previousX, previousY = x1, y1
+    for step = 1, steps do
+        local fraction = step / steps
+        local x = x1 + (x2 - x1) * fraction
+        local y = UI.GraphComparison.GetSmoothValue(y1, y2, fraction)
+        AddGraphLine(previousX, previousY, x, y, r, g, b, alpha, thickness)
+        previousX, previousY = x, y
+    end
+end
+
+function UI.GraphComparison.GetSmoothDayValue(entries, day, mmrValues)
+    if #entries == 0 then return nil end
+    local function getValue(entry)
+        if mmrValues then return mmrValues[entry.index] end
+        return GetHistoryPointRating(entry.point)
+    end
+    if mmrValues then
+        for _, entry in ipairs(entries) do
+            local value = getValue(entry)
+            if value then
+                if day < entry.day then return value end -- Match the faint starting MMR guide.
+                break
+            end
+        end
+    elseif day < entries[1].day then
+        return 0 -- Keep the baseline until the first real record.
+    end
+    local previous
+    for _, entry in ipairs(entries) do
+        if entry.day == day then return getValue(entry) end
+        if entry.day > day then
+            local first = previous and getValue(previous)
+            local last = getValue(entry)
+            if first == nil or last == nil then return nil end
+            return UI.GraphComparison.GetSmoothValue(first, last, (day - previous.day) / (entry.day - previous.day))
+        end
+        previous = entry
+    end
+    return previous and getValue(previous) -- Carry the final known value forward unchanged.
+end
+
+local function GetVisibleGraphScale(points, visibleStart, visibleEnd, showRating, showMMR, previousVisible, currentVisible)
     local scale = {
         minValue = math.huge,
         maxValue = 0,
         hasValue = false,
     }
 
-    for i = visibleStart, visibleEnd do
-        if showRating then
-            IncludeGraphScaleValue(GetHistoryPointRating(points[i]), scale)
+    if currentVisible then
+        for _, entry in ipairs(currentVisible) do
+            if showRating then IncludeGraphScaleValue(GetHistoryPointRating(entry.point), scale) end
+            if showMMR then IncludeGraphScaleValue(GetAlignedGraphMMR(points, entry.index), scale) end
         end
-        if showMMR then
-            IncludeGraphScaleValue(GetAlignedGraphMMR(points, i), scale)
+    else
+        for i = visibleStart, visibleEnd do
+            if showRating then IncludeGraphScaleValue(GetHistoryPointRating(points[i]), scale) end
+            if showMMR then IncludeGraphScaleValue(GetAlignedGraphMMR(points, i), scale) end
+        end
+    end
+
+    if showRating then
+        for _, entry in ipairs(previousVisible or {}) do
+            IncludeGraphScaleValue(GetHistoryPointRating(entry.point), scale)
         end
     end
 
     if not scale.hasValue then
         return nil, nil
     end
+
+    if currentVisible and showRating then scale.minValue = 0 end
 
     return RoundGraphScale(scale.minValue, scale.maxValue)
 end
@@ -3652,11 +3770,8 @@ local function HideGraphHover()
             graphPanel.hoverLine:ClearAllPoints()
         end
     end
-    if graphPanel.hoverRatingDot then
-        graphPanel.hoverRatingDot:Hide()
-    end
-    if graphPanel.hoverMMRDot then
-        graphPanel.hoverMMRDot:Hide()
+    if graphPanel.hoverDot then
+        graphPanel.hoverDot:Hide()
     end
     if GameTooltip:IsOwned(graphPanel.canvas) then
         GameTooltip:Hide()
@@ -3715,6 +3830,99 @@ function UI._ShouldReuseGraphHover(panel, data, index, tooltipOwned)
     return false
 end
 
+function UI.GraphComparison.GetHoverMarker(data, cursorY, rating, mmr, previousRating)
+    local closestY, closestColor, closestDistance
+    local candidates = {
+        { value = data.showRating and rating, color = data.ratingColor },
+        { value = data.showMMR and mmr, color = data.mmrColor },
+        { value = data.showRating and data.comparePrevious and previousRating, color = data.previousColor },
+    }
+    for _, candidate in ipairs(candidates) do
+        if candidate.value then
+            local y = GetGraphPointY(candidate.value, data.minValue, data.maxValue, data.plotHeight)
+            local distance = math.abs(cursorY - y)
+            if not closestDistance or distance < closestDistance then
+                closestY, closestColor, closestDistance = y, candidate.color, distance
+            end
+        end
+    end
+    return closestY, closestColor
+end
+
+function UI.GraphComparison.UpdateDailyHover(data, cursorX, cursorY, plotTop, plotBottom)
+    local day = math.floor((cursorX - GRAPH_MARGIN_LEFT) / data.plotWidth * data.lastDay + 0.5)
+    day = math.max(0, math.min(day, data.lastDay))
+    local currentEntry, previousEntry
+    for _, entry in ipairs(data.currentVisible) do
+        if entry.day > day then break end
+        currentEntry = entry
+    end
+    for _, entry in ipairs(data.previousVisible) do
+        if entry.day > day then break end
+        previousEntry = entry
+    end
+    local x = GRAPH_MARGIN_LEFT + (data.lastDay > 0 and day / data.lastDay * data.plotWidth or 0)
+    local markerY, markerColor = UI.GraphComparison.GetHoverMarker(
+        data, cursorY, UI.GraphComparison.GetSmoothDayValue(data.currentVisible, day),
+        UI.GraphComparison.GetSmoothDayValue(data.currentVisible, day, data.mmrValues),
+        UI.GraphComparison.GetSmoothDayValue(data.previousVisible, day)
+    )
+    if markerY then
+        SetHoverDot(graphPanel.hoverDot, x, markerY, markerColor[1], markerColor[2], markerColor[3])
+    else
+        graphPanel.hoverDot:Hide()
+    end
+    if UI._ShouldReuseGraphHover(graphPanel, data, day, GameTooltip:IsOwned(graphPanel.canvas)) then return end
+    local theme = GetActiveTheme()
+    local hoverLayer = EnsureGraphHoverLayer()
+    SetTextureColor(graphPanel.hoverLine, theme.text, 0.55)
+    graphPanel.hoverLine:SetThickness(1.5)
+    if graphPanel.hoverLine.ClearAllPoints then graphPanel.hoverLine:ClearAllPoints() end
+    graphPanel.hoverLine:SetStartPoint("TOPLEFT", hoverLayer, x, -plotTop)
+    graphPanel.hoverLine:SetEndPoint("TOPLEFT", hoverLayer, x, -plotBottom)
+    graphPanel.hoverLine:Show()
+
+    GameTooltip:SetOwner(graphPanel.canvas, "ANCHOR_CURSOR_RIGHT")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine("Season day " .. day, 1, 1, 1)
+    GameTooltip:AddLine("Smoothed curve; recorded values below.", theme.muted[1], theme.muted[2], theme.muted[3])
+    if day == 0 and data.showRating then
+        GameTooltip:AddLine("Rating starts at 0; recorded matches are shown below.",
+            theme.muted[1], theme.muted[2], theme.muted[3])
+    end
+    if currentEntry then
+        GameTooltip:AddDoubleLine(
+            "Current" .. (currentEntry.day < day and " as of " or " (")
+                .. date("%Y-%m-%d", GetHistoryPointTime(currentEntry.point))
+                .. (currentEntry.day < day and "" or ")"),
+            FormatGraphValue(GetHistoryPointRating(currentEntry.point)),
+            data.ratingColor[1], data.ratingColor[2], data.ratingColor[3], 1, 1, 1
+        )
+        local currentMMR = data.mmrValues[currentEntry.index]
+        GameTooltip:AddDoubleLine("Current MMR", currentMMR and FormatGraphValue(currentMMR) or "Unavailable",
+            data.mmrColor[1], data.mmrColor[2], data.mmrColor[3], 1, 1, 1)
+    else
+        GameTooltip:AddLine("No current-season match recorded by this day.",
+            theme.muted[1], theme.muted[2], theme.muted[3])
+    end
+    if data.comparePrevious and previousEntry then
+        GameTooltip:AddDoubleLine(
+            "Last season" .. (previousEntry.day < day and " as of " or " (")
+                .. date("%Y-%m-%d", GetHistoryPointTime(previousEntry.point))
+                .. (previousEntry.day < day and "" or ")"),
+            FormatGraphValue(GetHistoryPointRating(previousEntry.point)),
+            data.previousColor[1], data.previousColor[2], data.previousColor[3], 1, 1, 1
+        )
+        local previousMMR = GetAlignedGraphMMR(data.previousPoints, previousEntry.index)
+        GameTooltip:AddDoubleLine("Last season MMR", previousMMR and FormatGraphValue(previousMMR) or "Unavailable",
+            data.mmrColor[1], data.mmrColor[2], data.mmrColor[3], 1, 1, 1)
+    elseif data.comparePrevious then
+        GameTooltip:AddLine("No last-season match recorded by this day.",
+            theme.muted[1], theme.muted[2], theme.muted[3])
+    end
+    GameTooltip:Show()
+end
+
 local function UpdateGraphHover()
     if not graphPanel or not graphPanel.graphData then return end
 
@@ -3734,6 +3942,11 @@ local function UpdateGraphHover()
         return
     end
 
+    if data.dayComparisonActive then
+        UI.GraphComparison.UpdateDailyHover(data, cursorX, cursorY, plotTop, plotBottom)
+        return
+    end
+
     local visibleIndex
     if data.visiblePointCount <= 1 then
         visibleIndex = 1
@@ -3743,6 +3956,16 @@ local function UpdateGraphHover()
     end
 
     local index = data.visibleStart + visibleIndex - 1
+    local point = data.points[index]
+    local pointX = data.visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * data.xStep)
+        or (GRAPH_MARGIN_LEFT + data.plotWidth / 2)
+    local mmr = data.mmrValues[index]
+    local markerY, markerColor = UI.GraphComparison.GetHoverMarker(data, cursorY, GetHistoryPointRating(point), mmr)
+    if markerY then
+        SetHoverDot(graphPanel.hoverDot, pointX, markerY, markerColor[1], markerColor[2], markerColor[3])
+    else
+        graphPanel.hoverDot:Hide()
+    end
     if UI._ShouldReuseGraphHover(
         graphPanel,
         data,
@@ -3751,13 +3974,6 @@ local function UpdateGraphHover()
     ) then
         return
     end
-    local point = data.points[index]
-    local pointX = data.visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * data.xStep)
-        or (GRAPH_MARGIN_LEFT + data.plotWidth / 2)
-    local ratingY = GetGraphPointY(GetHistoryPointRating(point), data.minValue, data.maxValue, data.plotHeight)
-    local mmr = data.mmrValues[index]
-    local mmrY = mmr and GetGraphPointY(mmr, data.minValue, data.maxValue, data.plotHeight)
-
     local theme = GetActiveTheme()
     local hoverLayer = EnsureGraphHoverLayer()
     SetTextureColor(graphPanel.hoverLine, theme.text, 0.55)
@@ -3768,17 +3984,6 @@ local function UpdateGraphHover()
     graphPanel.hoverLine:SetStartPoint("TOPLEFT", hoverLayer, pointX, -plotTop)
     graphPanel.hoverLine:SetEndPoint("TOPLEFT", hoverLayer, pointX, -plotBottom)
     graphPanel.hoverLine:Show()
-
-    if data.showMMR and mmrY then
-        SetHoverDot(graphPanel.hoverMMRDot, pointX, mmrY, data.mmrColor[1], data.mmrColor[2], data.mmrColor[3])
-    else
-        graphPanel.hoverMMRDot:Hide()
-    end
-    if data.showRating then
-        SetHoverDot(graphPanel.hoverRatingDot, pointX, ratingY, data.ratingColor[1], data.ratingColor[2], data.ratingColor[3])
-    else
-        graphPanel.hoverRatingDot:Hide()
-    end
 
     GameTooltip:SetOwner(graphPanel.canvas, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
@@ -3930,12 +4135,56 @@ function UI.CreateHistoryGraphPanel()
     tinsert(UISpecialFrames, "WarbandRatingsHistoryGraphPanel")
 
     graphPanel.characterTitle = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    graphPanel.characterTitle:SetPoint("TOPLEFT", graphPanel, "TOPLEFT", 12, -10)
+    graphPanel.characterTitle:SetPoint("LEFT", graphPanel, "TOPLEFT", 12, -15)
     graphPanel.characterTitle:SetJustifyH("LEFT")
 
     graphPanel.title = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     graphPanel.title:SetPoint("LEFT", graphPanel.characterTitle, "RIGHT", 0, 0)
     graphPanel.title:SetJustifyH("LEFT")
+
+    graphPanel.byLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.byLabel:SetWidth(18)
+    graphPanel.byLabel:SetPoint("LEFT", graphPanel.title, "RIGHT", 8, 0)
+    graphPanel.byLabel:SetText("By")
+
+    graphPanel.modeSwitch = CreateFrame("Button", nil, graphPanel)
+    graphPanel.modeSwitch:SetSize(82, 20)
+    graphPanel.modeSwitch:SetPoint("LEFT", graphPanel.byLabel, "RIGHT", 5, 0)
+    graphPanel.modeSwitch.track = graphPanel.modeSwitch:CreateTexture(nil, "BACKGROUND")
+    graphPanel.modeSwitch.track:SetAllPoints()
+    graphPanel.modeSwitch.track:SetColorTexture(0.08, 0.09, 0.12, 1)
+    graphPanel.modeSwitch.thumb = graphPanel.modeSwitch:CreateTexture(nil, "ARTWORK")
+    graphPanel.modeSwitch.thumb:SetSize(38, 16)
+    graphPanel.modeSwitch.thumb:SetPoint("LEFT", graphPanel.modeSwitch, "LEFT", 2, 0)
+    graphPanel.modeSwitch.thumbOffset = 0
+    graphPanel.modeSwitch.thumbTarget = 0
+    graphPanel.modeSwitch.gameText = graphPanel.modeSwitch:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.modeSwitch.gameText:SetPoint("CENTER", graphPanel.modeSwitch, "LEFT", 21, 0)
+    graphPanel.modeSwitch.gameText:SetText("Game")
+    graphPanel.modeSwitch.dayText = graphPanel.modeSwitch:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.modeSwitch.dayText:SetPoint("CENTER", graphPanel.modeSwitch, "RIGHT", -21, 0)
+    graphPanel.modeSwitch.dayText:SetText("Day")
+    graphPanel.modeSwitch:SetScript("OnUpdate", function(self, elapsed)
+        if self.thumbOffset == self.thumbTarget then return end
+        local distance = self.thumbTarget - self.thumbOffset
+        local step = math.min(math.abs(distance), elapsed * 250)
+        self.thumbOffset = self.thumbOffset + (distance > 0 and step or -step)
+        self.thumb:ClearAllPoints()
+        self.thumb:SetPoint("LEFT", self, "LEFT", 2 + self.thumbOffset, 0)
+    end)
+    graphPanel.modeSwitch:SetScript("OnClick", function()
+        graphPanel.graphByDay = not graphPanel.graphByDay
+        if not graphPanel.graphByDay then graphPanel.comparePrevious = false end
+        HideGraphHover()
+        UI.RefreshHistoryGraph()
+    end)
+    graphPanel.modeSwitch:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Graph axis")
+        GameTooltip:AddLine("Switch between recorded games and days since the season began.", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    graphPanel.modeSwitch:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     graphPanel.closeButton = CreateFrame("Button", nil, graphPanel, "UIPanelCloseButton")
     graphPanel.closeButton:SetSize(22, 22)
@@ -3967,7 +4216,9 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.hoverFrame:SetScript("OnUpdate", UpdateGraphHover)
     graphPanel.hoverFrame:EnableMouseWheel(true)
     graphPanel.hoverFrame:SetScript("OnMouseWheel", function(_, delta)
-        ScrollHistoryGraph(delta)
+        if not (graphPanel.graphData and graphPanel.graphData.dayComparisonActive) then
+            ScrollHistoryGraph(delta)
+        end
     end)
 
     local hoverLayer = EnsureGraphHoverLayer()
@@ -3975,11 +4226,8 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.hoverLine = hoverLayer:CreateLine(nil, "OVERLAY")
     graphPanel.hoverLine:Hide()
 
-    graphPanel.hoverRatingDot = hoverLayer:CreateTexture(nil, "OVERLAY")
-    graphPanel.hoverRatingDot:Hide()
-
-    graphPanel.hoverMMRDot = hoverLayer:CreateTexture(nil, "OVERLAY")
-    graphPanel.hoverMMRDot:Hide()
+    graphPanel.hoverDot = hoverLayer:CreateTexture(nil, "OVERLAY")
+    graphPanel.hoverDot:Hide()
 
     graphPanel.emptyText = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisable")
     graphPanel.emptyText:SetPoint("CENTER", graphPanel.canvas, "CENTER", 0, 0)
@@ -3997,6 +4245,13 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.gamesLabel:SetPoint("BOTTOMRIGHT", graphPanel.canvas, "BOTTOMRIGHT", -4, 8)
     graphPanel.gamesLabel:SetWidth(GRAPH_GAMES_LABEL_WIDTH)
     graphPanel.gamesLabel:SetJustifyH("RIGHT")
+
+    graphPanel.dayStartLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.dayStartLabel:Hide()
+    graphPanel.dayMiddleLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.dayMiddleLabel:Hide()
+    graphPanel.dayEndLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.dayEndLabel:Hide()
 
     graphPanel.zoomLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     graphPanel.zoomLabel:SetText("Games")
@@ -4031,7 +4286,7 @@ function UI.CreateHistoryGraphPanel()
         local maxVisible = graphPanel.zoomMax or pointCount
         if pointCount > maxVisible then
             GameTooltip:AddLine("Showing " .. maxVisible .. " games at a time.", 1, 1, 1)
-            GameTooltip:AddLine("Drag to zoom; use the lower range slider or mouse wheel to browse older games.", 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Drag to zoom; use the range slider or mouse wheel to browse older games.", 0.7, 0.7, 0.7)
         else
             GameTooltip:AddLine("Drag to show fewer or more games; the maximum shows all recorded games.", 1, 1, 1)
         end
@@ -4055,14 +4310,8 @@ function UI.CreateHistoryGraphPanel()
     end)
 
     graphPanel.rangeSlider = CreateFrame("Slider", nil, graphPanel, "OptionsSliderTemplate")
-    graphPanel.rangeSlider:SetPoint("BOTTOMLEFT", graphPanel, "BOTTOMLEFT", GRAPH_MARGIN_LEFT + 8, 12)
-    graphPanel.rangeSlider:SetPoint(
-        "BOTTOMRIGHT",
-        graphPanel,
-        "BOTTOMRIGHT",
-        -GRAPH_MARGIN_RIGHT - GRAPH_GAMES_LABEL_WIDTH - GRAPH_GAMES_LABEL_GAP,
-        12
-    )
+    graphPanel.rangeSlider:SetPoint("LEFT", graphPanel.zoomValueLabel, "RIGHT", 16, 0)
+    graphPanel.rangeSlider:SetWidth(40)
     graphPanel.rangeSlider:SetHeight(14)
     graphPanel.rangeSlider:SetMinMaxValues(1, 1)
     graphPanel.rangeSlider:SetValueStep(1)
@@ -4095,6 +4344,7 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.ratingToggle:SetChecked(true)
     graphPanel.ratingToggle:SetScript("OnClick", function(self)
         graphPanel.showRating = self:GetChecked()
+        if not graphPanel.showRating then graphPanel.comparePrevious = false end
         UI.RefreshHistoryGraph()
     end)
 
@@ -4109,12 +4359,61 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.mmrToggle:SetChecked(true)
     graphPanel.mmrToggle:SetScript("OnClick", function(self)
         graphPanel.showMMR = self:GetChecked()
+        if graphPanel.showMMR then graphPanel.comparePrevious = false end
         UI.RefreshHistoryGraph()
     end)
 
-    graphPanel.zoomValueLabel:SetPoint("RIGHT", graphPanel.mmrToggle, "LEFT", -30, 0)
-    graphPanel.zoomSlider:SetPoint("RIGHT", graphPanel.zoomValueLabel, "LEFT", -8, 0)
-    graphPanel.zoomLabel:SetPoint("RIGHT", graphPanel.zoomSlider, "LEFT", -6, 0)
+    graphPanel.compareToggle = CreateFrame("CheckButton", nil, graphPanel, "UICheckButtonTemplate")
+    graphPanel.compareToggle:SetSize(20, 20)
+    graphPanel.compareToggle:SetPoint("BOTTOMLEFT", graphPanel, "BOTTOMLEFT", GRAPH_MARGIN_LEFT + 8, 4)
+    graphPanel.compareToggle:SetScript("OnClick", function(self)
+        graphPanel.comparePrevious = self:GetChecked() and true or false
+        if graphPanel.comparePrevious then
+            graphPanel.graphByDay = true
+            graphPanel.showRating = true
+            graphPanel.showMMR = false
+        end
+        HideGraphHover()
+        UI.RefreshHistoryGraph()
+    end)
+    graphPanel.compareToggle:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Compare to last season (by day)")
+        GameTooltip:AddLine("Switch to a day-based graph of both seasons.", 1, 1, 1)
+        GameTooltip:AddLine("MMR is hidden from the graph but remains in both seasons' tooltips.", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("Smooth transitions connect recorded match days.", 0.7, 0.7, 0.7)
+        if self.previousRecorded then
+            GameTooltip:AddLine(
+                "Last season: " .. self.previousRecorded .. " of " .. self.previousPlayed .. " games recorded.",
+                1, 0.7, 0
+            )
+        end
+        if self.currentRecorded then
+            GameTooltip:AddLine(
+                "Current season: " .. self.currentRecorded .. " of " .. self.currentPlayed .. " games recorded.",
+                1, 0.7, 0
+            )
+        end
+        GameTooltip:Show()
+    end)
+    graphPanel.compareToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    graphPanel.compareToggle:Hide()
+
+    graphPanel.compareLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.compareLabel:SetWidth(150)
+    graphPanel.compareLabel:SetJustifyH("LEFT")
+    graphPanel.compareLabel:SetPoint("LEFT", graphPanel.compareToggle, "RIGHT", 2, 0)
+    graphPanel.compareLabel:SetText("Compare to last season (by day)")
+    graphPanel.compareLabel:Hide()
+
+    graphPanel.compareStatus = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.compareStatus:SetPoint("LEFT", graphPanel.compareLabel, "RIGHT", 6, 0)
+    graphPanel.compareStatus:SetJustifyH("LEFT")
+    graphPanel.compareStatus:Hide()
+
+    graphPanel.zoomLabel:SetPoint("BOTTOMLEFT", graphPanel, "BOTTOMLEFT", GRAPH_MARGIN_LEFT + 8, 31)
+    graphPanel.zoomSlider:SetPoint("LEFT", graphPanel.zoomLabel, "RIGHT", 6, 0)
+    graphPanel.zoomValueLabel:SetPoint("LEFT", graphPanel.zoomSlider, "RIGHT", 8, 0)
 
     graphPanel:SetScript("OnSizeChanged", function()
         UI.RefreshHistoryGraph()
@@ -4128,25 +4427,118 @@ function UI.RefreshHistoryGraphNow()
 
     ClearGraphDrawings()
     local theme = GetActiveTheme()
+    local cr, cg, cb = Utils.GetClassColor(selectedGraph.classFilename)
+    local previousColor = UI.GraphComparison.GetPreviousColor(cr, cg, cb, theme.accent)
 
+    local seasonKey = selectedGraph.seasonKey or (ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey())
     local series = History and History.GetSeriesForSeason(
-        selectedGraph.seasonKey or (ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey()),
+        seasonKey,
         selectedGraph.charKey,
         selectedGraph.colKey,
         selectedGraph.specID
     )
     local points = series and series.points
     local pointCount = points and #points or 0
+    local previousSeasonKey = ns.Season and ns.Season.GetPreviousSeasonKey(seasonKey)
+    local previousSeries = previousSeasonKey and History.GetSeriesForSeason(
+        previousSeasonKey, selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID
+    )
+    local previousPoints = previousSeries and previousSeries.points
+    local canCompare = pointCount > 0 and previousPoints and #previousPoints > 0
+    graphPanel.compareToggle.currentRecorded, graphPanel.compareToggle.currentPlayed =
+        UI.GraphComparison.GetRecordedCoverage(
+            seasonKey, selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID, points
+        )
+    graphPanel.compareToggle.previousRecorded, graphPanel.compareToggle.previousPlayed =
+        UI.GraphComparison.GetRecordedCoverage(
+            previousSeasonKey, selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID, previousPoints
+        )
+    local seasonStart = ns.Season and ns.Season.GetPVPSeasonStartTime
+        and ns.Season.GetPVPSeasonStartTime(seasonKey)
+    local previousStart = canCompare and ns.Season.GetPVPSeasonStartTime
+        and ns.Season.GetPVPSeasonStartTime(previousSeasonKey)
+    local canAlign = seasonStart and previousStart
+    local lastDay
+    if seasonStart and pointCount > 0 then
+        local currentLastDay = UI.GraphComparison.GetSeasonDay(GetHistoryPointTime(points[pointCount]), seasonStart)
+        local contentSeasonKey = ns.Season and ns.Season.GetContentSeasonKey
+            and ns.Season.GetContentSeasonKey()
+        local today = seasonKey == contentSeasonKey and UI.GraphComparison.GetSeasonDay(time(), seasonStart)
+        lastDay = math.max(0, currentLastDay or 0, today or 0)
+    end
+    if seasonStart then
+        graphPanel.modeSwitch:Show()
+        graphPanel.byLabel:Show()
+    else
+        graphPanel.graphByDay = false
+        graphPanel.modeSwitch:Hide()
+        graphPanel.byLabel:Hide()
+    end
+    local comparisonAvailable = canCompare and canAlign and true or false
+    graphPanel.compareStatus:Hide()
+    if comparisonAvailable then
+        local firstDay = UI.GraphComparison.GetSeasonDay(GetHistoryPointTime(previousPoints[1]), previousStart)
+        if firstDay and firstDay > lastDay then
+            comparisonAvailable = false
+            graphPanel.compareStatus:SetText("- Last season first recorded: day " .. firstDay)
+            graphPanel.compareStatus:Show()
+        end
+    elseif not previousPoints or #previousPoints == 0 then
+        graphPanel.compareStatus:SetText("- No data from last season")
+        graphPanel.compareStatus:Show()
+    end
+    graphPanel.compareToggle:SetEnabled(comparisonAvailable)
+    graphPanel.compareToggle:SetAlpha(comparisonAvailable and 1 or 0.45)
+    graphPanel.compareToggle:SetChecked(graphPanel.comparePrevious and true or false)
+    graphPanel.compareToggle:Show()
+    graphPanel.compareLabel:Show()
+    graphPanel.compareLabel:SetWidth(math.ceil(graphPanel.compareLabel:GetStringWidth()))
+    SetFontColor(graphPanel.compareLabel,
+        comparisonAvailable and graphPanel.comparePrevious and theme.accent or theme.muted,
+        comparisonAvailable and 1 or 0.65)
+    SetFontColor(graphPanel.compareStatus, theme.muted)
+    if graphPanel.comparePrevious then
+        graphPanel.graphByDay = true
+        graphPanel.showRating = true
+        graphPanel.showMMR = false
+    end
+    local dayComparisonActive = seasonStart and graphPanel.graphByDay
+    graphPanel.modeSwitch.thumbTarget = dayComparisonActive and 40 or 0
+    graphPanel.modeSwitch.thumb:SetColorTexture(theme.accent[1], theme.accent[2], theme.accent[3], 1)
+    graphPanel.modeSwitch.gameText:SetTextColor(
+        dayComparisonActive and theme.muted[1] or 0.08,
+        dayComparisonActive and theme.muted[2] or 0.08,
+        dayComparisonActive and theme.muted[3] or 0.08
+    )
+    graphPanel.modeSwitch.dayText:SetTextColor(
+        dayComparisonActive and 0.08 or theme.muted[1],
+        dayComparisonActive and 0.08 or theme.muted[2],
+        dayComparisonActive and 0.08 or theme.muted[3]
+    )
+    graphPanel.dayStartLabel:Hide()
+    graphPanel.dayMiddleLabel:Hide()
+    graphPanel.dayEndLabel:Hide()
 
     graphPanel.characterTitle:SetText(selectedGraph.characterTitle)
     graphPanel.characterTitle:SetWidth(math.ceil(graphPanel.characterTitle:GetStringWidth()))
     graphPanel.title:SetText(selectedGraph.titleSuffix)
+    local titleWidth = math.ceil(graphPanel.title:GetStringWidth())
+    local titleLeft, controlsLeft = graphPanel.title:GetLeft(), graphPanel.mmrToggle:GetLeft()
+    local availableTitleWidth = titleLeft and controlsLeft and graphPanel.modeSwitch:IsShown()
+        and math.max(0, controlsLeft - titleLeft - graphPanel.byLabel:GetWidth()
+            - graphPanel.modeSwitch:GetWidth() - 28)
+    if availableTitleWidth and titleWidth > availableTitleWidth then
+        graphPanel.title:SetText(selectedGraph.bracketSuffix)
+        titleWidth = math.ceil(graphPanel.title:GetStringWidth())
+    end
+    graphPanel.title:SetWidth(availableTitleWidth and math.min(titleWidth, availableTitleWidth) or titleWidth)
     local titleR, titleG, titleB = Utils.GetClassColor(selectedGraph.classFilename)
     graphPanel.characterTitle:SetTextColor(titleR, titleG, titleB)
     SetFontColor(graphPanel.title, theme.title)
     graphPanel.ratingLabel:SetText("Rating")
     graphPanel.mmrLabel:SetText("MMR")
     graphPanel.gamesLabel:SetText(pointCount .. " game" .. (pointCount == 1 and "" or "s"))
+    if dayComparisonActive then graphPanel.gamesLabel:Hide() else graphPanel.gamesLabel:Show() end
     SetFontColor(graphPanel.gamesLabel, theme.muted)
     SetFontColor(graphPanel.emptyText, theme.muted)
     SetFontColor(graphPanel.maxLabel, theme.muted)
@@ -4160,7 +4552,6 @@ function UI.RefreshHistoryGraphNow()
     graphPanel.ratingToggle:SetChecked(showRating)
     graphPanel.mmrToggle:SetChecked(showMMR)
 
-    local cr, cg, cb = Utils.GetClassColor(selectedGraph.classFilename)
     local mr, mg, mb = theme.mmr[1] or MMR_GRAPH_R, theme.mmr[2] or MMR_GRAPH_G, theme.mmr[3] or MMR_GRAPH_B
     if showRating then
         graphPanel.ratingLabel:SetTextColor(cr, cg, cb)
@@ -4195,9 +4586,15 @@ function UI.RefreshHistoryGraphNow()
     graphPanel.zoomPointCount = pointCount
     graphPanel.zoomMin = zoomMin
     graphPanel.zoomMax = zoomMax
-    graphPanel.zoomLabel:Show()
-    graphPanel.zoomSlider:Show()
-    graphPanel.zoomValueLabel:Show()
+    if dayComparisonActive then
+        graphPanel.zoomLabel:Hide()
+        graphPanel.zoomSlider:Hide()
+        graphPanel.zoomValueLabel:Hide()
+    else
+        graphPanel.zoomLabel:Show()
+        graphPanel.zoomSlider:Show()
+        graphPanel.zoomValueLabel:Show()
+    end
     graphPanel.zoomValueLabel:SetText(tostring(visiblePointCount))
     graphPanel.zoomLabel:SetAlpha(1)
     graphPanel.zoomSlider:SetAlpha(zoomMin == zoomMax and 0.45 or 1)
@@ -4221,7 +4618,9 @@ function UI.RefreshHistoryGraphNow()
     graphPanel.viewportStart = visibleStart
     graphPanel.viewportAtLatest = visibleStart == maxViewportStart
 
-    if pointCount > visiblePointCount then
+    if dayComparisonActive then
+        graphPanel.rangeSlider:Hide()
+    elseif pointCount > visiblePointCount then
         graphPanel.gamesLabel:SetText(visibleStart .. "-" .. visibleEnd .. " / " .. pointCount .. " games")
         graphPanel.rangeSlider:Show()
         graphPanel.updatingRangeSlider = true
@@ -4234,12 +4633,54 @@ function UI.RefreshHistoryGraphNow()
         graphPanel.rangeSlider:Hide()
     end
 
+    local canvasWidth = math.max(graphPanel.canvas:GetWidth(), 1)
+    local canvasHeight = math.max(graphPanel.canvas:GetHeight(), 1)
+    local rangeLeft, panelRight = graphPanel.rangeSlider:GetLeft(), graphPanel:GetRight()
+    if rangeLeft and panelRight then
+        graphPanel.rangeSlider:SetWidth(math.max(panelRight - GRAPH_MARGIN_RIGHT - rangeLeft, 40))
+    end
+    local plotWidth = math.max(canvasWidth - GRAPH_MARGIN_LEFT - GRAPH_MARGIN_RIGHT, 1)
+    local plotHeight = math.max(canvasHeight - GRAPH_MARGIN_TOP - GRAPH_MARGIN_BOTTOM, 1)
+    local xStep = visiblePointCount > 1 and (plotWidth / (visiblePointCount - 1)) or 0
+    local currentVisible
+    local previousVisible
+    if dayComparisonActive then
+        visibleStart, visibleEnd, visiblePointCount = 1, pointCount, pointCount
+        currentVisible = UI.GraphComparison.GetDailyPoints(points, seasonStart, lastDay, plotWidth)
+        previousVisible = graphPanel.comparePrevious and UI.GraphComparison.GetDailyPoints(
+            previousPoints, previousStart, lastDay, plotWidth
+        ) or {}
+
+        local labelY = -(GRAPH_MARGIN_TOP + plotHeight + 6)
+        graphPanel.dayStartLabel:ClearAllPoints()
+        graphPanel.dayStartLabel:SetPoint("TOPLEFT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT, labelY)
+        graphPanel.dayStartLabel:SetText("Day 0")
+        graphPanel.dayStartLabel:Show()
+        graphPanel.dayMiddleLabel:ClearAllPoints()
+        graphPanel.dayMiddleLabel:SetPoint("TOP", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT + plotWidth / 2, labelY)
+        graphPanel.dayMiddleLabel:SetText("Day " .. math.floor(lastDay / 2))
+        graphPanel.dayMiddleLabel:SetShown(lastDay >= 8)
+        graphPanel.dayEndLabel:ClearAllPoints()
+        graphPanel.dayEndLabel:SetPoint("TOPRIGHT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT + plotWidth, labelY)
+        graphPanel.dayEndLabel:SetText("Day " .. lastDay)
+        graphPanel.dayEndLabel:SetShown(lastDay >= 2)
+        SetFontColor(graphPanel.dayStartLabel, theme.muted)
+        SetFontColor(graphPanel.dayMiddleLabel, theme.muted)
+        SetFontColor(graphPanel.dayEndLabel, theme.muted)
+    else
+        currentVisible = UI.GraphComparison.GetVisiblePoints(points, visibleStart, visibleEnd, xStep, plotWidth)
+    end
+    local currentX = {}
+    for _, entry in ipairs(currentVisible) do currentX[entry.index] = entry.x end
+
     local minValue, maxValue, tickStep = GetVisibleGraphScale(
         points,
         visibleStart,
         visibleEnd,
         showRating,
-        showMMR
+        showMMR,
+        previousVisible,
+        dayComparisonActive and currentVisible or nil
     )
     if not minValue then
         if not showRating and not showMMR then
@@ -4264,13 +4705,14 @@ function UI.RefreshHistoryGraphNow()
         local rating = GetHistoryPointRating(point)
         local mmr = GetAlignedGraphMMR(points, i)
         mmrValues[i] = mmr
-        if showRating and rating > 0 then
+        if showRating and rating > 0 and (not dayComparisonActive or currentX[i]) then
             hasVisibleValue = true
         end
-        if showMMR and mmr then
+        if showMMR and mmr and (not dayComparisonActive or currentX[i]) then
             hasVisibleValue = true
         end
     end
+    if dayComparisonActive and showRating and #previousVisible > 0 then hasVisibleValue = true end
 
     if not hasVisibleValue then
         if not showRating and not showMMR then
@@ -4292,11 +4734,6 @@ function UI.RefreshHistoryGraphNow()
     graphPanel.midLabel:SetText("")
     graphPanel.minLabel:SetText("")
 
-    local canvasWidth = math.max(graphPanel.canvas:GetWidth(), 1)
-    local canvasHeight = math.max(graphPanel.canvas:GetHeight(), 1)
-    local plotWidth = math.max(canvasWidth - GRAPH_MARGIN_LEFT - GRAPH_MARGIN_RIGHT, 1)
-    local plotHeight = math.max(canvasHeight - GRAPH_MARGIN_TOP - GRAPH_MARGIN_BOTTOM, 1)
-    local xStep = visiblePointCount > 1 and (plotWidth / (visiblePointCount - 1)) or 0
     graphPanel.graphData = {
         points = points,
         pointCount = pointCount,
@@ -4314,6 +4751,15 @@ function UI.RefreshHistoryGraphNow()
         showMMR = showMMR,
         ratingColor = { cr, cg, cb },
         mmrColor = { mr, mg, mb },
+        previousColor = previousColor,
+        dayComparisonActive = dayComparisonActive,
+        comparePrevious = graphPanel.comparePrevious,
+        lastDay = lastDay,
+        seasonStart = seasonStart,
+        previousStart = previousStart,
+        previousPoints = previousPoints,
+        currentVisible = currentVisible,
+        previousVisible = previousVisible,
     }
 
     DrawGraphYAxisLabels(minValue, maxValue, tickStep, plotWidth, plotHeight, theme)
@@ -4355,58 +4801,112 @@ function UI.RefreshHistoryGraphNow()
         theme.axis[1], theme.axis[2], theme.axis[3], theme.axis[4], 1
     )
 
-    if showMMR then
-        for i = visibleStart + 1, visibleEnd do
-            local visibleIndex = i - visibleStart + 1
-            local x1 = GRAPH_MARGIN_LEFT + (visibleIndex - 2) * xStep
-            local x2 = GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep
-            local prevMMR = mmrValues[i - 1]
-            local currentMMR = mmrValues[i]
+    if dayComparisonActive and showRating and #previousVisible > 0 then
+        local first = previousVisible[1]
+        AddGraphLine(
+            GRAPH_MARGIN_LEFT, GetGraphPointY(0, minValue, maxValue, plotHeight),
+            first.x, GetGraphPointY(0, minValue, maxValue, plotHeight),
+            previousColor[1], previousColor[2], previousColor[3], 0.8, 1.5
+        )
+        AddGraphLine(
+            first.x, GetGraphPointY(0, minValue, maxValue, plotHeight),
+            first.x, GetGraphPointY(GetHistoryPointRating(first.point), minValue, maxValue, plotHeight),
+            previousColor[1], previousColor[2], previousColor[3], 0.8, 1.5
+        )
+    end
+    if dayComparisonActive and showRating then
+        for i = 2, #previousVisible do
+            local previous = previousVisible[i - 1]
+            local current = previousVisible[i]
+            local previousY = GetGraphPointY(GetHistoryPointRating(previous.point), minValue, maxValue, plotHeight)
+            local currentY = GetGraphPointY(GetHistoryPointRating(current.point), minValue, maxValue, plotHeight)
+            UI.GraphComparison.DrawSmoothDaySegment(
+                previous.x, previousY, current.x, currentY,
+                previousColor[1], previousColor[2], previousColor[3], 0.8, 1.5
+            )
+        end
+        local last = previousVisible[#previousVisible]
+        if last and last.endX > last.x then
+            local y = GetGraphPointY(GetHistoryPointRating(last.point), minValue, maxValue, plotHeight)
+            AddGraphLine(last.x, y, last.endX, y,
+                previousColor[1], previousColor[2], previousColor[3], 0.8, 1.5)
+        end
+    end
 
-            if prevMMR and currentMMR then
+    if showMMR then
+        if dayComparisonActive then
+            for _, entry in ipairs(currentVisible) do
+                local firstMMR = mmrValues[entry.index]
+                if firstMMR then
+                    local firstY = GetGraphPointY(firstMMR, minValue, maxValue, plotHeight)
+                    AddGraphLine(GRAPH_MARGIN_LEFT, firstY, entry.x, firstY, mr, mg, mb, 0.35, 1.5)
+                    break
+                end
+            end
+        end
+        for position = 2, #currentVisible do
+            local previous, current = currentVisible[position - 1], currentVisible[position]
+            local x1, x2 = previous.x, current.x
+            local prevMMR = mmrValues[previous.index]
+            local currentMMR = mmrValues[current.index]
+
+            if x1 and x2 and prevMMR and currentMMR then
                 local prevMMRY = GetGraphPointY(prevMMR, minValue, maxValue, plotHeight)
                 local currentMMRY = GetGraphPointY(currentMMR, minValue, maxValue, plotHeight)
-                AddGraphLine(x1, prevMMRY, x2, currentMMRY, mr, mg, mb, 0.9, 2)
+                if dayComparisonActive then
+                    UI.GraphComparison.DrawSmoothDaySegment(x1, prevMMRY, x2, currentMMRY, mr, mg, mb, 0.9, 2)
+                else
+                    AddGraphLine(x1, prevMMRY, x2, currentMMRY, mr, mg, mb, 0.9, 2)
+                end
+            end
+        end
+        if dayComparisonActive then
+            local last = currentVisible[#currentVisible]
+            local mmr = last and mmrValues[last.index]
+            if mmr and last.endX > last.x then
+                local y = GetGraphPointY(mmr, minValue, maxValue, plotHeight)
+                AddGraphLine(last.x, y, last.endX, y, mr, mg, mb, 0.9, 2)
             end
         end
     end
 
     if showRating then
-        for i = visibleStart + 1, visibleEnd do
-            local prev = points[i - 1]
-            local current = points[i]
-            local visibleIndex = i - visibleStart + 1
-            local x1 = GRAPH_MARGIN_LEFT + (visibleIndex - 2) * xStep
-            local x2 = GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep
-            local prevRatingY = GetGraphPointY(GetHistoryPointRating(prev), minValue, maxValue, plotHeight)
-            local currentRatingY = GetGraphPointY(GetHistoryPointRating(current), minValue, maxValue, plotHeight)
-
-            AddGraphLine(x1, prevRatingY, x2, currentRatingY, cr, cg, cb, 1, 2)
+        if dayComparisonActive and #currentVisible > 0 then
+            local first = currentVisible[1]
+            AddGraphLine(
+                GRAPH_MARGIN_LEFT, GetGraphPointY(0, minValue, maxValue, plotHeight),
+                first.x, GetGraphPointY(0, minValue, maxValue, plotHeight),
+                cr, cg, cb, 1, 2
+            )
+            AddGraphLine(
+                first.x, GetGraphPointY(0, minValue, maxValue, plotHeight),
+                first.x, GetGraphPointY(GetHistoryPointRating(first.point), minValue, maxValue, plotHeight),
+                cr, cg, cb, 1, 2
+            )
         end
-    end
+        for position = 2, #currentVisible do
+            local previous, current = currentVisible[position - 1], currentVisible[position]
+            local x1, x2 = previous.x, current.x
+            local prevRatingY = GetGraphPointY(GetHistoryPointRating(previous.point), minValue, maxValue, plotHeight)
+            local currentRatingY = GetGraphPointY(GetHistoryPointRating(current.point), minValue, maxValue, plotHeight)
 
-    if showMMR then
-        for i = visibleStart, visibleEnd do
-            if mmrValues[i] then
-                local visibleIndex = i - visibleStart + 1
-                local x = visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep)
-                    or (GRAPH_MARGIN_LEFT + plotWidth / 2)
-                local y = GetGraphPointY(mmrValues[i], minValue, maxValue, plotHeight)
-                AddGraphDot(x, y, mr, mg, mb, 0.95, GRAPH_POINT_SIZE - 1)
+            if x1 and x2 then
+                if dayComparisonActive then
+                    UI.GraphComparison.DrawSmoothDaySegment(x1, prevRatingY, x2, currentRatingY, cr, cg, cb, 1, 2)
+                else
+                    AddGraphLine(x1, prevRatingY, x2, currentRatingY, cr, cg, cb, 1, 2)
+                end
+            end
+        end
+        if dayComparisonActive then
+            local last = currentVisible[#currentVisible]
+            if last and last.endX > last.x then
+                local y = GetGraphPointY(GetHistoryPointRating(last.point), minValue, maxValue, plotHeight)
+                AddGraphLine(last.x, y, last.endX, y, cr, cg, cb, 1, 2)
             end
         end
     end
 
-    if showRating then
-        for i = visibleStart, visibleEnd do
-            local point = points[i]
-            local visibleIndex = i - visibleStart + 1
-            local x = visiblePointCount > 1 and (GRAPH_MARGIN_LEFT + (visibleIndex - 1) * xStep)
-                or (GRAPH_MARGIN_LEFT + plotWidth / 2)
-            local y = GetGraphPointY(GetHistoryPointRating(point), minValue, maxValue, plotHeight)
-            AddGraphDot(x, y, cr, cg, cb, 1)
-        end
-    end
 end
 
 function UI.RefreshHistoryGraph()
@@ -4467,6 +4967,7 @@ function UI.ShowHistoryGraph(charData, specID, col)
         classFilename = charData.classFilename,
         characterTitle = characterTitle,
         titleSuffix = titleSuffix,
+        bracketSuffix = " - " .. col.label,
         seasonKey = seasonKey,
     }
 
