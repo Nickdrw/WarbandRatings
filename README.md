@@ -21,6 +21,7 @@ Crests
 
 - Rating history graphs for PvP brackets
 - MMR and rating curves with toggleable display
+- Graph scope selector: Session (logged-in character only, since login and preserved across UI reloads), Today (local day, extended through the logged-in character's session when it crosses midnight), or Season (all recorded games in the selected season). Overnight games stay assigned to the session's starting day after logout and are excluded from the next day's Today view. Switching to another character while Session is selected falls back to Season.
 - Detached graph window for a larger view
 - Themed expansion and season dropdowns with historical seasonal character data
 - Shareable current-season statistics and completed-season Rewind cards

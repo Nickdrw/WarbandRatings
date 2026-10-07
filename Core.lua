@@ -9,6 +9,7 @@ local Season = ns.Season
 local SPEC_RATED_INFO_REQUEST_DELAY = 1
 local databaseReady = false
 local savedVariablesLoadFailed = false
+local historySessionInitialized = false
 
 local function CallUI(method, ...)
     local UI = ns.UI
@@ -104,6 +105,7 @@ end
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_LOGOUT")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CRITERIA_UPDATE")
 eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
@@ -254,7 +256,14 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif not databaseReady then
         return
 
+    elseif event == "PLAYER_LOGOUT" then
+        CallUI("FinishHistorySession")
+
     elseif event == "PLAYER_ENTERING_WORLD" then
+        if not historySessionInitialized then
+            CallUI("StartHistorySession", arg2 == true)
+            historySessionInitialized = true
+        end
         -- Request achievement/statistics data from server so GetStatistic() returns real values.
         -- The server responds with CRITERIA_UPDATE, which will trigger a re-collect.
         if RequestAchievementData then

@@ -1097,6 +1097,7 @@ function UI.ApplyTheme()
         SetFontColor(graphPanel.gamesLabel, theme.muted)
         SetFontColor(graphPanel.zoomLabel, theme.muted)
         SetFontColor(graphPanel.zoomValueLabel, theme.muted)
+        UI.GraphScope.RefreshSelector(graphPanel, theme)
     end
 
     for _, row in ipairs(rowFrames) do
@@ -3556,6 +3557,144 @@ local function RoundGraphScale(minValue, maxValue)
     return lowerValue, upperValue, tickStep
 end
 
+UI.GraphScope = {
+    options = {
+        { key = "session", label = "Session" },
+        { key = "day", label = "Today" },
+        { key = "season", label = "Season" },
+    },
+}
+
+function UI.StartHistorySession(isReload)
+    local now = time()
+    local savedStart = tonumber(Database.GetCharacterSetting("historyGraphSessionStart"))
+    UI.GraphScope.AssignSessionPlayDays(savedStart, now)
+    local sessionStart = isReload and savedStart and savedStart > 0 and savedStart <= now
+        and savedStart or now
+    UI.GraphScope.sessionStart = sessionStart
+    Database.SetCharacterSetting("historyGraphSessionStart", sessionStart)
+end
+
+function UI.FinishHistorySession()
+    UI.GraphScope.AssignSessionPlayDays(UI.GraphScope.sessionStart, time())
+end
+
+function UI.GraphScope.IsSessionAvailable(charKey)
+    if not charKey then return false end
+    local name = UnitName("player")
+    local realm = GetNormalizedRealmName() or GetRealmName():gsub("%s", "")
+    return name and realm and charKey == Utils.CharKey(name, realm) or false
+end
+
+function UI.GraphScope.AssignSessionPlayDays(sessionStart, sessionEnd)
+    if not sessionStart or sessionStart <= 0 or sessionStart > sessionEnd then return end
+    local playDay = date("%Y-%m-%d", sessionStart)
+    if playDay == date("%Y-%m-%d", sessionEnd) then return end
+
+    local name = UnitName("player")
+    local realm = GetNormalizedRealmName() or GetRealmName():gsub("%s", "")
+    if not name or not realm then return end
+    local charKey = Utils.CharKey(name, realm)
+    local function AssignSeriesPlayDays(seriesByColumn)
+        for _, series in pairs(seriesByColumn or {}) do
+            for _, point in ipairs(series.points or {}) do
+                local timestamp = GetHistoryPointTime(point)
+                if timestamp and timestamp >= sessionStart and timestamp <= sessionEnd
+                    and date("%Y-%m-%d", timestamp) ~= playDay then
+                    -- Keep overnight games on the session's play day after the next login.
+                    point.playDay = point.playDay or playDay
+                end
+            end
+        end
+    end
+    for _, seasonKey in ipairs(History.GetAvailableSeasonKeys()) do
+        local character = History.GetSeasonCharacters(seasonKey)[charKey]
+        if character and character.series then
+            AssignSeriesPlayDays(character.series.global)
+            for _, specSeries in pairs(character.series.specs or {}) do
+                AssignSeriesPlayDays(specSeries)
+            end
+        end
+    end
+end
+
+function UI.GraphScope.GetPoints(points, scope, now, charKey)
+    if scope ~= "session" and scope ~= "day" then return points or {} end
+
+    now = now or time()
+    local startTime = UI.GraphScope.sessionStart or now
+    local playDay, currentCharacter
+    if scope == "day" then
+        currentCharacter = UI.GraphScope.IsSessionAvailable(charKey)
+        playDay = date("%Y-%m-%d", currentCharacter and math.min(startTime, now) or now)
+    end
+
+    local filtered = {}
+    for _, point in ipairs(points or {}) do
+        local timestamp = GetHistoryPointTime(point)
+        if timestamp and timestamp <= now then
+            local included = timestamp >= startTime
+            if scope == "day" then
+                local pointDay = point.playDay or (currentCharacter and included and playDay)
+                    or date("%Y-%m-%d", timestamp)
+                included = pointDay == playDay
+            end
+            if included then filtered[#filtered + 1] = point end
+        end
+    end
+    return filtered
+end
+
+function UI.GraphScope.RefreshSelector(panel, theme)
+    if not panel.scopeButton then return end
+    local scope = panel.historyScope or "season"
+    for _, option in ipairs(UI.GraphScope.options) do
+        if option.key == scope then panel.scopeButton.label:SetText(option.label) end
+    end
+    local expanded = panel.scopeMenu:IsShown()
+    local highlighted = expanded or panel.scopeButton.hovered
+    SetTextureColor(panel.scopeButton.bg, highlighted and theme.header or theme.surfaceRaised)
+    SetBorderColor(panel.scopeButton, highlighted and theme.accent or theme.border)
+    SetFontColor(panel.scopeButton.label, theme.text)
+    SetTextureColor(panel.scopeButton.divider, theme.border, 0.5)
+    local arrowColor = highlighted and theme.accent or theme.muted
+    local direction = expanded and -1 or 1
+    for index, line in ipairs(panel.scopeButton.chevron) do
+        line:SetColorTexture(arrowColor[1], arrowColor[2], arrowColor[3], 1)
+        line:SetStartPoint("CENTER", panel.scopeButton.arrow, (index == 1 and -4 or 4), direction * 2)
+        line:SetEndPoint("CENTER", panel.scopeButton.arrow, 0, -direction * 2)
+    end
+    ApplyPanelTheme(panel.scopeMenu, theme.surface, theme.border)
+    local sessionAvailable = UI.GraphScope.IsSessionAvailable(selectedGraph and selectedGraph.charKey)
+    local visibleCount = 0
+    for _, button in ipairs(panel.scopeMenu.buttons) do
+        local available = button.scope ~= "session" or sessionAvailable
+        button:SetShown(available)
+        if available then
+            button:ClearAllPoints()
+            button:SetPoint("TOPLEFT", 4, -4 - visibleCount * 25)
+            visibleCount = visibleCount + 1
+        end
+        local selected = button.scope == scope
+        SetTextureColor(button.bg, selected and theme.accent or theme.surfaceRaised, selected and 0.25 or 1)
+        SetFontColor(button.label, selected and theme.accent or theme.text)
+    end
+    panel.scopeMenu:SetHeight(8 + visibleCount * 22 + math.max(0, visibleCount - 1) * 3)
+end
+
+function UI.SetHistoryGraphScope(scope)
+    if not graphPanel or graphPanel.historyScope == scope then return end
+    if scope ~= "session" and scope ~= "day" and scope ~= "season" then return end
+    if scope == "session" and not UI.GraphScope.IsSessionAvailable(selectedGraph and selectedGraph.charKey) then return end
+    graphPanel.historyScope = scope
+    graphPanel.comparePrevious = false
+    if scope ~= "season" then graphPanel.graphByDay = false end
+    graphPanel.visiblePointCount = nil
+    graphPanel.viewportStart = nil
+    graphPanel.viewportAtLatest = true
+    UI.RefreshHistoryGraph()
+end
+
 UI.GraphComparison = {}
 
 function UI.GraphComparison.GetVisiblePoints(points, visibleStart, visibleEnd, xStep, plotWidth)
@@ -3885,7 +4024,6 @@ function UI.GraphComparison.UpdateDailyHover(data, cursorX, cursorY, plotTop, pl
     GameTooltip:SetOwner(graphPanel.canvas, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine("Season day " .. day, 1, 1, 1)
-    GameTooltip:AddLine("Smoothed curve; recorded values below.", theme.muted[1], theme.muted[2], theme.muted[3])
     if day == 0 and data.showRating then
         GameTooltip:AddLine("Rating starts at 0; recorded matches are shown below.",
             theme.muted[1], theme.muted[2], theme.muted[3])
@@ -3925,6 +4063,10 @@ end
 
 local function UpdateGraphHover()
     if not graphPanel or not graphPanel.graphData then return end
+    if graphPanel.scopeMenu:IsShown() or graphPanel.scopeButton.hovered then
+        HideGraphHover()
+        return
+    end
 
     local data = graphPanel.graphData
     local cursorX, cursorY = GetCanvasCursorPosition(graphPanel.canvas)
@@ -4105,6 +4247,7 @@ function UI.CreateHistoryGraphPanel()
     graphPanel = CreateFrame("Frame", "WarbandRatingsHistoryGraphPanel", mainFrame, "InsetFrameTemplate3")
     graphPanel.showRating = true
     graphPanel.showMMR = true
+    graphPanel.historyScope = "season"
     graphPanel.detached = false
     graphPanel:SetHeight(GRAPH_PANEL_HEIGHT)
     graphPanel:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", 0, 1)
@@ -4126,6 +4269,7 @@ function UI.CreateHistoryGraphPanel()
     end)
     graphPanel:SetScript("OnHide", function()
         selectedGraph = nil
+        if graphPanel.scopeMenu then graphPanel.scopeMenu:Hide() end
         HideGraphHover()
         UpdateMainDockFrameSize()
         RefreshHistoryCellAffordances()
@@ -4262,6 +4406,85 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.zoomValueLabel:SetWidth(28)
     graphPanel.zoomValueLabel:SetJustifyH("LEFT")
 
+    graphPanel.scopeButton = CreateFrame("Button", nil, graphPanel)
+    graphPanel.scopeButton:SetSize(96, 22)
+    graphPanel.scopeButton:SetPoint("LEFT", graphPanel.modeSwitch, "RIGHT", 10, 0)
+    graphPanel.scopeButton.bg = graphPanel.scopeButton:CreateTexture(nil, "BACKGROUND")
+    graphPanel.scopeButton.bg:SetAllPoints()
+    graphPanel.scopeButton.label = graphPanel.scopeButton:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    graphPanel.scopeButton.label:SetPoint("LEFT", 10, 0)
+    graphPanel.scopeButton.label:SetPoint("RIGHT", -29, 0)
+    graphPanel.scopeButton.label:SetJustifyH("LEFT")
+    graphPanel.scopeButton.label:SetWordWrap(false)
+    graphPanel.scopeButton.label:SetNonSpaceWrap(false)
+    graphPanel.scopeButton.divider = graphPanel.scopeButton:CreateTexture(nil, "ARTWORK")
+    graphPanel.scopeButton.divider:SetWidth(1)
+    graphPanel.scopeButton.divider:SetPoint("TOPRIGHT", -25, -5)
+    graphPanel.scopeButton.divider:SetPoint("BOTTOMRIGHT", -25, 5)
+    graphPanel.scopeButton.arrow = CreateFrame("Frame", nil, graphPanel.scopeButton)
+    graphPanel.scopeButton.arrow:SetSize(10, 8)
+    graphPanel.scopeButton.arrow:SetPoint("RIGHT", -12, 0)
+    graphPanel.scopeButton.arrow:EnableMouse(false)
+    graphPanel.scopeButton.chevron = {}
+    for index = 1, 2 do
+        local line = graphPanel.scopeButton.arrow:CreateLine(nil, "OVERLAY")
+        line:SetThickness(1.5)
+        graphPanel.scopeButton.chevron[index] = line
+    end
+    graphPanel.scopeButton:SetScript("OnEnter", function(self)
+        self.hovered = true
+        HideGraphHover()
+        UI.GraphScope.RefreshSelector(graphPanel, GetActiveTheme())
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Graph scope")
+        if UI.GraphScope.IsSessionAvailable(selectedGraph and selectedGraph.charKey) then
+            GameTooltip:AddLine("Session: games recorded since logging in; preserved across UI reloads.", 1, 1, 1)
+            GameTooltip:AddLine("Today: games from the day your session began, including games after midnight.", 1, 1, 1)
+        else
+            GameTooltip:AddLine("Today: games recorded since local midnight.", 1, 1, 1)
+        end
+        GameTooltip:AddLine("Season: all recorded games in the selected season.", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    graphPanel.scopeButton:SetScript("OnLeave", function(self)
+        self.hovered = false
+        UI.GraphScope.RefreshSelector(graphPanel, GetActiveTheme())
+        GameTooltip:Hide()
+    end)
+
+    graphPanel.scopeMenu = CreateFrame("Frame", nil, graphPanel)
+    graphPanel.scopeMenu:SetSize(110, 80)
+    graphPanel.scopeMenu:SetPoint("TOPLEFT", graphPanel.scopeButton, "BOTTOMLEFT", 0, -4)
+    graphPanel.scopeMenu:SetFrameLevel(graphPanel:GetFrameLevel() + 20)
+    graphPanel.scopeMenu:EnableMouse(true)
+    graphPanel.scopeMenu.buttons = {}
+    graphPanel.scopeMenu:Hide()
+    graphPanel.scopeMenu:SetScript("OnHide", function()
+        UI.GraphScope.RefreshSelector(graphPanel, GetActiveTheme())
+    end)
+    graphPanel.scopeButton:SetScript("OnClick", function()
+        HideGraphHover()
+        graphPanel.scopeMenu:SetShown(not graphPanel.scopeMenu:IsShown())
+        UI.GraphScope.RefreshSelector(graphPanel, GetActiveTheme())
+    end)
+    for index, option in ipairs(UI.GraphScope.options) do
+        local button = CreateFrame("Button", nil, graphPanel.scopeMenu)
+        button:SetSize(102, 22)
+        button:SetPoint("TOPLEFT", 4, -4 - (index - 1) * 25)
+        button.scope = option.key
+        button.bg = button:CreateTexture(nil, "BACKGROUND")
+        button.bg:SetAllPoints()
+        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.label:SetPoint("CENTER")
+        button.label:SetText(option.label)
+        button:SetScript("OnClick", function(self)
+            graphPanel.scopeMenu:Hide()
+            HideGraphHover()
+            UI.SetHistoryGraphScope(self.scope)
+        end)
+        graphPanel.scopeMenu.buttons[index] = button
+    end
+
     graphPanel.zoomSlider = CreateFrame("Slider", nil, graphPanel, "OptionsSliderTemplate")
     graphPanel.zoomSlider:SetWidth(108)
     graphPanel.zoomSlider:SetHeight(14)
@@ -4369,6 +4592,11 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.compareToggle:SetScript("OnClick", function(self)
         graphPanel.comparePrevious = self:GetChecked() and true or false
         if graphPanel.comparePrevious then
+            graphPanel.historyScope = "season"
+            graphPanel.visiblePointCount = nil
+            graphPanel.viewportStart = nil
+            graphPanel.viewportAtLatest = true
+            graphPanel.scopeMenu:Hide()
             graphPanel.graphByDay = true
             graphPanel.showRating = true
             graphPanel.showMMR = false
@@ -4380,6 +4608,7 @@ function UI.CreateHistoryGraphPanel()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Compare to last season (by day)")
         GameTooltip:AddLine("Switch to a day-based graph of both seasons.", 1, 1, 1)
+        GameTooltip:AddLine("Comparison uses the full selected season.", 0.7, 0.7, 0.7)
         GameTooltip:AddLine("MMR is hidden from the graph but remains in both seasons' tooltips.", 0.7, 0.7, 0.7)
         GameTooltip:AddLine("Smooth transitions connect recorded match days.", 0.7, 0.7, 0.7)
         if self.previousRecorded then
@@ -4437,17 +4666,26 @@ function UI.RefreshHistoryGraphNow()
         selectedGraph.colKey,
         selectedGraph.specID
     )
-    local points = series and series.points
+    local seasonPoints = series and series.points
+    if graphPanel.historyScope == "session" and not UI.GraphScope.IsSessionAvailable(selectedGraph.charKey) then
+        graphPanel.historyScope = "season"
+        graphPanel.visiblePointCount = nil
+        graphPanel.viewportStart = nil
+        graphPanel.viewportAtLatest = true
+    end
+    local scope = graphPanel.historyScope or "season"
+    local points = UI.GraphScope.GetPoints(seasonPoints, scope, nil, selectedGraph.charKey)
     local pointCount = points and #points or 0
+    UI.GraphScope.RefreshSelector(graphPanel, theme)
     local previousSeasonKey = ns.Season and ns.Season.GetPreviousSeasonKey(seasonKey)
     local previousSeries = previousSeasonKey and History.GetSeriesForSeason(
         previousSeasonKey, selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID
     )
     local previousPoints = previousSeries and previousSeries.points
-    local canCompare = pointCount > 0 and previousPoints and #previousPoints > 0
+    local canCompare = seasonPoints and #seasonPoints > 0 and previousPoints and #previousPoints > 0
     graphPanel.compareToggle.currentRecorded, graphPanel.compareToggle.currentPlayed =
         UI.GraphComparison.GetRecordedCoverage(
-            seasonKey, selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID, points
+            seasonKey, selectedGraph.charKey, selectedGraph.colKey, selectedGraph.specID, seasonPoints
         )
     graphPanel.compareToggle.previousRecorded, graphPanel.compareToggle.previousPlayed =
         UI.GraphComparison.GetRecordedCoverage(
@@ -4459,14 +4697,14 @@ function UI.RefreshHistoryGraphNow()
         and ns.Season.GetPVPSeasonStartTime(previousSeasonKey)
     local canAlign = seasonStart and previousStart
     local lastDay
-    if seasonStart and pointCount > 0 then
-        local currentLastDay = UI.GraphComparison.GetSeasonDay(GetHistoryPointTime(points[pointCount]), seasonStart)
+    if seasonStart and seasonPoints and #seasonPoints > 0 then
+        local currentLastDay = UI.GraphComparison.GetSeasonDay(GetHistoryPointTime(seasonPoints[#seasonPoints]), seasonStart)
         local contentSeasonKey = ns.Season and ns.Season.GetContentSeasonKey
             and ns.Season.GetContentSeasonKey()
         local today = seasonKey == contentSeasonKey and UI.GraphComparison.GetSeasonDay(time(), seasonStart)
         lastDay = math.max(0, currentLastDay or 0, today or 0)
     end
-    if seasonStart then
+    if seasonStart and scope == "season" then
         graphPanel.modeSwitch:Show()
         graphPanel.byLabel:Show()
     else
@@ -4524,9 +4762,10 @@ function UI.RefreshHistoryGraphNow()
     graphPanel.title:SetText(selectedGraph.titleSuffix)
     local titleWidth = math.ceil(graphPanel.title:GetStringWidth())
     local titleLeft, controlsLeft = graphPanel.title:GetLeft(), graphPanel.mmrToggle:GetLeft()
-    local availableTitleWidth = titleLeft and controlsLeft and graphPanel.modeSwitch:IsShown()
-        and math.max(0, controlsLeft - titleLeft - graphPanel.byLabel:GetWidth()
-            - graphPanel.modeSwitch:GetWidth() - 28)
+    local axisControlWidth = graphPanel.byLabel:GetWidth() + graphPanel.modeSwitch:GetWidth() + 28
+    axisControlWidth = axisControlWidth + graphPanel.scopeButton:GetWidth() + 10
+    local availableTitleWidth = titleLeft and controlsLeft
+        and math.max(0, controlsLeft - titleLeft - axisControlWidth)
     if availableTitleWidth and titleWidth > availableTitleWidth then
         graphPanel.title:SetText(selectedGraph.bracketSuffix)
         titleWidth = math.ceil(graphPanel.title:GetStringWidth())
@@ -4565,7 +4804,9 @@ function UI.RefreshHistoryGraphNow()
     end
 
     if pointCount == 0 then
-        graphPanel.emptyText:SetText("No games recorded for this rating yet.")
+        graphPanel.emptyText:SetText(scope == "session" and "No games recorded for this rating in this session."
+            or scope == "day" and "No games recorded for this rating today."
+            or "No games recorded for this rating yet.")
         graphPanel.emptyText:Show()
         graphPanel.maxLabel:SetText("")
         graphPanel.midLabel:SetText("")
