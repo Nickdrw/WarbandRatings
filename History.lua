@@ -86,6 +86,31 @@ local function EnsureRoot()
     return history
 end
 
+local function IsValidSession(session)
+    return type(session) == "table"
+        and type(session.startTime) == "number" and type(session.endTime) == "number"
+        and session.startTime > 0 and session.startTime <= session.endTime
+        and session.endTime <= time()
+end
+
+function History.GetLastSession(charKey)
+    if type(charKey) ~= "string" or charKey == "" then return nil end
+    local sessions = EnsureRoot().lastSessions
+    local session = type(sessions) == "table" and sessions[charKey]
+    return IsValidSession(session) and session or nil
+end
+
+function History.SaveLastSession(charKey, startTime, endTime)
+    if Database.IsStorageReady and not Database.IsStorageReady() then return false end
+    if type(charKey) ~= "string" or charKey == "" then return false end
+    local session = { startTime = startTime, endTime = endTime }
+    if not IsValidSession(session) then return false end
+    local history = EnsureRoot()
+    if type(history.lastSessions) ~= "table" then history.lastSessions = {} end
+    history.lastSessions[charKey] = session
+    return true
+end
+
 function History.RecordDiagnostic(reason)
     if type(reason) ~= "string" or reason == "" then return end
 

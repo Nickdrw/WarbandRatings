@@ -463,4 +463,26 @@ assert(displaySnapshots["Offseason-Realm"].specRatings[258].soloShuffle == 1800
 assert(History.GetSeasonCharacters(seasonKey)["Offseason-Realm"].ratings.arena3v3 == 1964,
     "display repair mutated the saved snapshot")
 
+assert(History.SaveLastSession("Tester-Realm", now - 100, now - 10),
+    "a played session should be saved in account-wide history")
+assert(History.SaveLastSession("Tester-OtherRealm", now - 200, now - 150),
+    "session metadata should distinguish namesakes on different realms")
+local savedSession = History.GetLastSession("Tester-Realm")
+assert(savedSession.startTime == now - 100 and savedSession.endTime == now - 10,
+    "shared session metadata should retain both bounds")
+assert(History.GetLastSession("Tester-OtherRealm").startTime == now - 200
+    and History.GetLastSession("Missing-Realm") == nil,
+    "each character should have its own saved session")
+assert(History.Init() and History.GetLastSession("Tester-Realm").startTime == savedSession.startTime,
+    "initializing history should preserve shared session metadata")
+assert(not History.SaveLastSession("Tester-Realm", now, now - 1)
+    and not History.SaveLastSession("Tester-Realm", now, now + 1)
+    and not History.SaveLastSession("Tester-Realm", "invalid", now)
+    and not History.SaveLastSession("", now - 1, now),
+    "invalid session bounds or character keys should not overwrite a saved session")
+assert(History.GetLastSession("Tester-Realm").startTime == savedSession.startTime,
+    "invalid writes should preserve the last valid session")
+WarbandRatingsDB.history.lastSessions["Broken-Realm"] = { startTime = now, endTime = now - 1 }
+assert(History.GetLastSession("Broken-Realm") == nil, "malformed saved sessions should be ignored")
+
 print("history tests passed")

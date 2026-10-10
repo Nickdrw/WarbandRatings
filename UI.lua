@@ -1095,6 +1095,7 @@ function UI.ApplyTheme()
             end
         end
         SetFontColor(graphPanel.gamesLabel, theme.muted)
+        SetFontColor(graphPanel.sessionLabel, theme.muted)
         SetFontColor(graphPanel.zoomLabel, theme.muted)
         SetFontColor(graphPanel.zoomValueLabel, theme.muted)
         UI.GraphScope.RefreshSelector(graphPanel, theme)
@@ -3569,21 +3570,84 @@ function UI.StartHistorySession(isReload)
     local now = time()
     local savedStart = tonumber(Database.GetCharacterSetting("historyGraphSessionStart"))
     UI.GraphScope.AssignSessionPlayDays(savedStart, now)
+    if not isReload then UI.GraphScope.SaveSession(savedStart, now) end
     local sessionStart = isReload and savedStart and savedStart > 0 and savedStart <= now
         and savedStart or now
     UI.GraphScope.sessionStart = sessionStart
+    UI.GraphScope.sessionHasGames = false
+    local charKey = Utils.CharKey(UnitName("player"), GetNormalizedRealmName() or GetRealmName():gsub("%s", ""))
+    if not History.GetLastSession(charKey) then
+        local legacySession = Database.GetCharacterSetting("historyGraphLastSession")
+        if type(legacySession) == "table" then
+            History.SaveLastSession(charKey, legacySession.startTime, legacySession.endTime)
+        end
+    end
+    UI.GraphScope.lastSession = History.GetLastSession(charKey)
     Database.SetCharacterSetting("historyGraphSessionStart", sessionStart)
 end
 
 function UI.FinishHistorySession()
-    UI.GraphScope.AssignSessionPlayDays(UI.GraphScope.sessionStart, time())
+    local now = time()
+    UI.GraphScope.AssignSessionPlayDays(UI.GraphScope.sessionStart, now)
+    UI.GraphScope.SaveSession(UI.GraphScope.sessionStart, now)
 end
 
-function UI.GraphScope.IsSessionAvailable(charKey)
+function UI.GraphScope.IsCurrentCharacter(charKey)
     if not charKey then return false end
     local name = UnitName("player")
     local realm = GetNormalizedRealmName() or GetRealmName():gsub("%s", "")
     return name and realm and charKey == Utils.CharKey(name, realm) or false
+end
+
+function UI.GraphScope.GetSessionEnd(sessionStart, now)
+    if not sessionStart or sessionStart <= 0 or sessionStart > now then return nil end
+    local name = UnitName("player")
+    local realm = GetNormalizedRealmName() or GetRealmName():gsub("%s", "")
+    if not name or not realm then return nil end
+    local charKey = Utils.CharKey(name, realm)
+    local sessionEnd
+    local function CheckSeries(seriesByColumn)
+        for _, series in pairs(seriesByColumn or {}) do
+            for _, point in ipairs(series.points or {}) do
+                local timestamp = GetHistoryPointTime(point)
+                if timestamp and timestamp >= sessionStart and timestamp <= now then
+                    sessionEnd = math.max(sessionEnd or timestamp, timestamp)
+                end
+            end
+        end
+    end
+    for _, seasonKey in ipairs(History.GetAvailableSeasonKeys()) do
+        local character = History.GetSeasonCharacters(seasonKey)[charKey]
+        if character and character.series then
+            CheckSeries(character.series.global)
+            for _, specSeries in pairs(character.series.specs or {}) do CheckSeries(specSeries) end
+        end
+    end
+    return sessionEnd
+end
+
+function UI.GraphScope.SaveSession(sessionStart, now)
+    local sessionEnd = UI.GraphScope.GetSessionEnd(sessionStart, now)
+    if not sessionEnd then return end
+    local charKey = Utils.CharKey(UnitName("player"), GetNormalizedRealmName() or GetRealmName():gsub("%s", ""))
+    if History.SaveLastSession(charKey, sessionStart, sessionEnd) then
+        UI.GraphScope.lastSession = History.GetLastSession(charKey)
+    end
+end
+
+function UI.GraphScope.GetSessionRange(now, charKey)
+    if charKey and not UI.GraphScope.IsCurrentCharacter(charKey) then
+        local lastSession = History.GetLastSession(charKey)
+        if lastSession then return lastSession.startTime, lastSession.endTime, true end
+        return nil, nil, true
+    end
+    local startTime = UI.GraphScope.sessionStart or now
+    if not UI.GraphScope.sessionHasGames then
+        UI.GraphScope.sessionHasGames = UI.GraphScope.GetSessionEnd(startTime, now) ~= nil
+    end
+    local lastSession = not UI.GraphScope.sessionHasGames and UI.GraphScope.lastSession
+    if lastSession then return lastSession.startTime, lastSession.endTime, true end
+    return startTime, now, false
 end
 
 function UI.GraphScope.AssignSessionPlayDays(sessionStart, sessionEnd)
@@ -3623,16 +3687,20 @@ function UI.GraphScope.GetPoints(points, scope, now, charKey)
 
     now = now or time()
     local startTime = UI.GraphScope.sessionStart or now
+    local endTime = now
     local playDay, currentCharacter
-    if scope == "day" then
-        currentCharacter = UI.GraphScope.IsSessionAvailable(charKey)
+    if scope == "session" then
+        startTime, endTime = UI.GraphScope.GetSessionRange(now, charKey)
+        if not startTime then return {} end
+    else
+        currentCharacter = UI.GraphScope.IsCurrentCharacter(charKey)
         playDay = date("%Y-%m-%d", currentCharacter and math.min(startTime, now) or now)
     end
 
     local filtered = {}
     for _, point in ipairs(points or {}) do
         local timestamp = GetHistoryPointTime(point)
-        if timestamp and timestamp <= now then
+        if timestamp and timestamp <= endTime then
             local included = timestamp >= startTime
             if scope == "day" then
                 local pointDay = point.playDay or (currentCharacter and included and playDay)
@@ -3665,27 +3733,20 @@ function UI.GraphScope.RefreshSelector(panel, theme)
         line:SetEndPoint("CENTER", panel.scopeButton.arrow, 0, -direction * 2)
     end
     ApplyPanelTheme(panel.scopeMenu, theme.surface, theme.border)
-    local sessionAvailable = UI.GraphScope.IsSessionAvailable(selectedGraph and selectedGraph.charKey)
-    local visibleCount = 0
-    for _, button in ipairs(panel.scopeMenu.buttons) do
-        local available = button.scope ~= "session" or sessionAvailable
-        button:SetShown(available)
-        if available then
-            button:ClearAllPoints()
-            button:SetPoint("TOPLEFT", 4, -4 - visibleCount * 25)
-            visibleCount = visibleCount + 1
-        end
+    for index, button in ipairs(panel.scopeMenu.buttons) do
+        button:Show()
+        button:ClearAllPoints()
+        button:SetPoint("TOPLEFT", 4, -4 - (index - 1) * 25)
         local selected = button.scope == scope
         SetTextureColor(button.bg, selected and theme.accent or theme.surfaceRaised, selected and 0.25 or 1)
         SetFontColor(button.label, selected and theme.accent or theme.text)
     end
-    panel.scopeMenu:SetHeight(8 + visibleCount * 22 + math.max(0, visibleCount - 1) * 3)
+    panel.scopeMenu:SetHeight(8 + #panel.scopeMenu.buttons * 22 + math.max(0, #panel.scopeMenu.buttons - 1) * 3)
 end
 
 function UI.SetHistoryGraphScope(scope)
     if not graphPanel or graphPanel.historyScope == scope then return end
     if scope ~= "session" and scope ~= "day" and scope ~= "season" then return end
-    if scope == "session" and not UI.GraphScope.IsSessionAvailable(selectedGraph and selectedGraph.charKey) then return end
     graphPanel.historyScope = scope
     graphPanel.comparePrevious = false
     if scope ~= "season" then graphPanel.graphByDay = false end
@@ -4390,6 +4451,13 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.gamesLabel:SetWidth(GRAPH_GAMES_LABEL_WIDTH)
     graphPanel.gamesLabel:SetJustifyH("RIGHT")
 
+    graphPanel.sessionLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.sessionLabel:SetPoint("TOPLEFT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT, -2)
+    graphPanel.sessionLabel:SetPoint("TOPRIGHT", graphPanel.canvas, "TOPRIGHT", -GRAPH_MARGIN_RIGHT, -2)
+    graphPanel.sessionLabel:SetJustifyH("LEFT")
+    graphPanel.sessionLabel:SetWordWrap(false)
+    graphPanel.sessionLabel:Hide()
+
     graphPanel.dayStartLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     graphPanel.dayStartLabel:Hide()
     graphPanel.dayMiddleLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -4437,10 +4505,12 @@ function UI.CreateHistoryGraphPanel()
         UI.GraphScope.RefreshSelector(graphPanel, GetActiveTheme())
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Graph scope")
-        if UI.GraphScope.IsSessionAvailable(selectedGraph and selectedGraph.charKey) then
-            GameTooltip:AddLine("Session: games recorded since logging in; preserved across UI reloads.", 1, 1, 1)
+        if UI.GraphScope.IsCurrentCharacter(selectedGraph and selectedGraph.charKey) then
+            GameTooltip:AddLine("Session: current session, or your last session until you record a new game.", 1, 1, 1)
+            GameTooltip:AddLine("Sessions are preserved across UI reloads.", 1, 1, 1)
             GameTooltip:AddLine("Today: games from the day your session began, including games after midnight.", 1, 1, 1)
         else
+            GameTooltip:AddLine("Session: this character's last saved session.", 1, 1, 1)
             GameTooltip:AddLine("Today: games recorded since local midnight.", 1, 1, 1)
         end
         GameTooltip:AddLine("Season: all recorded games in the selected season.", 1, 1, 1)
@@ -4667,14 +4737,23 @@ function UI.RefreshHistoryGraphNow()
         selectedGraph.specID
     )
     local seasonPoints = series and series.points
-    if graphPanel.historyScope == "session" and not UI.GraphScope.IsSessionAvailable(selectedGraph.charKey) then
-        graphPanel.historyScope = "season"
-        graphPanel.visiblePointCount = nil
-        graphPanel.viewportStart = nil
-        graphPanel.viewportAtLatest = true
-    end
     local scope = graphPanel.historyScope or "season"
     local points = UI.GraphScope.GetPoints(seasonPoints, scope, nil, selectedGraph.charKey)
+    if scope == "session" then
+        local sessionStart, _, isLastSession = UI.GraphScope.GetSessionRange(time(), selectedGraph.charKey)
+        graphPanel.showingLastSession = isLastSession
+        graphPanel.noSavedSession = not sessionStart
+        if sessionStart then
+            graphPanel.sessionLabel:SetText((isLastSession and "Last session from " or "Session from ")
+                .. date("%d/%m/%Y", sessionStart))
+            graphPanel.sessionLabel:Show()
+        else
+            graphPanel.sessionLabel:Hide()
+        end
+    else
+        graphPanel.showingLastSession = false
+        graphPanel.sessionLabel:Hide()
+    end
     local pointCount = points and #points or 0
     UI.GraphScope.RefreshSelector(graphPanel, theme)
     local previousSeasonKey = ns.Season and ns.Season.GetPreviousSeasonKey(seasonKey)
@@ -4779,6 +4858,7 @@ function UI.RefreshHistoryGraphNow()
     graphPanel.gamesLabel:SetText(pointCount .. " game" .. (pointCount == 1 and "" or "s"))
     if dayComparisonActive then graphPanel.gamesLabel:Hide() else graphPanel.gamesLabel:Show() end
     SetFontColor(graphPanel.gamesLabel, theme.muted)
+    SetFontColor(graphPanel.sessionLabel, theme.muted)
     SetFontColor(graphPanel.emptyText, theme.muted)
     SetFontColor(graphPanel.maxLabel, theme.muted)
     SetFontColor(graphPanel.midLabel, theme.muted)
@@ -4804,7 +4884,11 @@ function UI.RefreshHistoryGraphNow()
     end
 
     if pointCount == 0 then
-        graphPanel.emptyText:SetText(scope == "session" and "No games recorded for this rating in this session."
+        graphPanel.emptyText:SetText(scope == "session" and (graphPanel.noSavedSession
+                and "No saved session for this character yet."
+                or graphPanel.showingLastSession
+                and "No games recorded for this rating in the last session."
+                or "No games recorded for this rating in this session.")
             or scope == "day" and "No games recorded for this rating today."
             or "No games recorded for this rating yet.")
         graphPanel.emptyText:Show()

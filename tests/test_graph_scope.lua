@@ -8,7 +8,20 @@ date = os.date
 tinsert = table.insert
 
 local ns = { Database = {}, DataCollection = {}, History = {}, Utils = {} }
+ns.Utils.CharKey = function(name, realm) return name .. "-" .. realm end
+UnitName = function() return "Tester" end
+GetNormalizedRealmName = function() return "Realm" end
+GetRealmName = function() return "Realm" end
 local characterSettings = {}
+local savedSessions = {}
+ns.History.GetLastSession = function(charKey)
+    local session = savedSessions[charKey]
+    return session and session.endTime <= now and session or nil
+end
+ns.History.SaveLastSession = function(charKey, startTime, endTime)
+    savedSessions[charKey] = { startTime = startTime, endTime = endTime }
+    return true
+end
 ns.Database.GetCharacterSetting = function(key) return characterSettings[key] end
 ns.Database.SetCharacterSetting = function(key, value) characterSettings[key] = value end
 assert(loadfile("UI.lua"))("WarbandRatings", ns)
@@ -21,10 +34,14 @@ local points = {
     { now - 60, 1460, 1560, 20, 20, 1, true },
     { now, 1480, 1580, 20, 20, 1, true },
 }
+ns.History.GetAvailableSeasonKeys = function() return { "pvp-42" } end
+ns.History.GetSeasonCharacters = function()
+    return { ["Tester-Realm"] = { series = { global = { arena2v2 = { points = points } } } } }
+end
 now = now - 3600
 UI.StartHistorySession()
 now = now + 3600
-local reloadedNS = { Database = ns.Database, DataCollection = {}, History = {}, Utils = {} }
+local reloadedNS = { Database = ns.Database, DataCollection = {}, History = ns.History, Utils = ns.Utils }
 assert(loadfile("UI.lua"))("WarbandRatings", reloadedNS)
 reloadedNS.UI.StartHistorySession(true)
 assert(reloadedNS.UI.GraphScope.sessionStart == UI.GraphScope.sessionStart,
@@ -44,6 +61,7 @@ characterSettings.historyGraphSessionStart = nil
 reloadedNS.UI.StartHistorySession(true)
 assert(reloadedNS.UI.GraphScope.sessionStart == now,
     "the first reload after upgrading should initialize a missing session boundary")
+characterSettings.historyGraphSessionStart = UI.GraphScope.sessionStart
 local scoped = UI.GraphScope.GetPoints(points, "session")
 assert(#scoped == 3 and scoped[1] == points[3] and scoped[3] == points[5],
     "session scope should include its exact start and retain the complete match metadata")
@@ -127,14 +145,10 @@ GameTooltip = {
     AddLine = function() end,
     AddDoubleLine = function() end,
 }
-ns.Utils.CharKey = function(name, realm) return name .. "-" .. realm end
 ns.Utils.GetClassColor = function() return 0.5, 0.6, 0.7 end
-UnitName = function() return "Tester" end
-GetNormalizedRealmName = function() return "Realm" end
-GetRealmName = function() return "Realm" end
-assert(UI.GraphScope.IsSessionAvailable("Tester-Realm"), "Session should be available for the logged-in character")
-assert(not UI.GraphScope.IsSessionAvailable("Other-Realm") and not UI.GraphScope.IsSessionAvailable("Tester-OtherRealm"),
-    "Session should not be available for another character, including a namesake on another realm")
+assert(UI.GraphScope.IsCurrentCharacter("Tester-Realm"), "the live session should belong to the logged-in character")
+assert(not UI.GraphScope.IsCurrentCharacter("Other-Realm") and not UI.GraphScope.IsCurrentCharacter("Tester-OtherRealm"),
+    "another character, including a namesake on another realm, should use its own saved session")
 ns.Database.IsPVPColumn = function() return true end
 ns.Database.IsSpecColumn = function() return false end
 ns.History.GetContentSeasonKey = function() return "pvp-42" end
@@ -231,29 +245,49 @@ ChooseScope(1)
 assert(not panel.comparePrevious and not panel.graphData.dayComparisonActive,
     "choosing Session should leave season comparison and restore the game axis")
 local column = { key = "arena2v2", label = "2v2" }
+savedSessions["Other-Realm"] = { startTime = midnight, endTime = now - 3600 }
 UI.ShowHistoryGraph({ name = "Other", realm = "Realm", classFilename = "WARRIOR" }, 0, column)
-assert(panel.historyScope == "season" and panel.graphData.pointCount == 5
-    and panel.viewportAtLatest and not panel.scopeMenu.buttons[1]:IsShown(),
-    "switching from Session to another character should select Season and hide the Session option")
-assert(panel.scopeMenu:GetHeight() == 55 and panel.scopeMenu.buttons[2].point[3] == -4,
-    "hiding Session should compact the dropdown without leaving a blank first row")
-UI.SetHistoryGraphScope("session")
-assert(panel.historyScope == "season", "another character's graph should reject Session scope")
+assert(panel.historyScope == "session" and panel.graphData.pointCount == 2
+    and panel.graphData.points[1] == otherPoints[2] and panel.graphData.points[2] == otherPoints[3]
+    and panel.viewportAtLatest and panel.scopeMenu.buttons[1]:IsShown(),
+    "switching characters should retain Session and filter by the other character's saved start and end")
+assert(panel.showingLastSession and panel.sessionLabel.text == "Last session from 06/10/2026",
+    "another character's saved session should display its own date")
+assert(panel.scopeMenu:GetHeight() == 80 and panel.scopeMenu.buttons[2].point[3] == -29,
+    "every character should have all three scope options")
+UI.ShowHistoryGraph({ name = "Tester", realm = "OtherRealm", classFilename = "WARRIOR" }, 0, column)
+assert(panel.historyScope == "session" and panel.graphData == nil and not panel.sessionLabel:IsShown()
+    and panel.emptyText.text == "No saved session for this character yet.",
+    "a namesake without a saved session should not show the logged-in character's games or date")
 ChooseScope(2)
 assert(panel.historyScope == "day", "Today should remain available for another character")
 ChooseScope(3)
 UI.ShowHistoryGraph({ name = "Tester", realm = "Realm", classFilename = "WARRIOR" }, 0, column)
 assert(panel.scopeMenu.buttons[1]:IsShown() and panel.scopeMenu:GetHeight() == 80,
-    "returning to the logged-in character should restore the Session option")
+    "returning to the logged-in character should keep the Session option")
 ChooseScope(1)
 now = now + 86400
 UI.StartHistorySession()
 UI.RefreshHistoryGraph()
-assert(panel.graphData == nil and panel.emptyText.text:find("in this session", 1, true),
-    "a new login with no matches should clear old curves and explain the empty session")
+assert(panel.graphData.pointCount == 3 and panel.graphData.points[1] == points[3],
+    "a new login without matches should retain the previous played session")
+assert(panel.sessionLabel:IsShown() and panel.sessionLabel.text == "Last session from 06/10/2026",
+    "the saved session should display its starting date above the plot")
+local savedSession = savedSessions["Tester-Realm"]
+now = now + 86400
+UI.StartHistorySession(false)
+ChooseScope(1)
+UI.RefreshHistoryGraph()
+assert(savedSessions["Tester-Realm"] == savedSession and panel.graphData.pointCount == 3,
+    "logging out and back in without playing should not overwrite the last played session")
+UI.StartHistorySession(true)
+UI.RefreshHistoryGraph()
+assert(panel.showingLastSession and panel.graphData.pointCount == 3,
+    "the saved session should survive a reload before any new games")
 ChooseScope(2)
 assert(panel.graphData == nil and panel.emptyText.text:find("today", 1, true),
     "an empty calendar day should clear old curves and explain the empty day")
+assert(not panel.sessionLabel:IsShown(), "the session date label should be hidden outside Session scope")
 ChooseScope(3)
 assert(panel.graphData.pointCount == 5, "returning to Season should restore every stored match")
 panel.scopeButton.scripts.OnClick(panel.scopeButton)
@@ -307,9 +341,19 @@ assert(loadfile("UI.lua"))("WarbandRatings", freshNS)
 freshNS.UI.StartHistorySession(true)
 assert(#freshNS.UI.GraphScope.GetPoints(points, "day", now, "Tester-Realm") == 0,
     "reloading the addon on the new day should retain the saved play-day assignments")
+ChooseScope(1)
+assert(panel.graphData.pointCount == 16 and panel.showingLastSession
+    and panel.sessionLabel.text == "Last session from 06/10/2026",
+    "an overnight session should remain visible under its starting date after the next login")
+assert(#freshNS.UI.GraphScope.GetPoints(points, "session", now, "Tester-Realm") == 16,
+    "a reloaded addon should restore the complete previous overnight session")
 local todayPoint = { now, 2070 }
 points[#points + 1] = todayPoint
 UI.RefreshHistoryGraph()
+assert(panel.graphData.pointCount == 1 and not panel.showingLastSession
+    and panel.sessionLabel.text == "Session from 07/10/2026",
+    "the first new game should replace the saved curve and label with the current session")
+ChooseScope(2)
 assert(panel.graphData.pointCount == 1 and panel.graphData.points[1] == todayPoint,
     "games from a new session today should still appear in Today")
 UI.FinishHistorySession()
@@ -329,5 +373,42 @@ assert(fallbackPoint.playDay == "2026-10-07",
     "the next login should recover a previous overnight assignment if logout was not handled")
 assert(#UI.GraphScope.GetPoints(points, "day", now, "Tester-Realm") == 0,
     "recovered overnight assignments should also be excluded from the new day's Today")
+
+-- The session boundary is shared by all brackets, including spec-specific histories.
+ChooseScope(1)
+UI.RefreshHistoryGraph()
+assert(panel.showingLastSession and panel.graphData.pointCount == 2,
+    "a new login should retain the last played session across all brackets")
+now = now + 60
+specPoints[#specPoints + 1] = { now, 1510 }
+UI.RefreshHistoryGraph()
+assert(not panel.showingLastSession and panel.graphData == nil
+    and panel.emptyText.text:find("in this session", 1, true),
+    "a new game in another bracket should start the current session for every graph")
+UI.FinishHistorySession()
+assert(savedSessions["Tester-Realm"].startTime == UI.GraphScope.sessionStart
+    and savedSessions["Tester-Realm"].endTime == now,
+    "logout should save the played session even when the selected bracket has no new games")
+now = now + 86400
+UI.StartHistorySession(false)
+UI.RefreshHistoryGraph()
+assert(panel.showingLastSession and panel.graphData == nil
+    and panel.emptyText.text:find("in the last session", 1, true),
+    "an empty bracket in the last session should not fall back to an older session's games")
+
+local lastSession = savedSessions["Tester-Realm"]
+savedSessions["Tester-Realm"] = nil
+characterSettings.historyGraphLastSession = lastSession
+UI.StartHistorySession(true)
+assert(savedSessions["Tester-Realm"].startTime == lastSession.startTime
+    and savedSessions["Tester-Realm"].endTime == lastSession.endTime,
+    "an existing character-specific saved session should migrate into shared history")
+local altNS = { Database = ns.Database, History = ns.History, DataCollection = {}, Utils = ns.Utils }
+assert(loadfile("UI.lua"))("WarbandRatings", altNS)
+UnitName = function() return "Other" end
+assert(#altNS.UI.GraphScope.GetPoints(specPoints, "session", now, "Tester-Realm") == 1,
+    "a fresh addon instance on another character should read the saved session from shared history")
+assert(altNS.UI.GraphScope.GetSessionRange(now, "Missing-Realm") == nil,
+    "a character without saved metadata should have no session range")
 
 print("graph scope tests passed")
