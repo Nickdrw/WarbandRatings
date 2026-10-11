@@ -3033,6 +3033,47 @@ UI.PVPTooltip = UI.PVPTooltip or {
     },
 }
 
+-- Representative colors sampled from Blizzard's UI_RankedPvP_01 through _06 badges:
+-- https://render.worldofwarcraft.com/us/icons/56/ui_rankedpvp_06.jpg
+-- PvPTier.RankIcon maps Unranked through Elite to those six textures in order.
+local PVP_BADGES = {
+    unranked = { texture = 2023043, color = { 145 / 255, 108 / 255, 92 / 255 } },
+    combatant = { texture = 2023045, color = { 176 / 255, 179 / 255, 181 / 255 } },
+    challenger = { texture = 2023047, color = { 188 / 255, 148 / 255, 78 / 255 } },
+    rival = { texture = 2023049, color = { 158 / 255, 168 / 255, 191 / 255 } },
+    duelist = { texture = 2023051, color = { 69 / 255, 118 / 255, 164 / 255 } },
+    elite = { texture = 2023053, color = { 142 / 255, 69 / 255, 173 / 255 } },
+}
+
+local function GetPVPRatingBadge(value)
+    local rating = tonumber(value) or 0
+    if rating <= 0 then return nil end
+
+    local seasonKey = ns.SeasonUI and ns.SeasonUI.GetSelectedSeasonKey and ns.SeasonUI.GetSelectedSeasonKey()
+        or (ns.Season and ns.Season.GetContentSeasonKey and ns.Season.GetContentSeasonKey())
+    local seasonID = tonumber((seasonKey or ""):match("^pvp%-(%d+)$"))
+    -- Midnight lowered Elite to 2300; older seasons retain their 2400 threshold.
+    local eliteRating = seasonID and seasonID < 41 and 2400 or 2300
+    if rating >= eliteRating then return PVP_BADGES.elite end
+    if rating >= 2100 then return PVP_BADGES.duelist end
+    if rating >= 1800 then return PVP_BADGES.rival end
+    if rating >= 1400 then return PVP_BADGES.challenger end
+    if rating >= 1000 then return PVP_BADGES.combatant end
+    return PVP_BADGES.unranked
+end
+
+function UI.PVPTooltip.GetRatingColor(value, theme)
+    local badge = GetPVPRatingBadge(value)
+    return badge and badge.color or (theme or GetActiveTheme()).muted
+end
+
+function UI.PVPTooltip.FormatRating(value)
+    local text = FormatTooltipNumber(value)
+    local badge = GetPVPRatingBadge(value)
+    if not badge then return text end
+    return string.format("|T%d:14:14:0:0|t %s", badge.texture, text)
+end
+
 -- Published patch dates provide a conservative fallback for matches recorded
 -- before the addon stored GetBuildInfo() with graph points. Exclude release days because the
 -- maintenance window varies by region, and do not guess beyond known dates.
@@ -3215,17 +3256,14 @@ function UI.PVPTooltip.AddStatsBlock(title, best, won, played, unitLabel, mostPl
     won = tonumber(won) or 0
     played = tonumber(played) or 0
     local lost = math.max(played - won, 0)
-    local bestR, bestG, bestB = theme.muted[1], theme.muted[2], theme.muted[3]
-    if not Utils.IsEmptyRating(best) then
-        bestR, bestG, bestB = 1, 1, 1
-    end
+    local bestColor = UI.PVPTooltip.GetRatingColor(best, theme)
 
     GameTooltip:AddLine(title, theme.accent[1], theme.accent[2], theme.accent[3])
     GameTooltip:AddDoubleLine(
         "Best Rating:",
-        FormatTooltipNumber(best),
+        UI.PVPTooltip.FormatRating(best),
         theme.muted[1], theme.muted[2], theme.muted[3],
-        bestR, bestG, bestB
+        bestColor[1], bestColor[2], bestColor[3]
     )
     GameTooltip:AddDoubleLine(
         unitLabel .. " Played:",
@@ -3293,11 +3331,12 @@ function UI.PVPTooltip.Show(owner, charData, specID, col)
 
     if not Utils.IsEmptyRating(rating) then
         local ratingIsSeasonBest = stats and stats.preseasonRatingIsSeasonBest
+        local ratingColor = UI.PVPTooltip.GetRatingColor(rating, theme)
         GameTooltip:AddDoubleLine(
             ratingIsSeasonBest and "Season Best:" or "Current Rating:",
-            FormatTooltipNumber(rating),
+            UI.PVPTooltip.FormatRating(rating),
             theme.muted[1], theme.muted[2], theme.muted[3],
-            1, 1, 1
+            ratingColor[1], ratingColor[2], ratingColor[3]
         )
         if ratingIsSeasonBest then
             GameTooltip:AddLine(
@@ -3785,6 +3824,10 @@ function UI.GraphComparison.GetSeasonDay(timestamp, seasonStart)
     return day and firstDay and day - firstDay or nil
 end
 
+function UI.GraphComparison.FormatSeasonWeek(day)
+    return "week " .. (math.floor(day / 7) + 1)
+end
+
 function UI.GraphComparison.GetRecordedCoverage(seasonKey, charKey, colKey, specID, points)
     if not seasonKey or not points or #points == 0 or not History or not History.GetSeasonCharacters then return nil end
     local character = History.GetSeasonCharacters(seasonKey)[charKey]
@@ -4085,6 +4128,7 @@ function UI.GraphComparison.UpdateDailyHover(data, cursorX, cursorY, plotTop, pl
     GameTooltip:SetOwner(graphPanel.canvas, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
     GameTooltip:AddLine("Season day " .. day, 1, 1, 1)
+    GameTooltip:AddLine(UI.GraphComparison.FormatSeasonWeek(day), theme.muted[1], theme.muted[2], theme.muted[3])
     if day == 0 and data.showRating then
         GameTooltip:AddLine("Rating starts at 0; recorded matches are shown below.",
             theme.muted[1], theme.muted[2], theme.muted[3])
@@ -4459,10 +4503,13 @@ function UI.CreateHistoryGraphPanel()
     graphPanel.sessionLabel:Hide()
 
     graphPanel.dayStartLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.dayStartLabel:SetJustifyH("LEFT")
     graphPanel.dayStartLabel:Hide()
     graphPanel.dayMiddleLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.dayMiddleLabel:SetJustifyH("CENTER")
     graphPanel.dayMiddleLabel:Hide()
     graphPanel.dayEndLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    graphPanel.dayEndLabel:SetJustifyH("RIGHT")
     graphPanel.dayEndLabel:Hide()
 
     graphPanel.zoomLabel = graphPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -4979,15 +5026,16 @@ function UI.RefreshHistoryGraphNow()
         local labelY = -(GRAPH_MARGIN_TOP + plotHeight + 6)
         graphPanel.dayStartLabel:ClearAllPoints()
         graphPanel.dayStartLabel:SetPoint("TOPLEFT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT, labelY)
-        graphPanel.dayStartLabel:SetText("Day 0")
+        graphPanel.dayStartLabel:SetText("Day 0\n" .. UI.GraphComparison.FormatSeasonWeek(0))
         graphPanel.dayStartLabel:Show()
         graphPanel.dayMiddleLabel:ClearAllPoints()
         graphPanel.dayMiddleLabel:SetPoint("TOP", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT + plotWidth / 2, labelY)
-        graphPanel.dayMiddleLabel:SetText("Day " .. math.floor(lastDay / 2))
+        local middleDay = math.floor(lastDay / 2)
+        graphPanel.dayMiddleLabel:SetText("Day " .. middleDay .. "\n" .. UI.GraphComparison.FormatSeasonWeek(middleDay))
         graphPanel.dayMiddleLabel:SetShown(lastDay >= 8)
         graphPanel.dayEndLabel:ClearAllPoints()
         graphPanel.dayEndLabel:SetPoint("TOPRIGHT", graphPanel.canvas, "TOPLEFT", GRAPH_MARGIN_LEFT + plotWidth, labelY)
-        graphPanel.dayEndLabel:SetText("Day " .. lastDay)
+        graphPanel.dayEndLabel:SetText("Day " .. lastDay .. "\n" .. UI.GraphComparison.FormatSeasonWeek(lastDay))
         graphPanel.dayEndLabel:SetShown(lastDay >= 2)
         SetFontColor(graphPanel.dayStartLabel, theme.muted)
         SetFontColor(graphPanel.dayMiddleLabel, theme.muted)

@@ -136,13 +136,14 @@ CreateFrame = function(_, _, parent) return NewRegion(parent) end
 UIParent = NewRegion()
 UISpecialFrames = {}
 GetCursorPosition = function() return 60, 150 end
+local tooltipLines = {}
 GameTooltip = {
     IsOwned = function(self, owner) return self.owner == owner end,
     SetOwner = function(self, owner) self.owner = owner end,
     Show = function(self) self.shown = true end,
     Hide = function(self) self.shown = false end,
-    ClearLines = function() end,
-    AddLine = function() end,
+    ClearLines = function() tooltipLines = {} end,
+    AddLine = function(_, text) tooltipLines[#tooltipLines + 1] = text end,
     AddDoubleLine = function() end,
 }
 ns.Utils.GetClassColor = function() return 0.5, 0.6, 0.7 end
@@ -207,12 +208,25 @@ assert(panel.hoverLine:IsShown() and GameTooltip:IsOwned(panel.canvas) and GameT
     "curve hover should resume when the dropdown closes")
 panel.modeSwitch.scripts.OnClick(panel.modeSwitch)
 UpdateHover()
+assert(panel.dayStartLabel.text == "Day 0\nweek 1"
+    and panel.dayMiddleLabel.text == "Day 24\nweek 4"
+    and panel.dayEndLabel.text == "Day 48\nweek 7",
+    "day-axis labels should show the season week under each day")
+for _, sample in ipairs({ { 0, 1 }, { 6, 1 }, { 7, 2 }, { 38, 6 }, { 48, 7 } }) do
+    local data = panel.graphData
+    UI.GraphComparison.UpdateDailyHover(data, 44 + data.plotWidth * sample[1] / data.lastDay, 50,
+        34, 34 + data.plotHeight)
+    assert(tooltipLines[1] == "Season day " .. sample[1] and tooltipLines[2] == "week " .. sample[2],
+        "the hover tooltip should show the hovered season week, including days with no match")
+end
 panel.scopeButton.scripts.OnClick(panel.scopeButton)
 UpdateHover()
 assert(not panel.hoverLine:IsShown() and not panel.hoverDot:IsShown() and not GameTooltip.shown,
     "the open dropdown should also suppress day-curve hover")
 panel.scopeMenu:Hide()
 panel.modeSwitch.scripts.OnClick(panel.modeSwitch)
+assert(not panel.dayStartLabel:IsShown() and not panel.dayMiddleLabel:IsShown() and not panel.dayEndLabel:IsShown(),
+    "day and week labels should hide together on the game axis")
 panel.title.left, panel.mmrToggle.left = 100, 350
 UI.RefreshHistoryGraph()
 local scopeAnchor, titleWidth = panel.scopeButton.point, panel.title:GetWidth()
@@ -241,6 +255,7 @@ panel.compareToggle.scripts.OnClick(panel.compareToggle)
 assert(panel.historyScope == "season" and panel.graphData.pointCount == 5
     and panel.graphData.dayComparisonActive and panel.comparePrevious,
     "comparison should restore the full season and use the existing elapsed-day curves")
+assert(panel.dayEndLabel.text == "Day 48\nweek 7", "season comparison should use the same week labels")
 ChooseScope(1)
 assert(not panel.comparePrevious and not panel.graphData.dayComparisonActive,
     "choosing Session should leave season comparison and restore the game axis")

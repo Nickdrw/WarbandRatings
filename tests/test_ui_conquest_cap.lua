@@ -125,6 +125,11 @@ assert(ns.UI.GraphComparison.GetSeasonDay(SnapshotTime(3, 22), oldStart) == 4,
     "day offsets should follow calendar days")
 assert(ns.UI.GraphComparison.GetSeasonDay(SnapshotTime(8, 18), currentStart) == -1,
     "a match before the season start must not be included")
+for _, sample in ipairs({ { 0, "week 1" }, { 6, "week 1" }, { 7, "week 2" },
+    { 97, "week 14" }, { 98, "week 15" }, { 104, "week 15" }, { 105, "week 16" } }) do
+    assert(ns.UI.GraphComparison.FormatSeasonWeek(sample[1]) == sample[2],
+        "season weeks should count from one and change every seven days")
+end
 
 do
     local comparison = ns.UI.GraphComparison
