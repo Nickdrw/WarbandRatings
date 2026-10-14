@@ -1,4 +1,4 @@
-## Interface: 120007, 120100
+## Interface: 120100, 120105
 ## Title: Warband PvP Companion
 ## Notes: Tracks and displays PvP and M+ ratings & currencies for all your characters.
 ## Author: NickDrew

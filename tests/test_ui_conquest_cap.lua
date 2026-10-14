@@ -33,6 +33,9 @@ assert(version == "12.0.5" and inferred, "a May match should use the 12.0.5 patc
 version, inferred = ns.UI.PVPTooltip.GetMatchVersion(SnapshotTime(8, 27), "12.1.1")
 assert(version == "12.1.1" and not inferred,
     "a version stored with the match should take priority over the date estimate")
+version, inferred = ns.UI.PVPTooltip.GetMatchVersion(SnapshotTime(10, 14), "12.1.5")
+assert(version == "12.1.5" and not inferred,
+    "a match recorded during 12.1.5 regional maintenance should use its stored client version")
 version = ns.UI.PVPTooltip.GetMatchVersion(SnapshotTime(8, 11))
 assert(version == nil, "the patch release day should not be guessed across regional maintenance")
 version = ns.UI.PVPTooltip.GetMatchVersion(SnapshotTime(8, 12))

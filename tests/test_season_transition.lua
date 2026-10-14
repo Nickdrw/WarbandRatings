@@ -263,6 +263,27 @@ assert(byKey.soloShuffle.partial, "recorded-lobby fallback did not mark the Shuf
 local available = History.GetAvailableSeasonKeys()
 assert(#available == 2 and available[1] == "pvp-42" and available[2] == "pvp-41", "season selector inventory is incorrect")
 
+-- A mid-season client update must keep the existing season and its data.
+detectedSeasonID = 42
+interfaceVersion = 120105
+local seasonTwo = WarbandRatingsDB.seasons["pvp-42"]
+local arenaSeries = current.series.global.arena2v2
+local arenaRating = current.ratings.arena2v2
+assert(History.Init(), "12.1.5 could not initialize existing Season 2 storage")
+assert(Season.GetContentSeasonKey() == "pvp-42" and WarbandRatingsDB.history.currentSeasonKey == "pvp-42",
+    "12.1.5 should continue Midnight Season 2")
+assert(WarbandRatingsDB.seasons["pvp-42"] == seasonTwo
+        and seasonTwo.characters["Tester-Realm"] == current
+        and current.ratings.arena2v2 == arenaRating
+        and current.specRatings[72].soloShuffle == 1725,
+    "12.1.5 replaced or reset existing Season 2 character data")
+assert(current.series.global.arena2v2 == arenaSeries and #arenaSeries.points == 2 and not arenaSeries.archived,
+    "12.1.5 replaced, reset, or archived the active Season 2 history")
+assert(Season.GetCrests(Season.GetContentSeasonKey())[1].currencyID == 3442,
+    "12.1.5 should retain the Season 2 Mistcrests")
+assert(Season.GetFeature("conquestEquipmentChest").itemID == 299999,
+    "12.1.5 lost the previously discovered Season 2 equipment chest")
+
 detectedSeasonID = 43
 History.EnsureCurrentSeason()
 History.EnsureContentSeason()

@@ -4,6 +4,8 @@ Inspired by a WeakAura I used back in the WeakAura era, Warband PvP Companion is
 
 It provides an instant overview of your PvP and PvE progress, organized by class and character name, so you can quickly see where each of your characters stands across your warband.
 
+Supports Retail patches 12.1.0 and 12.1.5. The 12.1.5 mid-season update continues Midnight Season 2, preserving its ratings, currencies, and match history.
+
 ## Supported data
 
 Solo Shuffle  
