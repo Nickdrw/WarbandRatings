@@ -1864,6 +1864,20 @@ local function UpdateBuiltInPvPRatingDeltas()
     end
 end
 
+local function GetLegendProgress(bracket)
+    if bracket.key ~= "soloShuffle" or not ns.Season or not _G.GetAchievementCriteriaInfo then return nil end
+    local feature = ns.Season.GetFeature("legend")
+    if not feature then return nil end
+
+    -- Blizzard retains qualifying wins below Elite and across logins. Read the
+    -- seasonal counter directly instead of gating visibility on current rating.
+    local _, _, _, quantity, required = _G.GetAchievementCriteriaInfo(feature.achievementID, 1)
+    quantity = tonumber(quantity)
+    required = tonumber(required)
+    if not quantity or quantity <= 0 or not required or required <= 0 then return nil end
+    return ("Legend: %d/%d"):format(math.min(quantity, required), required)
+end
+
 local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSize, activeQueueCount)
     local isRated = bracket.category == QUEUE_CATEGORY_RATED
     local state = {
@@ -1877,6 +1891,7 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             tierName = "",
         },
         mmr = isRated and ArenaQueue.GetLastMMRInfo(bracket) or { mmr = 0 },
+        legendProgress = GetLegendProgress(bracket),
         buttonText = "Queue",
         buttonEnabled = false,
         buttonVisible = true,
@@ -2219,7 +2234,7 @@ local function ApplyCardTheme(card, theme)
     HelperPanel.SetTextureColor(card.progressFill, accent)
     HelperPanel.SetTextureColor(card.readyGlow, STATUS_COLORS.ready, 0.2)
     HelperPanel.SetFontColor(card.modeName, theme.text)
-    HelperPanel.SetFontColor(card.rankText, theme.muted)
+    HelperPanel.SetFontColor(card.legendProgress, theme.muted)
     HelperPanel.SetFontColor(card.ratingValue, accent)
     HelperPanel.SetFontColor(card.ratingLabel, theme.muted)
     HelperPanel.SetFontColor(card.mmrValue, theme.mmr)
@@ -2952,7 +2967,7 @@ local function ApplyCardLayout(card, minimized, isRated)
         card.mmrValue:Hide()
         card.mmrLabel:Hide()
         card.mmrDelta:Hide()
-        card.rankText:Hide()
+        card.legendProgress:Hide()
         card.statusDot:Hide()
         card.statusText:Hide()
 
@@ -2965,7 +2980,7 @@ local function ApplyCardLayout(card, minimized, isRated)
         card.badge:SetShown(isRated)
         card.ratingValue:SetShown(isRated)
         card.ratingLabel:SetShown(isRated)
-        card.rankText:Hide()
+        card.legendProgress:Hide()
         card.mmrValue:SetShown(isRated)
         card.mmrLabel:SetShown(isRated)
         card.statusDot:Show()
@@ -3107,10 +3122,10 @@ local function CreateCard(cardIndex)
     card.queuedRoleIcon:SetSize(16, 16)
     card.queuedRoleIcon:Hide()
 
-    card.rankText = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    card.rankText:SetPoint("TOPLEFT", card.modeName, "BOTTOMLEFT", 0, -4)
-    card.rankText:SetPoint("RIGHT", card.sessionDelta, "LEFT", -8, 0)
-    card.rankText:SetJustifyH("LEFT")
+    card.legendProgress = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    card.legendProgress:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -30)
+    card.legendProgress:SetPoint("RIGHT", card, "RIGHT", -88, 0)
+    card.legendProgress:SetJustifyH("LEFT")
 
     card.statusDot = card:CreateTexture(nil, "ARTWORK")
     card.statusDot:SetSize(6, 6)
@@ -3400,11 +3415,8 @@ local function UpdateCard(card, state)
         card.mmrDelta:Hide()
     end
 
-    local rankText = state.rating.tierName
-    if state.rating.ranking > 0 then
-        rankText = rankText .. "  •  #" .. state.rating.ranking
-    end
-    card.rankText:SetText(rankText)
+    card.legendProgress:SetText(state.legendProgress or "")
+    card.legendProgress:SetShown(not minimized and state.legendProgress ~= nil)
 
     card.badge:SetTexture(state.rating.tierIcon or FALLBACK_BADGE_TEXTURE)
     if state.rating.tierIcon then
@@ -3556,6 +3568,9 @@ function ArenaQueue.Attach()
     eventFrame:RegisterEvent("PVP_ROLE_UPDATE")
     eventFrame:RegisterEvent("PVP_RATED_STATS_UPDATE")
     eventFrame:RegisterEvent("PVP_REWARDS_UPDATE")
+    eventFrame:RegisterEvent("CRITERIA_UPDATE")
+    eventFrame:RegisterEvent("ACHIEVEMENT_EARNED")
+    eventFrame:RegisterEvent("RECEIVED_ACHIEVEMENT_LIST")
     eventFrame:RegisterEvent("PVP_BRAWL_INFO_UPDATED")
     eventFrame:RegisterEvent("PVP_WORLDSTATE_UPDATE")
     eventFrame:RegisterEvent("PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE")

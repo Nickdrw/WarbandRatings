@@ -65,6 +65,10 @@ local EXPANSIONS = {
                     { label = "Myth Mistcrest", key = "crest_myth", currencyID = 3446 },
                 },
                 features = {
+                    legend = {
+                        active = true,
+                        achievementID = 62932,
+                    },
                     conquestEquipmentChest = {
                         itemID = 271991,
                         expectedName = "Venomous Equipment Chest",
