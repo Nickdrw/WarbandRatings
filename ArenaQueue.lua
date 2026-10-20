@@ -203,6 +203,7 @@ local ratingSessionResumeSaved
 local ratingSessionRecord
 local sessionRatingBaselines = {}
 local sessionMMRBaselines = {}
+local sessionTitleBaselines = {}
 local bracketProxies = {
     [QUEUE_CATEGORY_RATED] = {},
     [QUEUE_CATEGORY_UNRATED] = {},
@@ -1669,14 +1670,18 @@ local function InitializeRatingSession()
     then
         sessionRatingBaselines = savedSession.baselines
         sessionMMRBaselines = type(savedSession.mmrBaselines) == "table" and savedSession.mmrBaselines or {}
+        sessionTitleBaselines = type(savedSession.titleBaselines) == "table" and savedSession.titleBaselines
+            or (type(savedSession.legendBaselines) == "table" and savedSession.legendBaselines or {})
     else
         sessionRatingBaselines = {}
         sessionMMRBaselines = {}
+        sessionTitleBaselines = {}
     end
 
     ratingSessionRecord = {
         baselines = sessionRatingBaselines,
         mmrBaselines = sessionMMRBaselines,
+        titleBaselines = sessionTitleBaselines,
         reloadOnly = true,
     }
     settings.arenaQueueRatingSessions[playerGUID] = ratingSessionRecord
@@ -1688,6 +1693,7 @@ local function TouchRatingSession()
     if not InitializeRatingSession() then return end
     ratingSessionRecord.baselines = sessionRatingBaselines
     ratingSessionRecord.mmrBaselines = sessionMMRBaselines
+    ratingSessionRecord.titleBaselines = sessionTitleBaselines
 end
 
 local function CaptureSessionRatingBaselines()
@@ -1864,9 +1870,11 @@ local function UpdateBuiltInPvPRatingDeltas()
     end
 end
 
-local function GetLegendProgress(bracket)
-    if bracket.key ~= "soloShuffle" or not ns.Season or not _G.GetAchievementCriteriaInfo then return nil end
-    local feature = ns.Season.GetFeature("legend")
+local function GetTitleProgress(bracket)
+    local featureKey = bracket.key == "soloShuffle" and "legend"
+        or bracket.key == "arena3v3" and "gladiator"
+    if not featureKey or not ns.Season or not _G.GetAchievementCriteriaInfo then return nil end
+    local feature = ns.Season.GetFeature(featureKey)
     if not feature then return nil end
 
     -- Blizzard retains qualifying wins below Elite and across logins. Read the
@@ -1874,12 +1882,27 @@ local function GetLegendProgress(bracket)
     local _, _, _, quantity, required = _G.GetAchievementCriteriaInfo(feature.achievementID, 1)
     quantity = tonumber(quantity)
     required = tonumber(required)
-    if not quantity or quantity <= 0 or not required or required <= 0 then return nil end
-    return ("Legend: %d/%d"):format(math.min(quantity, required), required)
+    if not quantity or quantity < 0 or not required or required <= 0 then return nil end
+    quantity = math.min(quantity, required)
+
+    local sessionDelta
+    if InitializeRatingSession() then
+        -- Title wins belong to the character, across specs, for this season's
+        -- achievement. Capture zero too so the first qualifying win counts.
+        local sessionKey = feature.achievementID
+        if sessionTitleBaselines[sessionKey] == nil then
+            sessionTitleBaselines[sessionKey] = quantity
+        end
+        sessionDelta = quantity - sessionTitleBaselines[sessionKey]
+        TouchRatingSession()
+    end
+    if quantity == 0 then return nil end
+    return ("%s: %d/%d"):format(feature.label, quantity, required), sessionDelta
 end
 
 local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSize, activeQueueCount)
     local isRated = bracket.category == QUEUE_CATEGORY_RATED
+    local titleProgress, titleDelta = GetTitleProgress(bracket)
     local state = {
         bracket = bracket,
         category = bracket.category,
@@ -1891,7 +1914,8 @@ local function BuildCardState(cardIndex, bracket, queue, commonFailure, groupSiz
             tierName = "",
         },
         mmr = isRated and ArenaQueue.GetLastMMRInfo(bracket) or { mmr = 0 },
-        legendProgress = GetLegendProgress(bracket),
+        titleProgress = titleProgress,
+        titleDelta = titleDelta,
         buttonText = "Queue",
         buttonEnabled = false,
         buttonVisible = true,
@@ -2234,7 +2258,7 @@ local function ApplyCardTheme(card, theme)
     HelperPanel.SetTextureColor(card.progressFill, accent)
     HelperPanel.SetTextureColor(card.readyGlow, STATUS_COLORS.ready, 0.2)
     HelperPanel.SetFontColor(card.modeName, theme.text)
-    HelperPanel.SetFontColor(card.legendProgress, theme.muted)
+    HelperPanel.SetFontColor(card.titleProgress, theme.muted)
     HelperPanel.SetFontColor(card.ratingValue, accent)
     HelperPanel.SetFontColor(card.ratingLabel, theme.muted)
     HelperPanel.SetFontColor(card.mmrValue, theme.mmr)
@@ -2967,7 +2991,7 @@ local function ApplyCardLayout(card, minimized, isRated)
         card.mmrValue:Hide()
         card.mmrLabel:Hide()
         card.mmrDelta:Hide()
-        card.legendProgress:Hide()
+        card.titleProgress:Hide()
         card.statusDot:Hide()
         card.statusText:Hide()
 
@@ -2980,7 +3004,7 @@ local function ApplyCardLayout(card, minimized, isRated)
         card.badge:SetShown(isRated)
         card.ratingValue:SetShown(isRated)
         card.ratingLabel:SetShown(isRated)
-        card.legendProgress:Hide()
+        card.titleProgress:Hide()
         card.mmrValue:SetShown(isRated)
         card.mmrLabel:SetShown(isRated)
         card.statusDot:Show()
@@ -3089,6 +3113,14 @@ local function CreateCard(cardIndex)
     card.badge:SetSize(42, 42)
     card.badge:SetPoint("CENTER", card.badgeBg, "CENTER", 0, 0)
 
+    card.badgeRank = card:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    card.badgeRank:SetPoint("CENTER", card.badge, "CENTER", 0, 0)
+    local badgeRankFont = card.badgeRank:GetFont()
+    card.badgeRank:SetFont(badgeRankFont, 12, "OUTLINE")
+    card.badgeRank:SetTextColor(1, 1, 1)
+    card.badgeRank:SetShadowColor(0, 0, 0, 1)
+    card.badgeRank:SetShadowOffset(1, -1)
+
     card.ratingValue = card:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     card.ratingValue:SetPoint("TOPRIGHT", card, "TOPRIGHT", -10, -9)
     card.ratingValue:SetJustifyH("RIGHT")
@@ -3122,10 +3154,10 @@ local function CreateCard(cardIndex)
     card.queuedRoleIcon:SetSize(16, 16)
     card.queuedRoleIcon:Hide()
 
-    card.legendProgress = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    card.legendProgress:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -30)
-    card.legendProgress:SetPoint("RIGHT", card, "RIGHT", -88, 0)
-    card.legendProgress:SetJustifyH("LEFT")
+    card.titleProgress = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    card.titleProgress:SetPoint("TOPLEFT", card, "TOPLEFT", 64, -30)
+    card.titleProgress:SetPoint("RIGHT", card, "RIGHT", -88, 0)
+    card.titleProgress:SetJustifyH("LEFT")
 
     card.statusDot = card:CreateTexture(nil, "ARTWORK")
     card.statusDot:SetSize(6, 6)
@@ -3415,10 +3447,22 @@ local function UpdateCard(card, state)
         card.mmrDelta:Hide()
     end
 
-    card.legendProgress:SetText(state.legendProgress or "")
-    card.legendProgress:SetShown(not minimized and state.legendProgress ~= nil)
+    local titleText = state.titleProgress or ""
+    local titleDelta = state.titleDelta
+    if state.titleProgress and titleDelta and titleDelta ~= 0 then
+        local color = titleDelta > 0 and STATUS_COLORS.ready or SESSION_LOSS_COLOR
+        titleText = ("|cff%02x%02x%02x%s%d|r "):format(
+            math.floor(color[1] * 255), math.floor(color[2] * 255), math.floor(color[3] * 255),
+            titleDelta > 0 and "+" or "", titleDelta
+        ) .. titleText
+    end
+    card.titleProgress:SetText(titleText)
+    card.titleProgress:SetShown(not minimized and state.titleProgress ~= nil)
 
     card.badge:SetTexture(state.rating.tierIcon or FALLBACK_BADGE_TEXTURE)
+    local ranking = state.rating.ranking
+    card.badgeRank:SetText(ranking > 0 and ranking or "")
+    card.badgeRank:SetShown(not minimized and state.isRated and ranking > 0)
     if state.rating.tierIcon then
         card.badge:SetTexCoord(0, 1, 0, 1)
     else
@@ -3649,6 +3693,7 @@ function ArenaQueue.Attach()
             ratingSessionRecord = nil
             sessionRatingBaselines = {}
             sessionMMRBaselines = {}
+            sessionTitleBaselines = {}
         elseif event == "PLAYER_ENTERING_WORLD" then
             NoShow.ScanActivePenalty()
             ratedStatsReady = false
@@ -3661,6 +3706,13 @@ function ArenaQueue.Attach()
         elseif event == "PVP_RATED_STATS_UPDATE" then
             ratedStatsReady = true
             CaptureSessionRatingBaselines()
+        end
+
+        if event == "PLAYER_ENTERING_WORLD" or event == "RECEIVED_ACHIEVEMENT_LIST"
+            or event == "CRITERIA_UPDATE" or event == "PVP_RATED_STATS_UPDATE"
+        then
+            GetTitleProgress(BRACKETS.soloShuffle)
+            GetTitleProgress(BRACKETS.arena3v3)
         end
 
         if (event == "PLAYER_LOGIN"

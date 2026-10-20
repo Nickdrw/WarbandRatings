@@ -28,7 +28,7 @@ Crests
 - Themed expansion and season dropdowns with historical seasonal character data
 - Shareable current-season statistics and completed-season Rewind cards
 - Season-aware crests and helper features
-- The expanded Solo Shuffle queue card shows seasonal Legend progress after the first qualifying round win. Tracking stays visible below Elite and across logins, using Blizzard's achievement counter.
+- The expanded Solo Shuffle and 3v3 queue cards show seasonal Legend and Gladiator progress after the first qualifying win. Tracking stays visible below Elite and across logins, using Blizzard's achievement counters. A colored session delta appears before each count when nonzero, follows the rating delta's login/reset and UI-reload rules, and counts qualifying wins across specializations.
 - Customizable Honor alert (12,000 by default) with yellow/orange warnings on Honor gains in range, coalescing rapid currency updates and deferring instanced-PvP alerts until after the exit loading screen, plus a red threshold notice and movable bouncing icon
 - Column filters and display options
 - PvP rating tooltips show the last recorded match date for that rating and its WoW version; older graph points can show a clearly marked version inferred from published patch dates

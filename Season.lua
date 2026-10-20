@@ -67,7 +67,13 @@ local EXPANSIONS = {
                 features = {
                     legend = {
                         active = true,
+                        label = "Legend",
                         achievementID = 62932,
+                    },
+                    gladiator = {
+                        active = true,
+                        label = "Gladiator",
+                        achievementID = 62930,
                     },
                     conquestEquipmentChest = {
                         itemID = 271991,
