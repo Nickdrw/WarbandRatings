@@ -124,19 +124,15 @@ History.Init()
 
 assert(Season.GetContentSeasonKey() == "pvp-42", "12.1 should use the Season 2 content model")
 assert(Season.GetFeature("conquestEquipmentChest", "pvp-41"), "Season 1 chest definition was lost")
-assert(not Season.GetFeature("conquestEquipmentChest", "pvp-42"), "Season 1 chest leaked into Season 2")
-local chestDefinition = Season.GetFeatureDefinition("conquestEquipmentChest", "pvp-42")
-assert(chestDefinition.expectedName == "Venomous Equipment Chest", "Season 2 chest prefix was not anticipated")
-assert(chestDefinition.itemID == 271991, "Season 2 chest ID was not configured for localized clients")
-local detectedChest = Season.RememberFeature("conquestEquipmentChest", {
+local chest = Season.GetFeature("conquestEquipmentChest", "pvp-42")
+assert(chest and chest.itemID == 271991 and chest.name == "Venomous Equipment Chest",
+    "Season 2 chest should be available without visiting a vendor")
+assert(chest.fallbackCost == 375 and chest.requiredPVPRating == 1400,
+    "Season 2 chest purchase requirements are incorrect")
+assert(not Season.RememberFeature("conquestEquipmentChest", {
     itemID = 299999,
-    name = "Venomous Equipment Chest",
-    fallbackCost = 375,
-    hasOpeningCast = true,
-}, "pvp-42")
-assert(detectedChest and detectedChest.itemID == 299999, "detected Season 2 chest was not activated")
-assert(WarbandRatingsDB.seasonFeatures["pvp-42"].conquestEquipmentChest.name == "Venomous Equipment Chest",
-    "detected Season 2 chest was not persisted with season ownership")
+    name = "Unrelated Equipment Chest",
+}, "pvp-42"), "active Season 2 chest should not be replaced by vendor discovery")
 
 assert(WarbandRatingsDB.schemaVersion == 2, "season storage schema was not upgraded")
 assert(WarbandRatingsDB.characters == nil, "legacy live-character storage was not removed")
@@ -281,8 +277,8 @@ assert(current.series.global.arena2v2 == arenaSeries and #arenaSeries.points == 
     "12.1.5 replaced, reset, or archived the active Season 2 history")
 assert(Season.GetCrests(Season.GetContentSeasonKey())[1].currencyID == 3442,
     "12.1.5 should retain the Season 2 Mistcrests")
-assert(Season.GetFeature("conquestEquipmentChest").itemID == 299999,
-    "12.1.5 lost the previously discovered Season 2 equipment chest")
+assert(Season.GetFeature("conquestEquipmentChest").itemID == 271991,
+    "12.1.5 lost the active Season 2 equipment chest")
 
 detectedSeasonID = 43
 History.EnsureCurrentSeason()

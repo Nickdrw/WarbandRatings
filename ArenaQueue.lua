@@ -1879,7 +1879,8 @@ local function GetTitleProgress(bracket)
 
     -- Blizzard retains qualifying wins below Elite and across logins. Read the
     -- seasonal counter directly instead of gating visibility on current rating.
-    local _, _, _, quantity, required = _G.GetAchievementCriteriaInfo(feature.achievementID, 1)
+    local ok, _, _, _, quantity, required = pcall(_G.GetAchievementCriteriaInfo, feature.achievementID, 1)
+    if not ok then return nil end
     quantity = tonumber(quantity)
     required = tonumber(required)
     if not quantity or quantity < 0 or not required or required <= 0 then return nil end

@@ -255,3 +255,12 @@ merchantItemID = 271991
 ns.Merchant.Refresh()
 assert(discoveredChest and discoveredChest.itemID == 271991,
     "localized chest was not discovered by its stable item ID")
+
+merchantItemPrice = 0
+merchantCurrencyID = nil
+currencyName = "Conquest"
+merchantPurchasable = true
+ns.Merchant.Refresh()
+local merchantPanel = helperPanels.WarbandRatingsMerchantDumpFrame
+assert(merchantPanel.shown and merchantPanel.button.enabled and merchantPanel.button.text == "2 remaining",
+    "known chest should use its fallback cost when the vendor omits currency details")

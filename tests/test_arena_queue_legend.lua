@@ -166,6 +166,17 @@ assert(State().titleDelta == 3, "delayed achievement data must establish the bas
 wins, required = 12, 0
 assert(State().titleProgress == nil, "an unavailable target must not produce a counter")
 required = 100
+local criteriaInfo = GetAchievementCriteriaInfo
+GetAchievementCriteriaInfo = function(achievementID, criteriaIndex)
+    if achievementID == 62932 then error("criteria not found") end
+    return criteriaInfo(achievementID, criteriaIndex)
+end
+assert(State().titleProgress == nil, "missing seasonal criteria must not break the card")
+eventFrame.onEvent(eventFrame, "CRITERIA_UPDATE")
+assert(State(arena).titleProgress == "Gladiator: 4/50",
+    "missing Legend criteria must not hide available Gladiator progress")
+GetAchievementCriteriaInfo = criteriaInfo
+assert(State().titleProgress == "Legend: 12/100", "title progress should recover when criteria become available")
 GetAchievementCriteriaInfo = nil
 assert(State().titleProgress == nil, "an unavailable achievement API must be safe")
 
